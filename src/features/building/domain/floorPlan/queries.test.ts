@@ -393,7 +393,7 @@ describe('floorPlan queries', () => {
     it.each([
       [BALCONY_B_EAST_POINT, 'balconySlabB'],
       [CORRIDOR_WEST_EDGE_POINT, 'corridor'],
-      [STAIRS_EAST_EDGE_POINT, 'stairsElevator'],
+      [STAIRS_EAST_EDGE_POINT, 'stairs'],
       [WALL_POINT, undefined],
       [BALCONY_B_WEST_POINT, 'balconySlabB'],
       [SANITAIR_WALL_POINT, undefined],

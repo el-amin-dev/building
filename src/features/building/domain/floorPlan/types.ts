@@ -10,7 +10,7 @@
  *
  * Space kinds:
  * - `room`: habitable, service and technical rooms;
- * - `circulation`: stairs + elevator, corridors;
+ * - `circulation`: stairs, corridors;
  * - `openAir`: walkable balconies;
  * - `void`: no floor, open to the sky.
  */
@@ -23,7 +23,7 @@ export const SPACE_IDS = Object.freeze([
   'livingRoom',
   'bedroomMaleKids',
   'bedroomFemaleKids',
-  'stairsElevator',
+  'stairs',
   'corridor',
   'linkCorridor',
   'controlCenter',
@@ -45,7 +45,7 @@ export type SpaceId = (typeof SPACE_IDS)[number];
  * Every kind of space, in a stable order. Frozen.
  *
  * - `room`: habitable, service and technical rooms;
- * - `circulation`: stairs + elevator, corridors;
+ * - `circulation`: stairs, corridors;
  * - `openAir`: walkable balconies;
  * - `void`: no floor, open to the sky.
  */
