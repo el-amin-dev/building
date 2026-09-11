@@ -8,7 +8,11 @@ import {
   validateChamberSpec,
 } from './chamber.ts';
 import type { ChamberSpec } from './chamber.ts';
+import { FLOOR_PLAN, getSpace, getSpaceBounds } from './floorPlan/index.ts';
+import type { SpaceId } from './floorPlan/index.ts';
+import { rectDepth, rectWidth, toPlanLength } from './planGeometry.ts';
 import type { PlanRect } from './planGeometry.ts';
+import { WALL_SPEC } from './wallSpec.ts';
 
 const CLEAR_WIDTH = 5.0;
 const CLEAR_DEPTH = 3.4;
@@ -21,6 +25,9 @@ const PRECISION_DIGITS = 9;
 const NEGATIVE_VALUE = -1;
 const ALTERED_WIDTH = 9;
 const HALF = 0.5;
+
+/** Kids bedrooms that share the base chamber clear size (brief §4.1). */
+const KIDS_BEDROOM_IDS: readonly SpaceId[] = ['bedroomMaleKids', 'bedroomFemaleKids'];
 
 const SPEC_FIELDS = ['clearWidth', 'clearDepth', 'wallThickness'] as const;
 const INVALID_VALUES = [0, NEGATIVE_VALUE, Number.NaN, Number.POSITIVE_INFINITY] as const;
@@ -104,6 +111,36 @@ describe('chamber', () => {
         mutable.clearWidth = ALTERED_WIDTH;
       }).toThrow(TypeError);
       expect(BASE_CHAMBER_SPEC.clearWidth).toBe(CLEAR_WIDTH);
+    });
+  });
+
+  describe('derived from the floor plan', () => {
+    /**
+     * Returns the clear bounds of a space of `FLOOR_PLAN`.
+     *
+     * @param id - Identifier of the space.
+     * @returns The bounding rectangle of the space, in floor coordinates.
+     */
+    function boundsOfSpace(id: SpaceId): PlanRect {
+      return getSpaceBounds(getSpace(FLOOR_PLAN, id));
+    }
+
+    it('takes its clear size from the master bedroom bounds', () => {
+      const bounds = boundsOfSpace('masterBedroom');
+
+      expect(BASE_CHAMBER_SPEC.clearWidth).toBe(toPlanLength(rectWidth(bounds)));
+      expect(BASE_CHAMBER_SPEC.clearDepth).toBe(toPlanLength(rectDepth(bounds)));
+    });
+
+    it.each(KIDS_BEDROOM_IDS)('gives %s the same clear size', (id) => {
+      const bounds = boundsOfSpace(id);
+
+      expect(toPlanLength(rectWidth(bounds))).toBe(BASE_CHAMBER_SPEC.clearWidth);
+      expect(toPlanLength(rectDepth(bounds))).toBe(BASE_CHAMBER_SPEC.clearDepth);
+    });
+
+    it('uses the partition wall thickness', () => {
+      expect(BASE_CHAMBER_SPEC.wallThickness).toBe(WALL_SPEC.partition);
     });
   });
 

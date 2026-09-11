@@ -5,7 +5,10 @@
  * along its depth, all values in metres. Vertical sizes are not handled here;
  * they live in the `FLOOR_HEIGHTS` module.
  */
+import { FLOOR_PLAN, getSpace, getSpaceBounds } from './floorPlan/index.ts';
+import { makeRect, rectDepth, rectWidth, toPlanLength } from './planGeometry.ts';
 import type { PlanRect } from './planGeometry.ts';
+import { WALL_SPEC } from './wallSpec.ts';
 
 /** Horizontal dimensions of a rectangular chamber, in metres. */
 export interface ChamberSpec {
@@ -17,16 +20,22 @@ export interface ChamberSpec {
   readonly wallThickness: number;
 }
 
+/** Clear bounds of the master bedroom in the floor model, in floor coordinates. */
+const MASTER_BEDROOM_BOUNDS = getSpaceBounds(getSpace(FLOOR_PLAN, 'masterBedroom'));
+
 /**
- * The shared base of the master and kids bedrooms: 5.00 × 3.40 m clear.
+ * The base chamber: the master bedroom clear rect from the floor model,
+ * 5.00 × 3.40 m (brief §4.1, shared by the kids bedrooms).
  *
- * The uniform 0.20 m walls are a demo simplification: the drawing uses 0.30 m
- * exterior walls, and the full floor model replaces this spec later. Frozen.
+ * The clear size is derived from `FLOOR_PLAN` and rounded to the plan grid.
+ * The uniform `WALL_SPEC.partition` (0.20 m) walls remain the ADR-004 demo
+ * simplification; the model's own walls come in Part 2. Unlike floor
+ * coordinates (ADR-005), the chamber stays centred at the origin. Frozen.
  */
 export const BASE_CHAMBER_SPEC: ChamberSpec = Object.freeze({
-  clearWidth: 5.0,
-  clearDepth: 3.4,
-  wallThickness: 0.2,
+  clearWidth: toPlanLength(rectWidth(MASTER_BEDROOM_BOUNDS)),
+  clearDepth: toPlanLength(rectDepth(MASTER_BEDROOM_BOUNDS)),
+  wallThickness: WALL_SPEC.partition,
 });
 
 const HALF = 0.5;
@@ -64,19 +73,6 @@ export function validateChamberSpec(spec: ChamberSpec): ChamberSpec {
     }
   }
   return spec;
-}
-
-/**
- * Builds a frozen plan rectangle.
- *
- * @param minX - Smallest x coordinate.
- * @param maxX - Largest x coordinate.
- * @param minZ - Smallest z coordinate.
- * @param maxZ - Largest z coordinate.
- * @returns A frozen {@link PlanRect}.
- */
-function makeRect(minX: number, maxX: number, minZ: number, maxZ: number): PlanRect {
-  return Object.freeze({ minX, maxX, minZ, maxZ });
 }
 
 /**
