@@ -30,15 +30,17 @@
 ## Controls
 
 - Exterior view (default): drag to orbit, wheel or pinch to zoom — pointer only (ADR-002)
-- Interior view: activate the "Interior view" toggle; the "Interior 3D view" region takes focus (amber outline), the view opens in the +x/+z corner of the walkable area, 0.25 m from both walls, facing the opposite corner (every entry starts there), and the HUD shows "Move: W A S D · Look: I J K L" (screen readers get a full description of each key and of Tab to the toggle)
+- Interior view: activate the "Interior view" toggle; the "Interior 3D view" region takes focus (amber outline), the view opens in the +x/+z corner of the walkable area, 0.25 m from both walls, facing the opposite corner (every entry starts there), and the HUD shows "Move: W A S D · Look: I J K L · Person view: V" plus a "Third person" toggle (screen readers get a full description of each key and of Tab to the toggle)
   - `W` / `S` — walk forward / back
   - `A` / `D` — step left / right
   - `J` / `L` — turn left / right
   - `I` / `K` — look up / down (limited to ±80°)
+  - `V` — switch between first person (eye level, 1.68 m) and third person (camera behind and above a 1.80 m mannequin, looking at its head); the "Third person" HUD toggle does the same (`aria-pressed` shows the mode, the "View:" status reads "Interior · First person" or "Interior · Third person"); the pose is kept when switching, and the mode is kept when leaving and re-entering the interior
+  - third person: the camera pulls in when a wall, the floor or the ceiling is closer than its 2.5 m follow distance, and the mannequin hides while the camera is closer than 0.6 m (e.g. with its back to a wall, as in the start corner)
   - keys act only while the view has focus; Ctrl, Alt and Meta combinations are ignored, and pressing or releasing Meta (Cmd) clears held keys because macOS sends no keyup for them while Cmd is held
   - keys are physical positions (QWERTY labels): on AZERTY, `W A S D` are the keys labelled Z Q S D
   - walls stop movement
-- `Tab` from the view moves focus to the "Interior view" toggle; `Enter` on the toggle switches back to the exterior view
+- `Tab` from the view moves focus to the "Interior view" toggle, then to the "Third person" toggle; `Enter` on "Interior view" switches back to the exterior view, `Enter` or `Space` on "Third person" switches the camera mode
 
 ## Test
 
@@ -68,7 +70,7 @@
 
 - `pnpm test:e2e` — page title, a visible `<canvas>`, and the "Interior view" toggle switching `aria-pressed` and the "View:" status; `tests/e2e/navigation.spec.ts`: (1) the "Interior 3D view" region takes focus, holding W walks and holding J turns (the canvas changes), Tab to the toggle and Enter return to the exterior view, no page errors; (2) movement keys are ignored while the interior view is not focused
 - `pnpm build && pnpm preview`, then in another shell `curl -s http://localhost:4173/ | grep '<title>'` — expect `<title>Floor</title>`
-- `pnpm dev`, open http://localhost:5173 — the chamber renders in the exterior view, drag to orbit; Tab to "Interior view" and press Enter: the view takes focus and the first frame shows two walls, the corner between them, the floor and the ceiling; hold W to walk, J / L to turn, I / K to look; walking into a wall stops; Tab to the toggle and press Enter to return to the exterior view
+- `pnpm dev`, open http://localhost:5173 — the chamber renders in the exterior view, drag to orbit; Tab to "Interior view" and press Enter: the view takes focus and the first frame shows two walls, the corner between them, the floor and the ceiling; hold W to walk, J / L to turn, I / K to look; walking into a wall stops; press V: the camera moves behind and above the person, and the mannequin (slate body, dark visor on the front of the head) appears once the camera has room behind it; back up to a wall with S and the camera pulls in and the mannequin hides; press V again for eye level; Tab to "Third person" and press Enter for the same switch; Tab back to "Interior view" and press Enter to return to the exterior view
 
 ## CI
 
