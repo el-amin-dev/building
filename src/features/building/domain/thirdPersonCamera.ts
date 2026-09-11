@@ -17,6 +17,7 @@
 import { EYE_NAVIGATION_CONFIG } from './eyeNavigation.ts';
 import type { EyePose } from './eyeNavigation.ts';
 import { PERSON_SPEC } from './person.ts';
+import { makeRect } from './planGeometry.ts';
 import type { PlanRect } from './planGeometry.ts';
 
 /** A point in scene space, metres (x, z on the plan; y up). */
@@ -151,12 +152,12 @@ export function createCameraRoomBox(
     throw new RangeError(`margin must be in [0, ${String(maxMargin)}), got ${String(margin)}`);
   }
   return Object.freeze({
-    plan: Object.freeze({
-      minX: clearRect.minX + margin,
-      maxX: clearRect.maxX - margin,
-      minZ: clearRect.minZ + margin,
-      maxZ: clearRect.maxZ - margin,
-    }),
+    plan: makeRect(
+      clearRect.minX + margin,
+      clearRect.maxX - margin,
+      clearRect.minZ + margin,
+      clearRect.maxZ - margin,
+    ),
     minY: margin,
     maxY: ceilingHeight - margin,
   });
