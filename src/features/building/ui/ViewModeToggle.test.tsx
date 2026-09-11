@@ -8,6 +8,11 @@ const TOGGLE_NAME = 'Interior view';
 const EXTERIOR_STATUS = 'View: Exterior';
 const FIRST_PERSON_STATUS = 'View: Interior · First person';
 const THIRD_PERSON_STATUS = 'View: Interior · Third person';
+/** The camera-mode half of the status line, as its own element (whitespace normalised). */
+const CAMERA_MODE_BADGE = '· First person';
+/** Classes hiding that half visually on a narrow viewport and showing it from `sm` up. */
+const SCREEN_READER_ONLY_CLASS = 'sr-only';
+const WIDE_VISIBLE_CLASS = 'sm:not-sr-only';
 
 /** Asserts the whole status line, not just a prefix of it. */
 function expectStatus(text: string) {
@@ -41,6 +46,20 @@ describe('ViewModeToggle', () => {
     );
     expectStatus(FIRST_PERSON_STATUS);
     expect(useViewStore.getState().viewMode).toBe('interior');
+  });
+
+  it('keeps the camera mode in the status line while hiding it visually on a narrow viewport', async () => {
+    const user = userEvent.setup();
+    render(<ViewModeToggle />);
+    expect(screen.queryByText(CAMERA_MODE_BADGE)).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: TOGGLE_NAME }));
+
+    expectStatus(FIRST_PERSON_STATUS);
+    expect(screen.getByText(CAMERA_MODE_BADGE)).toHaveClass(
+      SCREEN_READER_ONLY_CLASS,
+      WIDE_VISIBLE_CLASS,
+    );
   });
 
   it('follows the interior camera mode in the status line', () => {

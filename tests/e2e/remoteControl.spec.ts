@@ -1,10 +1,12 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { INTERIOR_REGION_NAME, VIEW_TOGGLE_NAME } from './constants.ts';
 import {
   captureScene,
   captureSettledScene,
   expectCanvasVisible,
-  expectSceneChanged,
+  getHudOverlay,
+  MOVEMENT_POLL_INTERVAL_MS,
+  MOVEMENT_TIMEOUT_MS,
 } from './sceneCapture.ts';
 
 /** Accessible name of the on-screen remote control group. */
@@ -20,6 +22,22 @@ const MIN_TARGET_SIZE_PX = 44;
 const WCAG_MIN_TARGET_SIZE_PX = 24;
 /** A narrow phone viewport, the tightest width the HUD is expected to hold the pad in. */
 const PHONE_VIEWPORT = Object.freeze({ width: 400, height: 800 });
+/**
+ * Smallest share of the viewport height the 3D view keeps free of HUD panels at a phone width.
+ *
+ * The pad is the only way to move for someone who cannot use a keyboard, so it may not be paid
+ * for with the view it moves through: the toggles stay in a band at the top, the pad anchors to
+ * the bottom, and what is between the two belongs to the scene.
+ */
+const MIN_FREE_VIEW_FRACTION = 0.6;
+/**
+ * A phrase only the full key description carries.
+ *
+ * The visible hint is shortened at a phone width; the description the 3D region points at must
+ * not be, so this phrase — about holding a pad button, which the short hint does not spell out —
+ * has to survive there.
+ */
+const FULL_DESCRIPTION_PHRASE = /hold one of its buttons with a pointer or a finger/;
 
 /**
  * How long the scene is left alone after a release before it is captured again. A fixed wait
@@ -31,6 +49,56 @@ const AFTER_RELEASE_MS = 700;
 interface Point {
   readonly x: number;
   readonly y: number;
+}
+
+/** The pad, by its accessible name. */
+function getRemotePad(page: Page): Locator {
+  return page.getByRole('group', { name: REMOTE_GROUP_NAME });
+}
+
+/** How a test captures the rendered scene: every HUD panel of its layout masked. */
+type CaptureScene = (page: Page) => Promise<Buffer>;
+
+/**
+ * Captures the scene with both HUD panels masked, as the phone layout needs.
+ *
+ * At a phone width the pad anchors to the bottom of the screen, outside the HUD overlay's own
+ * box, so the shared one-rect mask no longer covers it — and a held button turns amber, which
+ * would count as a changed scene all by itself and make the movement assertion pass without any
+ * movement. Masking the pad as well keeps the assertion about the 3D scene, exactly as the
+ * single mask does at a width where the pad sits inside the overlay.
+ */
+async function capturePhoneScene(page: Page): Promise<Buffer> {
+  return page.locator('canvas').screenshot({ mask: [getHudOverlay(page), getRemotePad(page)] });
+}
+
+/**
+ * Waits until the scene captured by `capture` no longer matches `baseline`.
+ *
+ * `expectSceneChanged` of `sceneCapture.ts` with the mask left to the caller, because the phone
+ * layout needs two rects masked and the shared helper masks the overlay alone.
+ */
+async function expectMaskedSceneChanged(
+  page: Page,
+  capture: CaptureScene,
+  baseline: Buffer,
+  message: string,
+): Promise<void> {
+  await expect
+    .poll(async () => !(await capture(page)).equals(baseline), {
+      message,
+      timeout: MOVEMENT_TIMEOUT_MS,
+      intervals: [MOVEMENT_POLL_INTERVAL_MS],
+    })
+    .toBe(true);
+}
+
+/** How a pad button is held: where the pointer is let go, and how the scene is captured. */
+interface HoldOptions {
+  /** Where the pointer is released; the button's own centre when left out. */
+  readonly releaseAt?: Point;
+  /** Capture masking every HUD panel of the layout under test; the shared one by default. */
+  readonly capture?: CaptureScene;
 }
 
 /** Centre of a pad button, which must also be a comfortable touch target. */
@@ -58,31 +126,42 @@ async function getCanvasCentre(page: Page): Promise<Point> {
 /**
  * Holds a pad button with the mouse until the scene changes, then releases it at `releaseAt`
  * (the button's own centre unless another point is given) and asserts the scene stops moving.
+ *
+ * The scene is settled first, then captured with the caller's mask, so the baseline and every
+ * comparison see the same pixels.
  */
 async function expectButtonMovesThenStops(
   page: Page,
   name: string,
-  releaseAt?: Point,
+  options: HoldOptions = {},
 ): Promise<void> {
-  const baseline = await captureSettledScene(page);
+  const capture = options.capture ?? captureScene;
+  await captureSettledScene(page);
+  const baseline = await capture(page);
   const centre = await getPadButtonCentre(page, name);
 
   await page.mouse.move(centre.x, centre.y);
   await page.mouse.down();
   try {
-    await expectSceneChanged(page, baseline, `holding "${name}" should change the rendered scene`);
+    await expectMaskedSceneChanged(
+      page,
+      capture,
+      baseline,
+      `holding "${name}" should change the rendered scene`,
+    );
   } finally {
-    if (releaseAt !== undefined) {
-      await page.mouse.move(releaseAt.x, releaseAt.y);
+    if (options.releaseAt !== undefined) {
+      await page.mouse.move(options.releaseAt.x, options.releaseAt.y);
     }
     await page.mouse.up();
   }
 
-  const stopped = await captureSettledScene(page);
+  await captureSettledScene(page);
+  const stopped = await capture(page);
   // A fixed wait is intentional: the assertion is that nothing changes after the release.
   await page.waitForTimeout(AFTER_RELEASE_MS);
   expect(
-    (await captureScene(page)).equals(stopped),
+    (await capture(page)).equals(stopped),
     `releasing "${name}" should stop the movement`,
   ).toBe(true);
 }
@@ -94,7 +173,7 @@ async function enterInteriorWithMouse(page: Page) {
 
   await page.getByRole('button', { name: VIEW_TOGGLE_NAME }).click();
 
-  const remote = page.getByRole('group', { name: REMOTE_GROUP_NAME });
+  const remote = getRemotePad(page);
   await expect(remote).toBeVisible();
   return remote;
 }
@@ -129,7 +208,7 @@ test.describe('on-screen remote control', () => {
     // Sliding off the button and letting go over the scene must not leave the turn stuck: a
     // stuck turn would spin the camera forever.
     const away = await getCanvasCentre(page);
-    await expectButtonMovesThenStops(page, TURN_LEFT_NAME, away);
+    await expectButtonMovesThenStops(page, TURN_LEFT_NAME, { releaseAt: away });
 
     expect(pageErrors).toEqual([]);
   });
@@ -145,8 +224,9 @@ test.describe('on-screen remote control', () => {
     const buttons = remote.getByRole('button');
     await expect(buttons).toHaveCount(REMOTE_BUTTON_COUNT);
 
-    // The HUD holds the toggles, the hint and the pad at this width. None of them may push the
-    // page sideways: a horizontal scroll would leave part of the pad off screen.
+    // The HUD holds the toggles and the shortened hint in a band at the top of this width and the
+    // pad at the bottom. None of them may push the page sideways: a horizontal scroll would leave
+    // part of the pad off screen.
     const documentWidths = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
       clientWidth: document.documentElement.clientWidth,
@@ -155,6 +235,35 @@ test.describe('on-screen remote control', () => {
       documentWidths.scrollWidth,
       'the page must not scroll horizontally at a phone width',
     ).toBeLessThanOrEqual(documentWidths.clientWidth);
+
+    // The 3D view is what the pad moves through, so it keeps the screen: the band at the top and
+    // the bottom-anchored pad may not eat into it, nor into each other.
+    const topBand = await getHudOverlay(page).boundingBox();
+    const padBox = await remote.boundingBox();
+    if (topBand === null || padBox === null) {
+      throw new Error('a HUD panel has no bounding box');
+    }
+    const topBandBottomPx = topBand.y + topBand.height;
+    expect(padBox.y, 'the pad must not overlap the HUD band above it').toBeGreaterThanOrEqual(
+      topBandBottomPx,
+    );
+    expect(padBox.y + padBox.height, 'the pad must stay inside the viewport').toBeLessThanOrEqual(
+      PHONE_VIEWPORT.height,
+    );
+    const freeViewFraction = (padBox.y - topBandBottomPx) / PHONE_VIEWPORT.height;
+    expect(
+      freeViewFraction,
+      'the 3D view must keep most of the viewport height free of HUD panels',
+    ).toBeGreaterThanOrEqual(MIN_FREE_VIEW_FRACTION);
+    test.info().annotations.push({
+      type: 'free 3D view height',
+      description: `${Math.round(freeViewFraction * 100)}% of a ${PHONE_VIEWPORT.height} px viewport height`,
+    });
+
+    // The visible hint is shortened at this width; what the view region is described by is not.
+    await expect(
+      page.getByRole('application', { name: INTERIOR_REGION_NAME }),
+    ).toHaveAccessibleDescription(FULL_DESCRIPTION_PHRASE);
 
     let smallestSidePx = Number.POSITIVE_INFINITY;
     for (const button of await buttons.all()) {
@@ -180,8 +289,9 @@ test.describe('on-screen remote control', () => {
       description: `${smallestSidePx} CSS px at a ${PHONE_VIEWPORT.width} px viewport width`,
     });
 
-    // Fitting is not enough: holding a button at this width must still walk, and let go.
-    await expectButtonMovesThenStops(page, MOVE_FORWARD_NAME);
+    // Fitting is not enough: holding a button at this width must still walk, and let go. Both HUD
+    // panels are masked here, so only a moved 3D scene can satisfy the assertion.
+    await expectButtonMovesThenStops(page, MOVE_FORWARD_NAME, { capture: capturePhoneScene });
     await expect(page.getByRole('application', { name: INTERIOR_REGION_NAME })).toBeFocused();
 
     expect(pageErrors).toEqual([]);

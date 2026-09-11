@@ -24,6 +24,9 @@ const KEYBOARD_CLICK_DETAIL = 0;
  * returns to the view there; that is acceptable, because the view precedes the button in the
  * Tab order and is labelled.
  *
+ * Below the `sm` breakpoint the panel is tighter, so it shares one row with the view toggle
+ * instead of wrapping onto a row of its own; the button keeps its label and its size.
+ *
  * @returns The camera mode toggle in the interior view, otherwise `null`.
  */
 export function CameraModeToggle() {
@@ -43,12 +46,12 @@ export function CameraModeToggle() {
   };
 
   return (
-    <div className="rounded-lg bg-slate-900 px-4 py-2 shadow-lg">
+    <div className="rounded-lg bg-slate-900 px-2 py-1 shadow-lg sm:px-4 sm:py-2">
       <button
         type="button"
         aria-pressed={isThirdPerson}
         onClick={handleClick}
-        className="min-h-6 min-w-6 cursor-pointer rounded-md bg-white px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-slate-200 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-amber-400 aria-pressed:bg-amber-300 aria-pressed:hover:bg-amber-200"
+        className="min-h-6 min-w-6 cursor-pointer rounded-md bg-white px-2 py-1 text-sm font-medium text-slate-900 hover:bg-slate-200 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-amber-400 aria-pressed:bg-amber-300 aria-pressed:hover:bg-amber-200 sm:px-3 sm:py-1.5"
       >
         {TOGGLE_LABEL}
       </button>

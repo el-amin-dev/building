@@ -162,6 +162,14 @@ function RemoteButton({ action, label, glyph }: RemoteButtonSpec) {
  * outside the pad), a window `blur` (Alt/Cmd-Tab away), and the effect cleanup, which also
  * covers leaving the interior view and unmounting.
  *
+ * Below the `sm` breakpoint the pad takes itself out of the HUD stack (`fixed`) and anchors to
+ * the bottom of the screen, full width and centred: within thumb reach, and no longer stacked
+ * under the toggles, where it pushed the 3D view into a strip at the bottom of the screen.
+ * Since it leaves the flow, the stack above shrinks to the toggles and the one-line hint. From
+ * that breakpoint up it is `static` again, the last panel of the stack, exactly as before.
+ * Nothing else changes with the width: the buttons keep their size, names and behaviour, and
+ * the DOM order — so the Tab order — is the same everywhere.
+ *
  * @returns The remote control in the interior view, otherwise `null`.
  */
 export function RemoteControl() {
@@ -196,7 +204,7 @@ export function RemoteControl() {
     <div
       role="group"
       aria-label={GROUP_LABEL}
-      className="flex flex-wrap items-end gap-4 rounded-lg bg-slate-900 p-3 text-white shadow-lg"
+      className="fixed inset-x-2 bottom-2 z-20 flex flex-wrap items-end justify-center gap-2 rounded-lg bg-slate-900 p-2 text-white shadow-lg sm:static sm:justify-start sm:gap-4 sm:p-3"
     >
       <div className="flex flex-col items-center gap-1">
         <span aria-hidden="true" className="text-xs font-medium">
