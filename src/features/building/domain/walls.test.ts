@@ -13,6 +13,7 @@ import {
   rectsOverlap,
 } from './planGeometry.ts';
 import type { PlanPoint, PlanRect } from './planGeometry.ts';
+import { getSlabThickness } from './slabs.ts';
 import { getWallCells, getWallFootprintArea, getWallPieces } from './walls.ts';
 import type { WallCell, WallHeightKind } from './walls.ts';
 
@@ -23,8 +24,12 @@ const NONE = 0;
 /** Level of the finished floor: the datum every height is measured from. */
 const FLOOR_LEVEL = 0;
 
-/** Underside of the slab, where every wall starts: −0.30 m (3.00 − 2.70). */
-const SLAB_BOTTOM = -(FLOOR_HEIGHTS.floorToFloor - FLOOR_HEIGHTS.wall);
+/**
+ * Underside of the slab, where every wall starts: −0.30 m (3.00 − 2.70). Taken
+ * from `slabs.ts`, the one place that level is computed, rather than subtracting
+ * the two heights again, which yields −0.2999999999999998.
+ */
+const SLAB_BOTTOM = -getSlabThickness();
 
 /* ------------------------------------------------------------------ *
  * Openings of the typical floor: local fixtures.
@@ -349,8 +354,8 @@ function stripPieces(
 }
 
 /**
- * Rounds the levels of a strip so that hand-written tables stay readable: the
- * slab bottom is −0.2999999999999998 in floating point.
+ * Rounds the levels of a strip so that a hand-written table never fails on the
+ * floating-point noise of a level it writes as a plain number.
  *
  * @param strip - The measured strip.
  * @returns The same strip with both levels rounded to nine digits.
@@ -737,6 +742,17 @@ describe('wall pieces of the typical floor', () => {
     expect(bases.length + heads.length).toBe(PIECE_COUNT);
   });
 
+  it('starts every base block at exactly the underside of the slab', () => {
+    const bases = PIECES.filter((piece) => piece.bottom < FLOOR_LEVEL);
+
+    // Exact equality, not toBeCloseTo: `slabs.ts` owns this level, and a wall
+    // that derived it on its own would sit at -0.2999999999999998 instead.
+    expect(bases).toHaveLength(BASE_PIECE_COUNT);
+    bases.forEach((piece) => {
+      expect(piece.bottom).toBe(-getSlabThickness());
+    });
+  });
+
   it('starts every block at the slab or at the head of an opening', () => {
     const openingTops = OPENINGS.map((opening) => opening.top);
     const offenders = PIECES.filter(
@@ -960,6 +976,12 @@ describe('injected heights', () => {
       PRECISION_DIGITS,
     );
     expect(Math.max(...levels)).toBeCloseTo(OTHER_HEIGHTS.wall, PRECISION_DIGITS);
+  });
+
+  it('starts the walls at exactly the underside the injected slab implies', () => {
+    // Exact equality for injected sizes too: the shared helper is what keeps
+    // the walls and the slabs on one level, whatever heights come in.
+    expect(Math.min(...levels)).toBe(-getSlabThickness(OTHER_HEIGHTS));
   });
 
   it('keeps the footprint, which no height can change', () => {

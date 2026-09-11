@@ -25,8 +25,12 @@ const ONE = 1;
 /** Level of the finished floor: the datum every vertical size is measured from. */
 const FLOOR_LEVEL = 0;
 
-/** Underside of the slab, where every wall starts: −0.30 m (3.00 − 2.70). */
-const SLAB_BOTTOM = -(FLOOR_HEIGHTS.floorToFloor - FLOOR_HEIGHTS.wall);
+/**
+ * Underside of the slab, where every wall starts: −0.30 m (3.00 − 2.70), snapped
+ * to the plan grid exactly as `slabs.ts` snaps it, so that the walls and the
+ * slabs are compared against the one level both of them are built from.
+ */
+const SLAB_BOTTOM = -toPlanLength(FLOOR_HEIGHTS.floorToFloor - FLOOR_HEIGHTS.wall);
 
 /* ------------------------------------------------------------------ *
  * Composed counts of the typical floor.
@@ -292,6 +296,23 @@ function everyLevel(floor: ReturnType<typeof getBuiltFloor>): readonly number[] 
   ];
 }
 
+/**
+ * Returns the level the slabs of a built floor end at and the lowest level its
+ * walls start at, so that the two can be compared exactly.
+ *
+ * @param floor - The built floor to measure.
+ * @returns The sole slab underside and the lowest wall underside, in metres.
+ */
+function undersides(floor: ReturnType<typeof getBuiltFloor>): {
+  readonly slab: number;
+  readonly wall: number;
+} {
+  const slabLevels = [...new Set(floor.slabs.map((slab) => slab.bottom))];
+
+  expect(slabLevels).toHaveLength(ONE);
+  return { slab: slabLevels[0], wall: Math.min(...floor.walls.map((piece) => piece.bottom)) };
+}
+
 describe('the composed floor', () => {
   it('builds every part of the typical floor once', () => {
     expect(FLOOR.walls).toHaveLength(WALL_PIECE_COUNT);
@@ -335,6 +356,16 @@ describe('the composed floor', () => {
     expect(bases).toHaveLength(BASE_PIECE_COUNT);
     expect(heads).toHaveLength(HEAD_PIECE_COUNT);
     expect(bases.length + heads.length).toBe(WALL_PIECE_COUNT);
+  });
+
+  it('stands the walls on exactly the level the slabs end at', () => {
+    const { slab, wall } = undersides(FLOOR);
+
+    // Exact equality, not toBeCloseTo: both levels come from `getSlabThickness`
+    // (`slabs.ts`), so the section closes bit for bit rather than merely within
+    // LENGTH_TOLERANCE, and an exact comparison downstream cannot drift.
+    expect(wall).toBe(slab);
+    expect(wall).toBe(-toPlanLength(FLOOR_HEIGHTS.floorToFloor - FLOOR_HEIGHTS.wall));
   });
 
   it('returns a frozen result whose arrays and members are frozen', () => {
@@ -555,6 +586,13 @@ describe('injected heights', () => {
       expect(slab.bottom).toBeCloseTo(otherSlabBottom, PRECISION_DIGITS);
       expect(slab.top).toBeCloseTo(FLOOR_LEVEL, PRECISION_DIGITS);
     });
+  });
+
+  it('stands the walls on exactly the level the slabs end at, at any height', () => {
+    const { slab, wall } = undersides(injected);
+
+    expect(wall).toBe(slab);
+    expect(wall).toBe(otherSlabBottom);
   });
 
   it('keeps the plan figures, which no height can change', () => {

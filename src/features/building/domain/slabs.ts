@@ -45,12 +45,18 @@ export interface FloorSlab extends PlanBox {
  * `planBox.ts`), a slab depth is a drawn dimension of the section, so the
  * floating-point noise of `3.0 - 2.7` is removed rather than carried.
  *
- * @param heights - Vertical sizes of the floor, in metres.
+ * This is the single source of truth for the underside of the floor, `-thickness`:
+ * the walls start there too (`walls.ts`) and call this function rather than
+ * subtracting the two heights again, so that both levels are bit-identical for
+ * any set of heights and a section stays closed under an exact comparison.
+ *
+ * @param heights - Vertical sizes of the floor, in metres; defaults to
+ *   {@link FLOOR_HEIGHTS}.
  * @returns The slab thickness, in metres, rounded to the plan grid.
  * @throws RangeError naming both heights when they leave no positive thickness,
  *   i.e. when `wall` reaches or exceeds `floorToFloor`.
  */
-function getSlabThickness(heights: FloorHeights): number {
+export function getSlabThickness(heights: FloorHeights = FLOOR_HEIGHTS): number {
   const thickness = toPlanLength(heights.floorToFloor - heights.wall);
   if (!Number.isFinite(thickness) || thickness <= LENGTH_TOLERANCE) {
     throw new RangeError(
@@ -79,8 +85,8 @@ export const SLAB_THICKNESS: number = getSlabThickness(FLOOR_HEIGHTS);
  * @param plan - The floor plan to read. Not mutated.
  * @param heights - Vertical sizes of the floor, in metres; defaults to
  *   {@link FLOOR_HEIGHTS}.
- * @returns A frozen array of frozen slabs, each spanning from
- *   `-(heights.floorToFloor - heights.wall)` up to the finished floor level 0.
+ * @returns A frozen array of frozen slabs, each spanning from minus the
+ *   {@link getSlabThickness} of `heights` up to the finished floor level 0.
  * @throws RangeError when `heights` leaves no positive slab thickness (see
  *   {@link getSlabThickness}).
  */

@@ -4,7 +4,7 @@ import type { FloorPlan, SpaceId } from './floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from './heights.ts';
 import type { FloorHeights } from './heights.ts';
 import { rectArea, rectsOverlap } from './planGeometry.ts';
-import { SLAB_THICKNESS, getSlabs } from './slabs.ts';
+import { SLAB_THICKNESS, getSlabThickness, getSlabs } from './slabs.ts';
 import type { FloorSlab } from './slabs.ts';
 
 const PRECISION_DIGITS = 9;
@@ -143,6 +143,19 @@ describe('floor slabs', () => {
         FLOOR_HEIGHTS.floorToFloor - FLOOR_HEIGHTS.wall,
         PRECISION_DIGITS,
       );
+    });
+
+    it('snaps the thickness onto the plan grid, exactly', () => {
+      // Exact equality, not toBeCloseTo: the raw subtraction is
+      // 0.2999999999999998, and the walls start at minus this very value
+      // (`walls.ts`), so any drift here would open a gap in the section.
+      expect(SLAB_THICKNESS).toBe(REAL_SLAB_THICKNESS);
+      expect(getSlabThickness()).toBe(SLAB_THICKNESS);
+      expect(getSlabThickness(FLOOR_HEIGHTS)).toBe(SLAB_THICKNESS);
+      expect(getSlabThickness(TALL_HEIGHTS)).toBe(TALL_SLAB_THICKNESS);
+      SLABS.forEach((slab) => {
+        expect(slab.bottom).toBe(-SLAB_THICKNESS);
+      });
     });
 
     it('hangs every slab from the finished floor down by its thickness', () => {

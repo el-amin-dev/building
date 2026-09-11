@@ -12,9 +12,10 @@
  * Two heights occur (owner answers, ADR-006): a cell that walls a room or a
  * circulation space rises to `FLOOR_HEIGHTS.wall`, while a cell whose every side
  * faces open air, the void or the outside is a parapet and rises only to
- * `FLOOR_HEIGHTS.railing`. Every wall starts at the underside of the slab,
- * `-(floorToFloor - wall)`, so that a cross-section stays closed and a doorway
- * keeps a threshold.
+ * `FLOOR_HEIGHTS.railing`. Every wall starts at the underside of the slab, which
+ * this module takes from `getSlabThickness` (`slabs.ts`) rather than deriving
+ * again, so that the two modules agree on that level exactly; a cross-section
+ * therefore stays closed and a doorway keeps a threshold.
  *
  * The wall footprint of the typical floor is the 42.52 m² of brief §8; the tests
  * of this module check that figure against the plan rather than restating it.
@@ -33,6 +34,7 @@ import {
   toPlanLength,
 } from './planGeometry.ts';
 import type { PlanPoint, PlanRect } from './planGeometry.ts';
+import { getSlabThickness } from './slabs.ts';
 import { WALL_SPEC } from './wallSpec.ts';
 
 /** Half of something, for midpoints. */
@@ -519,13 +521,15 @@ function subtractInterval(intervals: readonly Interval[], hole: Interval): reado
  * @param heights - Vertical sizes to use.
  * @returns The remaining spans, ascending; empty when an opening takes the whole
  *   height of the cell.
+ * @throws RangeError when `heights` leaves no positive slab thickness, so that
+ *   the wall has no underside to start from (see `getSlabThickness`).
  */
 function cellIntervals(
   cell: ClassifiedCell,
   openings: readonly PlanBox[],
   heights: FloorHeights,
 ): readonly Interval[] {
-  const slabBottom = -(heights.floorToFloor - heights.wall);
+  const slabBottom = -getSlabThickness(heights);
   return openings
     .filter((opening) => rectContainsPoint(opening.rect, cell.centre))
     .reduce<readonly Interval[]>(
@@ -627,7 +631,8 @@ function mergeCells(
  *
  * The plot is cut on every clear face of the plan and every face of the
  * openings; the cells no space covers are the walls (brief §2). Each cell runs
- * from the underside of the slab, `-(floorToFloor - wall)`, up to its own height
+ * from the underside of the slab, minus the `getSlabThickness` of `heights`
+ * (`slabs.ts`), which is the same level the slabs end at, up to its own height
  * — `heights.wall` where it walls a room or a circulation space, `heights.railing`
  * where every side it faces is open air, the void or the outside (ADR-006) —
  * minus the vertical span of every opening that covers it, which leaves a
@@ -642,7 +647,8 @@ function mergeCells(
  * @returns A frozen array of frozen boxes that never overlap, ordered by
  *   vertical span, then row, then column.
  * @throws RangeError when a junction of walls touches no cell whose height is
- *   known, so that its own height cannot be derived.
+ *   known, so that its own height cannot be derived, or when `heights` leaves no
+ *   positive slab thickness for the walls to start under.
  */
 export function getWallPieces(
   plan: FloorPlan,
