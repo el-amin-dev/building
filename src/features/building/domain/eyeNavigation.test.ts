@@ -26,7 +26,7 @@ const NEAR_EDGE = HALF_EXTENT - 0.01;
 const IDLE: MovementIntent = { move: 0, strafe: 0, turn: 0, look: 0 };
 const ORIGIN_POSE: EyePose = { x: 0, z: 0, yaw: 0, pitch: 0 };
 
-/** Walkable bounds of the base chamber: 5.00 × 3.40 m clear shrunk by 0.25 m. */
+/** Walkable bounds of a 5.00 × 3.40 m room: its clear rect shrunk by the 0.25 m body radius. */
 const BASE_WALKABLE_HALF_WIDTH = 2.25;
 const BASE_WALKABLE_HALF_DEPTH = 1.45;
 const BASE_WALKABLE_BOUNDS: PlanRect = {

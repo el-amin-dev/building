@@ -20,11 +20,11 @@ vi.mock('@react-three/drei', () => ({ OrbitControls: () => null }));
 const INTERIOR_REGION_NAME = 'Interior 3D view';
 const CAMERA_MODE_CODE = 'KeyV';
 const EXTERIOR_DESCRIPTION =
-  '3D view of the chamber from outside. The camera moves by dragging and scrolling; keyboard camera controls are not available in this view yet.';
+  '3D view of the whole floor from outside: its rooms, balconies, corridors and stairs, seen from above the open side of the building. The camera moves by dragging and scrolling; keyboard camera controls are not available in this view yet.';
 const INTERIOR_DESCRIPTION =
-  'Eye-level 3D view inside the chamber. Move and look around with the keys listed in the navigation hint.';
+  'Eye-level 3D view inside the master bedroom of the floor. Move and look around with the keys listed in the navigation hint. Walking is limited to that room for now.';
 const THIRD_PERSON_DESCRIPTION =
-  'Third-person 3D view following your person inside the chamber. Move and look around with the keys listed in the navigation hint.';
+  'Third-person 3D view following your person inside the master bedroom of the floor. Move and look around with the keys listed in the navigation hint. Walking is limited to that room for now.';
 const HINT_DESCRIPTION =
   'W moves forward, S moves back, A steps left, D steps right, J turns left, L turns right, I looks up, K looks down. V switches between first-person and third-person view. Keys follow their positions on a QWERTY keyboard. Every movement is also available on the on-screen remote control in the HUD, which needs no keyboard: hold one of its buttons with a pointer or a finger, or with Space or Enter while the button has focus. Press Tab to reach the view toggle, then the Third person toggle, then the remote control buttons. After using the Third person toggle with the keyboard, press Shift+Tab twice to return to the view.';
 

@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { BASE_CHAMBER_SPEC, getClearRect, getWalkableBounds } from '../domain/chamber.ts';
 import { EYE_NAVIGATION_CONFIG } from '../domain/eyeNavigation.ts';
 import type { EyePose } from '../domain/eyeNavigation.ts';
+import { FLOOR_PLAN } from '../domain/floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from '../domain/heights.ts';
+import { getRoomWalkArea, INTERIM_WALK_SPACE_ID } from '../domain/interimWalkArea.ts';
 import { PERSON_SPEC } from '../domain/person.ts';
-import { createCameraRoomBox, THIRD_PERSON_CAMERA_CONFIG } from '../domain/thirdPersonCamera.ts';
+import { THIRD_PERSON_CAMERA_CONFIG } from '../domain/thirdPersonCamera.ts';
 import {
   getMannequinPartHalfExtent,
   getMannequinParts,
@@ -16,6 +17,7 @@ import type { MannequinPart } from './personModelParts.ts';
 const LENGTH_PRECISION_DIGITS = 9;
 /** A diameter is two radii. */
 const DIAMETER_PER_RADIUS = 2;
+const HALF = 0.5;
 const FLOOR_LEVEL = 0;
 const SCALED_HEIGHT = 2;
 const HEAD_NAME = 'head';
@@ -23,21 +25,25 @@ const LEVEL_PITCH = 0;
 const FACING_NEGATIVE_Z_YAW = 0;
 const INVALID_HEIGHTS = [0, -PERSON_SPEC.height, Number.NaN, Number.POSITIVE_INFINITY];
 
-const WALKABLE_BOUNDS = getWalkableBounds(BASE_CHAMBER_SPEC, EYE_NAVIGATION_CONFIG.bodyRadius);
-const ROOM_BOX = createCameraRoomBox(
-  getClearRect(BASE_CHAMBER_SPEC),
+/** The room walking is clamped to, in floor coordinates: the same one `BuildingScene` uses. */
+const WALK_AREA = getRoomWalkArea(
+  FLOOR_PLAN,
+  INTERIM_WALK_SPACE_ID,
+  EYE_NAVIGATION_CONFIG.bodyRadius,
   FLOOR_HEIGHTS.wall,
   THIRD_PERSON_CAMERA_CONFIG.wallMargin,
 );
+const WALKABLE_BOUNDS = WALK_AREA.bounds;
+const ROOM_BOX = WALK_AREA.roomBox;
 /** In the middle of the room, facing −z: the follow camera backs away along +z freely. */
-const CENTRE_POSE: EyePose = { x: 0, z: 0, yaw: FACING_NEGATIVE_Z_YAW, pitch: LEVEL_PITCH };
-/** Back against the +z wall at the walking limit: the follow camera rises above the head. */
-const BACK_TO_WALL_POSE: EyePose = {
-  x: 0,
-  z: WALKABLE_BOUNDS.maxZ,
+const CENTRE_POSE: EyePose = {
+  x: (WALKABLE_BOUNDS.minX + WALKABLE_BOUNDS.maxX) * HALF,
+  z: (WALKABLE_BOUNDS.minZ + WALKABLE_BOUNDS.maxZ) * HALF,
   yaw: FACING_NEGATIVE_Z_YAW,
   pitch: LEVEL_PITCH,
 };
+/** Back against the +z wall at the walking limit: the follow camera rises above the head. */
+const BACK_TO_WALL_POSE: EyePose = { ...CENTRE_POSE, z: WALKABLE_BOUNDS.maxZ };
 /** On the camera box's +z face, beyond the walking limit: no room at all behind the head. */
 const NO_ROOM_BEHIND_POSE: EyePose = { ...BACK_TO_WALL_POSE, z: ROOM_BOX.plan.maxZ };
 

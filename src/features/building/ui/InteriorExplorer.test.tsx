@@ -4,15 +4,12 @@ import { PerspectiveCamera } from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useRemoteControlStore } from '../application/remoteControlStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
-import { BASE_CHAMBER_SPEC, getClearRect, getWalkableBounds } from '../domain/chamber.ts';
 import { createInitialEyePose, EYE_NAVIGATION_CONFIG } from '../domain/eyeNavigation.ts';
+import { FLOOR_PLAN } from '../domain/floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from '../domain/heights.ts';
+import { getRoomWalkArea, INTERIM_WALK_SPACE_ID } from '../domain/interimWalkArea.ts';
 import { PERSON_SPEC } from '../domain/person.ts';
-import {
-  createCameraRoomBox,
-  getThirdPersonCamera,
-  THIRD_PERSON_CAMERA_CONFIG,
-} from '../domain/thirdPersonCamera.ts';
+import { getThirdPersonCamera, THIRD_PERSON_CAMERA_CONFIG } from '../domain/thirdPersonCamera.ts';
 import { InteriorExplorer } from './InteriorExplorer.tsx';
 
 type FrameCallback = (state: RootState, delta: number) => void;
@@ -34,12 +31,16 @@ const TURN_CODE = 'KeyJ';
 const SETTLE_DELTA_SECONDS = 0;
 const WALK_DELTA_SECONDS = 0.1;
 
-const WALKABLE_BOUNDS = getWalkableBounds(BASE_CHAMBER_SPEC, EYE_NAVIGATION_CONFIG.bodyRadius);
-const ROOM_BOX = createCameraRoomBox(
-  getClearRect(BASE_CHAMBER_SPEC),
+/** The room walking is clamped to, in floor coordinates: the same one `BuildingScene` uses. */
+const WALK_AREA = getRoomWalkArea(
+  FLOOR_PLAN,
+  INTERIM_WALK_SPACE_ID,
+  EYE_NAVIGATION_CONFIG.bodyRadius,
   FLOOR_HEIGHTS.wall,
   THIRD_PERSON_CAMERA_CONFIG.wallMargin,
 );
+const WALKABLE_BOUNDS = WALK_AREA.bounds;
+const ROOM_BOX = WALK_AREA.roomBox;
 const START_POSE = createInitialEyePose(WALKABLE_BOUNDS);
 
 describe('InteriorExplorer', () => {

@@ -3,16 +3,13 @@ import { fireEvent, render } from '@testing-library/react';
 import { PerspectiveCamera, Vector3 } from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useRemoteControlStore } from '../application/remoteControlStore.ts';
-import { BASE_CHAMBER_SPEC, getClearRect, getWalkableBounds } from '../domain/chamber.ts';
 import { createInitialEyePose, EYE_NAVIGATION_CONFIG } from '../domain/eyeNavigation.ts';
 import type { EyePose } from '../domain/eyeNavigation.ts';
+import { FLOOR_PLAN } from '../domain/floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from '../domain/heights.ts';
+import { getRoomWalkArea, INTERIM_WALK_SPACE_ID } from '../domain/interimWalkArea.ts';
 import { PERSON_SPEC } from '../domain/person.ts';
-import {
-  createCameraRoomBox,
-  getThirdPersonCamera,
-  THIRD_PERSON_CAMERA_CONFIG,
-} from '../domain/thirdPersonCamera.ts';
+import { getThirdPersonCamera, THIRD_PERSON_CAMERA_CONFIG } from '../domain/thirdPersonCamera.ts';
 import type { ScenePoint } from '../domain/thirdPersonCamera.ts';
 import type { InteriorCameraMode } from '../domain/viewMode.ts';
 import { EyeCameraControls } from './EyeCameraControls.tsx';
@@ -45,16 +42,26 @@ const LEVEL_PITCH = 0;
 const NO_ROLL = 0;
 /** Yaw of the centre test pose: turned left, so every plan axis of the follow ray is used. */
 const CENTRE_POSE_YAW = 0.6;
+const HALF = 0.5;
 
-const WALKABLE_BOUNDS = getWalkableBounds(BASE_CHAMBER_SPEC, EYE_NAVIGATION_CONFIG.bodyRadius);
-const ROOM_BOX = createCameraRoomBox(
-  getClearRect(BASE_CHAMBER_SPEC),
+/** The room walking is clamped to, in floor coordinates: the same one `BuildingScene` uses. */
+const WALK_AREA = getRoomWalkArea(
+  FLOOR_PLAN,
+  INTERIM_WALK_SPACE_ID,
+  EYE_NAVIGATION_CONFIG.bodyRadius,
   FLOOR_HEIGHTS.wall,
   THIRD_PERSON_CAMERA_CONFIG.wallMargin,
 );
+const WALKABLE_BOUNDS = WALK_AREA.bounds;
+const ROOM_BOX = WALK_AREA.roomBox;
 const START_POSE = createInitialEyePose(WALKABLE_BOUNDS);
 /** A pose in the middle of the room, where the follow camera has room to back away. */
-const CENTRE_POSE: EyePose = { x: 0, z: 0, yaw: CENTRE_POSE_YAW, pitch: LEVEL_PITCH };
+const CENTRE_POSE: EyePose = {
+  x: (WALKABLE_BOUNDS.minX + WALKABLE_BOUNDS.maxX) * HALF,
+  z: (WALKABLE_BOUNDS.minZ + WALKABLE_BOUNDS.maxZ) * HALF,
+  yaw: CENTRE_POSE_YAW,
+  pitch: LEVEL_PITCH,
+};
 
 describe('EyeCameraControls', () => {
   let target: HTMLDivElement;

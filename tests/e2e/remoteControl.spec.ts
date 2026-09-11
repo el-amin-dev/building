@@ -22,8 +22,17 @@ const PHONE_VIEWPORT = Object.freeze({ width: 400, height: 800 });
 const SETTLE_TIMEOUT_MS = 15_000;
 /** Delay between consecutive captures while waiting for the scene to settle. */
 const SETTLE_POLL_INTERVAL_MS = 250;
-/** Upper bound for a held button to produce a visible change in the rendered frame. */
-const MOVEMENT_TIMEOUT_MS = 5_000;
+/**
+ * Upper bound for a held button to produce a visible change in the rendered frame.
+ *
+ * As generous as the settle budget, and for the same reason: the scene draws the whole
+ * floor, so a frame costs far more than it did for the single interim chamber this budget
+ * was first tuned for, and under software WebGL with parallel workers seconds can pass
+ * between two rendered frames. What is asserted is unchanged — holding the button must
+ * change the rendered scene, and releasing it must stop the movement — this is only how
+ * long that change may take to show up.
+ */
+const MOVEMENT_TIMEOUT_MS = 15_000;
 /** Delay between captures while waiting for a held button to change the rendered frame. */
 const MOVEMENT_POLL_INTERVAL_MS = 100;
 /**
