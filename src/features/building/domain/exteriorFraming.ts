@@ -51,8 +51,10 @@ const START_MARGIN = 1.1;
 
 /**
  * Factor applied to the fit distance for the closest orbit distance. A quarter of the
- * fit distance lets the viewer zoom in on a single room while staying outside the
- * bounding sphere of the floor, so zooming never pushes the camera through the walls.
+ * fit distance lets the viewer zoom in on a single room while the camera stays clear of
+ * the building: at the start elevation, and at the fields of view and canvas shapes the
+ * app uses, it is still well above the top of the walls, so zooming never pushes the
+ * camera through them.
  */
 const MIN_DISTANCE_FACTOR = 0.25;
 
@@ -105,24 +107,42 @@ export interface ExteriorFraming {
   readonly groundSize: number;
 }
 
+/** The orthonormal frame of the camera: where it looks, and the two axes of the frame. */
+interface CameraBasis {
+  /** Unit vector from the camera toward the orbit target. */
+  readonly forward: Vector3Like;
+  /** Unit vector along the width of the frame, toward its right edge; horizontal. */
+  readonly right: Vector3Like;
+  /** Unit vector along the height of the frame, toward its top edge. */
+  readonly up: Vector3Like;
+}
+
 /**
  * Derives the exterior camera framing of one floor.
  *
  * The floor occupies the box that spans `plot` on the plan and, vertically, from the
  * bottom of its slab (`-getSlabThickness(heights)`, the one place that level is computed,
  * `slabs.ts`) to the top of its walls (`heights.wall`). The orbit target is the centre of
- * the plot at half the wall height, and `radius` is the distance from that target to the
- * furthest corner of the box.
+ * the plot at half the wall height.
  *
- * The floor fits the frame at `radius / sin(halfFov)`, taking the narrower of the two
- * half-angles of the frustum: the vertical one is half of `fovDegrees`, and the
- * horizontal one is `atan(tan(halfFovVertical) * aspect)`, so a viewport narrower than
- * it is tall pulls the camera back rather than cropping the building. The start position
- * sits a little beyond that distance, above and off to one side of the open side B.
+ * `fitDistance` fits that box, not the sphere around it. The floor is a long flat slab —
+ * 22.50 × 10.00 m against 3.00 m of height — so its bounding sphere is more than twice as
+ * tall as the building is, and backing off far enough to fit the sphere leaves the floor
+ * filling under half the frame. Instead every corner of the box is expressed in the frame
+ * of the camera (see {@link getCameraBasis}): `depth` along `forward`, and the offsets
+ * along `right` and `up`. A corner is inside the frustum at distance `d` from the target
+ * when `|offset·right| <= tanHalfHorizontal * (d + depth)` and likewise for `up` with
+ * `tanHalfVertical`, so each corner requires `|offset·right| / tanHalfHorizontal - depth`
+ * and `|offset·up| / tanHalfVertical - depth`, and the fit distance is the largest of
+ * those sixteen requirements: the smallest distance at which the whole box is in frame.
+ * The half-angles come from the camera itself — the vertical one is half of `fovDegrees`,
+ * the horizontal one widens it by `aspect` — so a viewport narrower than it is tall pulls
+ * the camera back rather than cropping the building. The start position sits a
+ * {@link START_MARGIN} beyond the fit distance, above and off to one side of the open side B.
  *
  * The fog starts past the furthest corner of the floor as seen from the furthest allowed
  * orbit distance, so no part of the building is ever fogged, however far the viewer zooms
- * out.
+ * out; `radius`, the distance from the target to that corner, is what the fog is offset by.
  *
  * @param plot - Outer boundary of the floor, in metres.
  * @param heights - Vertical sizes of the floor, in metres.
@@ -164,15 +184,20 @@ export function getExteriorFraming(
     (plot.maxZ - plot.minZ) * HALF,
   );
 
-  const halfFovVertical = fovDegrees * HALF * RADIANS_PER_DEGREE;
-  const halfFovHorizontal = Math.atan(Math.tan(halfFovVertical) * aspect);
-  const fitDistance = radius / Math.sin(Math.min(halfFovVertical, halfFovHorizontal));
-
   const elevation = EXTERIOR_ELEVATION_DEGREES * RADIANS_PER_DEGREE;
   const azimuth = EXTERIOR_AZIMUTH_FROM_B_DEGREES * RADIANS_PER_DEGREE;
-  const startDistance = fitDistance * START_MARGIN;
-  const horizontalDistance = Math.cos(elevation) * startDistance;
+  const basis = getCameraBasis(elevation, azimuth);
 
+  const tanHalfVertical = Math.tan(fovDegrees * HALF * RADIANS_PER_DEGREE);
+  const tanHalfHorizontal = tanHalfVertical * aspect;
+  const fitDistance = getBoxFitDistance(
+    getCornerOffsets(plot, slabBottom, heights.wall, target),
+    basis,
+    tanHalfHorizontal,
+    tanHalfVertical,
+  );
+
+  const startDistance = fitDistance * START_MARGIN;
   const minDistance = fitDistance * MIN_DISTANCE_FACTOR;
   const maxDistance = fitDistance * MAX_DISTANCE_FACTOR;
   const fogNear = maxDistance + radius;
@@ -180,10 +205,11 @@ export function getExteriorFraming(
 
   return Object.freeze({
     target: Object.freeze(target),
+    // The camera is back along its own view direction from the target.
     position: Object.freeze({
-      x: target.x - Math.sin(azimuth) * horizontalDistance,
-      y: target.y + Math.sin(elevation) * startDistance,
-      z: target.z + Math.cos(azimuth) * horizontalDistance,
+      x: target.x - basis.forward.x * startDistance,
+      y: target.y - basis.forward.y * startDistance,
+      z: target.z - basis.forward.z * startDistance,
     }),
     fitDistance,
     minDistance,
@@ -192,6 +218,102 @@ export function getExteriorFraming(
     fogFar,
     groundSize: fogFar * GROUND_SIZE_FACTOR,
   });
+}
+
+/**
+ * Builds the frame of a camera that orbits at an elevation and a heading, with `y` up.
+ *
+ * `forward` points from the camera down to the target, so the camera itself is at
+ * `target - forward * distance`: up at `elevation` above the target, at `azimuth` around
+ * from +z toward −x. `right` is the horizontal axis of the frame and `up` completes it,
+ * exactly as a `lookAt` with a `y`-up camera would orient them (`right` is `forward × y`
+ * normalised, `up` is `right × forward`), written out in closed form.
+ *
+ * @param elevation - Angle of the camera above the horizontal of the target, in radians.
+ *   Must be in (−π/2, π/2), so that `right` is well defined.
+ * @param azimuth - Heading of the camera at the target, from +z toward −x, in radians.
+ * @returns The three unit vectors of the frame.
+ */
+function getCameraBasis(elevation: number, azimuth: number): CameraBasis {
+  const sinElevation = Math.sin(elevation);
+  const cosElevation = Math.cos(elevation);
+  const sinAzimuth = Math.sin(azimuth);
+  const cosAzimuth = Math.cos(azimuth);
+  return {
+    forward: { x: sinAzimuth * cosElevation, y: -sinElevation, z: -cosAzimuth * cosElevation },
+    right: { x: cosAzimuth, y: 0, z: sinAzimuth },
+    up: { x: sinAzimuth * sinElevation, y: cosElevation, z: -cosAzimuth * sinElevation },
+  };
+}
+
+/**
+ * Lists the eight corners of the floor box as offsets from the orbit target.
+ *
+ * @param plot - Outer boundary of the floor, in metres.
+ * @param bottom - Level the box starts at, in metres: the underside of the slab.
+ * @param top - Level the box ends at, in metres: the top of the walls.
+ * @param target - The orbit target the offsets are measured from, in metres.
+ * @returns The eight corner offsets, in no particular order.
+ */
+function getCornerOffsets(
+  plot: PlanRect,
+  bottom: number,
+  top: number,
+  target: Vector3Like,
+): readonly Vector3Like[] {
+  const offsets: Vector3Like[] = [];
+  for (const x of [plot.minX, plot.maxX]) {
+    for (const y of [bottom, top]) {
+      for (const z of [plot.minZ, plot.maxZ]) {
+        offsets.push({ x: x - target.x, y: y - target.y, z: z - target.z });
+      }
+    }
+  }
+  return offsets;
+}
+
+/**
+ * Smallest distance from the orbit target at which every corner is inside the frustum.
+ *
+ * Each corner constrains the distance twice, once per axis of the frame, and the distance
+ * that satisfies all of them is the largest of those requirements (see
+ * {@link getExteriorFraming}). A corner that is behind the target requires less distance
+ * than one in front of it, which is what makes this fit tighter than the sphere fit on a
+ * flat building.
+ *
+ * @param offsets - Corner offsets from the target, in metres.
+ * @param basis - The frame of the camera.
+ * @param tanHalfHorizontal - Tangent of the horizontal half-angle of the frustum.
+ * @param tanHalfVertical - Tangent of the vertical half-angle of the frustum.
+ * @returns The fit distance, in metres; positive for a box of positive size.
+ */
+function getBoxFitDistance(
+  offsets: readonly Vector3Like[],
+  basis: CameraBasis,
+  tanHalfHorizontal: number,
+  tanHalfVertical: number,
+): number {
+  let fitDistance = 0;
+  for (const offset of offsets) {
+    const depth = dot(offset, basis.forward);
+    fitDistance = Math.max(
+      fitDistance,
+      Math.abs(dot(offset, basis.right)) / tanHalfHorizontal - depth,
+      Math.abs(dot(offset, basis.up)) / tanHalfVertical - depth,
+    );
+  }
+  return fitDistance;
+}
+
+/**
+ * Scalar product of two vectors.
+ *
+ * @param a - First vector.
+ * @param b - Second vector.
+ * @returns Their dot product.
+ */
+function dot(a: Vector3Like, b: Vector3Like): number {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
 /** Rejects a plot whose coordinates are not finite, or that is inverted on either axis. */
