@@ -1,7 +1,7 @@
 # Tasks
 
-> Roadmap to finish the 3D simulation of the house floor (22.50 × 10.00 m, one storey).
-> Sources of truth: `docs/house-design-brief.md` (requirements, wins on conflict) · `docs/source-of-truth-n-floor.drawio.html` Page-2 (drawing, 30 px = 1 m; Page-4 is history).
+> Roadmap to finish the 3D simulation of the typical apartment floor (22.50 × 10.00 m, floor 1 shown at level 0).
+> Sources of truth: `docs/house-design-brief.md` (requirements, wins on conflict) · `docs/source-of-truth-n-floor.drawio.html` Page-2 (drawing, 30 px = 1 m; Page-4 is history) · owner answers in ADR-006 override both.
 > Parts run in order — each part is one work session and starts only when the previous part is fully `[x]`.
 
 **Next: Part 1**
@@ -9,8 +9,8 @@
 ## How to run a part
 
 1. Read this file and take the first part with `[ ]` tasks.
-2. Confirm its `depends-on` part is fully `[x]` and required owner answers exist.
-3. Pre-flight check, then branch from `main` as `<type>/<issue>-<slug>`.
+2. Confirm its `depends-on` part is fully `[x]` and merged into `main`.
+3. Pre-flight check, then branch from `main` as `<type>/<issue>-<slug>`; GitHub issues track the work (#1 delivery pipeline · #2 floor plan model · #3 third-person view · #4 Part 2 · #5 Part 3 · #6 Part 4).
 4. Work on independent tasks in parallel where possible; dependent tasks in order.
 5. Tick `[x]` only when the task's code and its tests are green.
 6. Finish with the part's DoD gate.
@@ -22,7 +22,7 @@
 - self code review clean — blocking findings fixed or deferred with an ADR
 - `docs/RUNBOOK.md` and `docs/DECISIONS.md` updated when behavior or decisions change
 - new UI meets WCAG 2.2 AA (keyboard, visible focus, contrast, accessible names)
-- squash-merged into `main`
+- squash-merged into `main` via a pull request with green CI
 
 ## Bootstrap — done
 
@@ -59,26 +59,33 @@
 
 ## Part 1 — Foundation: owner answers, delivery pipeline, floor plan model
 
-- goal: open questions answered, CI-guarded workflow, and the whole floor as validated domain data
+- goal: open questions answered, CI-guarded workflow, the whole floor as validated domain data, and a third-person view with a 1.80 m person
 - depends-on: Part 0
-- exit: protected `main` with green CI; every brief §4–§5 space in the model with all §8 numbers enforced by tests
+- exit: protected `main` with green CI; every brief §4–§5 space in the model with all §8 numbers enforced by tests; V switches first/third person
 
-- [ ] Owner answer: master bedroom doors — corridor + A balcony, or corridor only (brief §6 "bedrooms corridor only" conflict)
-- [ ] Owner answer: light for the living room and kids bedrooms, which touch only blocked side C (brief §1 note conflict)
-- [ ] Owner answer: main entry position on the side-A wall; link-corridor ↔ A-balcony door width (drawn 0.80, brief says 0.90)
-- [ ] Owner answer: bath and shower sub-room layout and inner door widths in the main and guest sanitairs (brief §7.3)
-- [ ] Owner answer: confirm unified heights, window size and sill, stairs + elevator representation, hosting and visibility
-- [ ] Create private GitHub repo, add `origin`, push `main` (after explicit go-ahead)
+- [x] Owner answer: master bedroom doors → corridor + A balcony; kids bedrooms one corridor door each (ADR-006)
+- [x] Owner answer: living room and kids bedrooms touch only blocked side C → electric light only, air system later, kept as an open item (ADR-006)
+- [x] Owner answer: main entry position → entry via the stairs only, no side-A door; link-corridor ↔ A-balcony door 0.80 (ADR-006)
+- [x] Owner answer: sanitairs → `[open sink [shower][bath]]`, guest `[open sink [bath]]`; sub-room sizes and inner doors proposed in Part 4 (ADR-006)
+- [x] Owner answer: heights confirmed; eye 1.68 from a 1.80 m person; windows 1.20 × 1.20 sill 0.90; stairs + elevator as blocked volumes; self-hosted; public repo (ADR-006)
+- [x] Create public GitHub repo `el-amin-dev/building`, add `origin`, push `main`
 - [ ] CI workflow: frozen install → typecheck → lint → format:check → test → build → Playwright e2e (report on failure)
 - [ ] Protect `main` (PR + green CI, squash-only) and add Dependabot with ignore rules for ADR-001 caps
-- [ ] Open one issue per remaining part; RUNBOOK "CI" section
+- [ ] Issues #1–#6 opened; RUNBOOK "CI" section
 - [ ] ADR-005 floor coordinates: origin at outer A/C corner, x along A→D, z along C→B, y up, metres
-- [ ] `domain/floorPlan` — `Space` types and every brief §4–§5 space with exact clear rects (guest room L-shape as 2 rects)
+- [ ] `domain/floorPlan` — `Space` types and every brief §4–§5 space with exact clear rects (guest room net L as 3 rects; void split west/east)
 - [ ] Wall spec constants: exterior 0.30 · partition 0.20 · void-facing 0.30
 - [ ] Tests: width chain 22.50, depth chain 10.00, every §8 area, totals 167.38 / 15.10 / 42.52 / 225.00
 - [ ] Tests: no overlapping spaces, all spaces inside the envelope, neighbour gaps equal the wall spec
 - [ ] Queries `getSpace`, `findSpaceAt`, `getNeighbours` + tests; base chamber spec derived from the model
-- [ ] DoD gate → PR merged
+- [ ] `domain/person.ts` — `PERSON_SPEC` height 1.80 · eye 1.68; eye removed from `FLOOR_HEIGHTS` + tests
+- [ ] `domain/thirdPersonCamera.ts` — follow camera 2.5 m behind the head, pulled in at walls and ceiling + tests
+- [ ] View store: interior camera mode first/third person, kept across view changes + tests
+- [ ] `ui/PersonModel.tsx` — low-poly mannequin, visible in third-person view only
+- [ ] V key (focused view only) and HUD "Third person" toggle button; navigation hint updated + tests
+- [ ] e2e: V and the button switch views, walking works in both
+- [ ] ADR-007 third-person view; RUNBOOK "Controls" updated
+- [ ] DoD gate → PRs #1, #2, #3 merged
 
 ## Part 2 — Built floor: walls, ports, openings, light
 
@@ -88,16 +95,16 @@
 
 - [ ] `domain/walls.ts` — wall segments from space edges at spec thickness, collinear merge + tests (wall area 42.52)
 - [ ] `domain/slabs.ts` — slabs for floor spaces only, none for the void + tests
-- [ ] `domain/ports` — `Port` model and full §6 schedule (0.90 doors, 3.50 living opening, main entry) with Page-2 offsets
+- [ ] `domain/ports` — `Port` model and full §6 schedule (0.90 doors, 3.50 living opening, entry via the stairs (no side-A door), link door 0.80, guest–kitchen door z 6.00–6.90 (ADR-006)) with Page-2 offsets
 - [ ] Tests: every port sits on a wall shared by its two spaces and fits inside it
 - [ ] Tests: laundry has no corridor door, utility exactly one door, master not on stairs, guest + control via link corridor
-- [ ] Tests: every floor space reachable from the main entry; voids unreachable
+- [ ] Tests: every floor space reachable from the stairs; voids unreachable
 - [ ] Split walls around ports with lintels up to wall height + tests
-- [ ] `domain/windows.ts` — windows on A/B-facing walls only, sizes per owner answer + test: none on C or D
+- [ ] `domain/windows.ts` — windows on A/B-facing walls only, 1.20 × 1.20, sill 0.90 + test: none on C or D
 - [ ] `ui/SpaceModel.tsx` + `ui/FloorModel.tsx` — whole floor from the model, geometry merged per material
 - [ ] Test: every vertical size comes from `FLOOR_HEIGHTS`
 - [ ] Railings on the A balcony, balcony slab and void edges; void open to sky; TV panel facing the living opening
-- [ ] Stairs + elevator volume per owner answer; named material palette per space kind
+- [ ] Stairs + elevator as blocked placeholder volumes; named material palette per space kind
 - [ ] Lighting: sun from side B, sky, per-room light (hemisphere fill, material dithering, horizon fog); Leva debug controls for sun and materials
 - [ ] Exterior orbit framed on the full floor + e2e screenshot baseline
 - [ ] DoD gate → PR merged
@@ -110,16 +117,16 @@
 
 - [ ] `domain/collision.ts` — body circle vs wall segments with sliding + tests
 - [ ] Walkable area = slabs; void edges and blocked volumes stop movement; doorways pass only if wider than the body + tests
-- [ ] `stepEyePose` uses floor collision instead of the single-chamber clamp
+- [ ] `stepEyePose` uses floor collision instead of the single-chamber clamp; third-person camera pull-in uses the same wall collision
 - [ ] `getCurrentSpace(pose)` and HUD room name in a polite live region + tests
-- [ ] Interior start pose at the main entry on the A balcony, facing inward
+- [ ] Interior start pose on the stairs landing, facing the corridor
 - [ ] Exterior orbit keyboard controls (rotate, tilt, zoom), scoped to the focused view + tests
 - [ ] On-screen hold-to-act move / turn / look buttons (WCAG 2.5.7) + tests
 - [ ] "Go to room" menu operable by keyboard and single click + tests
 - [ ] Animated exterior ↔ interior transitions, instant under `prefers-reduced-motion`
 - [ ] SVG minimap from the model with position and heading; select a room to jump there + tests
 - [ ] HUD usable at 400 px width with touch targets ≥ 24 × 24 px
-- [ ] Playwright axe check on both views; e2e walk entry → link corridor → corridor → kitchen
+- [ ] Playwright axe check on both views; e2e walk stairs → link corridor → corridor → kitchen
 - [ ] ADR superseding ADR-002; RUNBOOK "Controls" updated
 - [ ] DoD gate → PR merged
 
@@ -133,19 +140,19 @@
 - [ ] `domain/fixtures.ts` — catalogue with footprints + tests: inside its room, no overlap, door clearance kept
 - [ ] Laundry: washing machine, hand-wash sink, dirty armoire, clean armoire, cleaning storage
 - [ ] Kitchen: counters, fridge, cooker; barbecue on the balcony slab
-- [ ] Main sanitair: open sink + bath and shower sub-rooms; guest sanitair: open sink + bath, no shower (tested)
+- [ ] Main sanitair: open sink + bath and shower sub-rooms; guest sanitair: open sink + bath, no shower (tested); sub-rooms `[open sink [shower][bath]]`, shower and bath on the void side; layout proposed for owner approval
 - [ ] Control center: one volume holding electricity, ethernet, gas, water, heater, AC (compartment split stays deferred)
 - [ ] Bedrooms and living room furniture
 - [ ] Test: a 0.90 m fridge passes the 1.50 m corridor; the 0.90 m link corridor is flagged too narrow
-- [ ] Room info panel: name, clear size, area, doors, fixtures, brief §9 open items
+- [ ] Room info panel: name, clear size, area, doors, fixtures, brief §9 open items; living and kids rooms: electric light only (no daylight)
 - [ ] Lazy-load the 3D scene chunk, instance/merge static geometry, bundle-size budget in CI
 - [ ] WebGL-unsupported fallback and a canvas error boundary with structured logging
 - [ ] Add eslint-plugin-jsx-a11y if it supports ESLint 10, otherwise record the deferral
-- [ ] ADR hosting target + deploy workflow; e2e full tour of every room
+- [ ] ADR self-hosted target + deploy workflow; e2e full tour of every room
 - [ ] README (controls, sources of truth, screenshots), `CHANGELOG.md`, tag `v1.0.0`
 - [ ] DoD gate → release published
 
 ## Deferred (owner decision, not scheduled)
 
 - Control center split into two isolated compartments (gas/water · electricity) — brief §7.4
-- Other floors — stairs and elevator are reserved for them
+- Floor 0 and stacking floors 2…N — the typical floor is floor 1, shown at level 0
