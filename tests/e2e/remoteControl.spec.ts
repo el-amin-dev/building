@@ -1,11 +1,14 @@
 import { expect, test, type Page } from '@playwright/test';
+import { INTERIOR_REGION_NAME, VIEW_TOGGLE_NAME } from './constants.ts';
+import {
+  captureScene,
+  captureSettledScene,
+  expectCanvasVisible,
+  expectSceneChanged,
+} from './sceneCapture.ts';
 
-/** Accessible name of the view toggle button. */
-const VIEW_TOGGLE_NAME = 'Interior view';
 /** Accessible name of the on-screen remote control group. */
 const REMOTE_GROUP_NAME = 'Remote control';
-/** Accessible name of the interior 3D region, which focus returns to after a pointer hold. */
-const INTERIOR_REGION_NAME = 'Interior 3D view';
 /** Accessible names of the two buttons held in these tests. */
 const MOVE_FORWARD_NAME = 'Move forward';
 const TURN_LEFT_NAME = 'Turn left';
@@ -18,75 +21,11 @@ const WCAG_MIN_TARGET_SIZE_PX = 24;
 /** A narrow phone viewport, the tightest width the HUD is expected to hold the pad in. */
 const PHONE_VIEWPORT = Object.freeze({ width: 400, height: 800 });
 
-/** Upper bound for the scene to stop changing between two consecutive canvas captures. */
-const SETTLE_TIMEOUT_MS = 15_000;
-/** Delay between consecutive captures while waiting for the scene to settle. */
-const SETTLE_POLL_INTERVAL_MS = 250;
-/**
- * Upper bound for a held button to produce a visible change in the rendered frame.
- *
- * As generous as the settle budget, and for the same reason: the scene draws the whole
- * floor, so a frame costs far more than it did for the single interim chamber this budget
- * was first tuned for, and under software WebGL with parallel workers seconds can pass
- * between two rendered frames. What is asserted is unchanged — holding the button must
- * change the rendered scene, and releasing it must stop the movement — this is only how
- * long that change may take to show up.
- */
-const MOVEMENT_TIMEOUT_MS = 15_000;
-/** Delay between captures while waiting for a held button to change the rendered frame. */
-const MOVEMENT_POLL_INTERVAL_MS = 100;
 /**
  * How long the scene is left alone after a release before it is captured again. A fixed wait
  * is the point: the assertion is that nothing moves any more once the button is let go.
  */
 const AFTER_RELEASE_MS = 700;
-
-/**
- * Captures the canvas with the whole HUD overlay masked, so only the rendered scene is compared.
- *
- * The overlay holds the toggles, the navigation hint and the remote control, whose
- * `aria-pressed` colours change while a button is held; unmasked, that alone would make a
- * frame comparison pass. It is masked as one full-width block, found as the child of `<main>`
- * holding the status (see `navigation.spec.ts`).
- */
-async function captureScene(page: Page): Promise<Buffer> {
-  return page.locator('canvas').screenshot({ mask: [getHudOverlay(page)] });
-}
-
-/** The HUD overlay: the child of `<main>` holding the view status. */
-function getHudOverlay(page: Page) {
-  return page.locator('main > div').filter({ has: page.getByRole('status') });
-}
-
-/** Captures the masked scene once two consecutive captures are identical, i.e. it is at rest. */
-async function captureSettledScene(page: Page): Promise<Buffer> {
-  // A mask locator matching nothing would silently compare the HUD again.
-  await expect(getHudOverlay(page)).toHaveCount(1);
-  let previous = await captureScene(page);
-  await expect
-    .poll(
-      async () => {
-        const current = await captureScene(page);
-        const isStable = current.equals(previous);
-        previous = current;
-        return isStable;
-      },
-      { timeout: SETTLE_TIMEOUT_MS, intervals: [SETTLE_POLL_INTERVAL_MS] },
-    )
-    .toBe(true);
-  return previous;
-}
-
-/** Waits until the masked scene no longer matches the baseline. */
-async function expectSceneChanged(page: Page, baseline: Buffer, message: string): Promise<void> {
-  await expect
-    .poll(async () => !(await captureScene(page)).equals(baseline), {
-      message,
-      timeout: MOVEMENT_TIMEOUT_MS,
-      intervals: [MOVEMENT_POLL_INTERVAL_MS],
-    })
-    .toBe(true);
-}
 
 /** A point in page coordinates, for a real mouse press. */
 interface Point {
@@ -151,7 +90,7 @@ async function expectButtonMovesThenStops(
 /** Enters the interior view with a mouse click only, and returns the pad's group locator. */
 async function enterInteriorWithMouse(page: Page) {
   await page.goto('/');
-  await expect(page.locator('canvas')).toBeVisible();
+  await expectCanvasVisible(page);
 
   await page.getByRole('button', { name: VIEW_TOGGLE_NAME }).click();
 
