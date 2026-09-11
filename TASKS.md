@@ -4,7 +4,7 @@
 > Sources of truth: `docs/house-design-brief.md` (requirements, wins on conflict) · `docs/source-of-truth-n-floor.drawio.html` Page-2 (drawing, 30 px = 1 m; Page-4 is history) · owner answers in ADR-006 override both.
 > Parts run in order — each part is one work session and starts only when the previous part is fully `[x]`.
 
-**Next: Part 1**
+**Next: Part 2**
 
 ## How to run a part
 
@@ -78,14 +78,14 @@
 - [x] Tests: width chain 22.50, depth chain 10.00, every §8 area, totals 167.38 / 15.10 / 42.52 / 225.00
 - [x] Tests: no overlapping spaces, all spaces inside the envelope, neighbour gaps equal the wall spec
 - [x] Queries `getSpace`, `findSpaceAt`, `getNeighbours` + tests; base chamber spec derived from the model
-- [ ] `domain/person.ts` — `PERSON_SPEC` height 1.80 · eye 1.68; eye removed from `FLOOR_HEIGHTS` + tests
-- [ ] `domain/thirdPersonCamera.ts` — follow camera 2.5 m behind the head, pulled in at walls and ceiling + tests
-- [ ] View store: interior camera mode first/third person, kept across view changes + tests
-- [ ] `ui/PersonModel.tsx` — low-poly mannequin, visible in third-person view only
-- [ ] V key (focused view only) and HUD "Third person" toggle button; navigation hint updated + tests
-- [ ] e2e: V and the button switch views, walking works in both
-- [ ] ADR-007 third-person view; RUNBOOK "Controls" updated
-- [ ] DoD gate → issues #1, #2, #3 closed by merged pull requests
+- [x] `domain/person.ts` — `PERSON_SPEC` height 1.80 · eye 1.68; eye removed from `FLOOR_HEIGHTS` + tests
+- [x] `domain/thirdPersonCamera.ts` — follow camera 2.5 m behind the head, never below head height, pulled in at walls and ceiling, rising overhead near walls + tests
+- [x] View store: interior camera mode first/third person, kept across view changes + tests
+- [x] `ui/PersonModel.tsx` — low-poly procedural mannequin, visible in third-person view only + tests of its parts
+- [x] V key (focused view only) and HUD "Third person" toggle button (a pointer click returns focus to the view); navigation hint updated + tests
+- [x] e2e: V and the button switch views (HUD masked), walking works in both
+- [x] ADR-007 third-person view; RUNBOOK "Controls", "Test" and "Smoke checks" updated
+- [x] DoD gate → issues #1, #2, #3 closed by merged pull requests
 
 ## Part 2 — Built floor: walls, ports, openings, light
 
