@@ -70,6 +70,38 @@
 - `pnpm build && pnpm preview`, then in another shell `curl -s http://localhost:4173/ | grep '<title>'` — expect `<title>Floor</title>`
 - `pnpm dev`, open http://localhost:5173 — the chamber renders in the exterior view, drag to orbit; Tab to "Interior view" and press Enter: the view takes focus and the first frame shows two walls, the corner between them, the floor and the ceiling; hold W to walk, J / L to turn, I / K to look; walking into a wall stops; Tab to the toggle and press Enter to return to the exterior view
 
+## CI
+
+- Workflow `.github/workflows/ci.yml` runs on every pull request and on every push to `main`; a newer push to the same branch cancels the run in progress
+- One job, `ci` (Ubuntu, Node from `.nvmrc`, pnpm from `packageManager`): `pnpm install --frozen-lockfile`, then `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, `pnpm test`, `pnpm build`, `pnpm exec playwright install --with-deps chromium`, `pnpm test:e2e` — the same full gate as locally
+- `ci` is the required status check on `main`: a pull request merges only when it is green
+- `pnpm install --frozen-lockfile` fails when `pnpm-lock.yaml` does not match `package.json` → run `pnpm install` locally and commit the lockfile
+- On CI, Playwright retries a failing test twice (a trace is recorded on the first retry) and writes a GitHub annotation plus an HTML report
+
+### Read a failure
+
+- `gh pr checks` — status of the checks on the current branch's pull request (`gh pr checks --watch` waits until they finish)
+- `gh run list --workflow ci.yml --branch "$(git branch --show-current)" --limit 5` — recent runs of this branch, with their run IDs
+- `gh run view <run-id> --log-failed` — log of the failed steps only (`gh run view --log-failed` without an ID asks which run)
+- `gh run view <run-id> --web` — open the run in the browser
+
+### Playwright report artifact
+
+- Uploaded only when the job fails, as the artifact `playwright-report` (contains `playwright-report/` and `test-results/`), kept 7 days
+- `gh run download <run-id> --name playwright-report --dir /tmp/floor-playwright-report` — download and extract it
+- `pnpm exec playwright show-report /tmp/floor-playwright-report/playwright-report` — open the HTML report (traces of retried tests open from the report)
+
+### Rerun
+
+- `gh run rerun <run-id> --failed` — rerun only the failed jobs of a run
+- `gh run rerun <run-id>` — rerun the whole run
+
+### Dependabot
+
+- `.github/dependabot.yml` opens weekly pull requests for npm packages and GitHub Actions; minor and patch updates arrive grouped in one pull request per ecosystem, majors one per dependency
+- The ADR-001 version caps are ignore rules there: `react`, `react-dom`, `@types/react`, `@types/react-dom` stay below 19.3.0, `typescript` below 6.1.0, `jsdom` below 30.0.0, `@types/node` below 23.0.0 — change a cap in `docs/DECISIONS.md` and `.github/dependabot.yml` together
+- Dependabot pull requests run the same `ci` check as any other pull request
+
 ## Services / Ports
 
 | Service      | Default port | Override (shell variable) | Start cmd       |

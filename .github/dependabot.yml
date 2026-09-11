@@ -1,0 +1,36 @@
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-and-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
+    # Version caps from ADR-001 (docs/DECISIONS.md): peer ranges and Node support.
+    ignore:
+      - dependency-name: react
+        versions: ['>=19.3.0']
+      - dependency-name: react-dom
+        versions: ['>=19.3.0']
+      - dependency-name: '@types/react'
+        versions: ['>=19.3.0']
+      - dependency-name: '@types/react-dom'
+        versions: ['>=19.3.0']
+      - dependency-name: typescript
+        versions: ['>=6.1.0']
+      - dependency-name: jsdom
+        versions: ['>=30.0.0']
+      - dependency-name: '@types/node'
+        versions: ['>=23.0.0']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-and-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
