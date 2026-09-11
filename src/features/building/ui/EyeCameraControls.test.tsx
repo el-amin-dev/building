@@ -2,6 +2,7 @@ import type { RootState } from '@react-three/fiber';
 import { fireEvent, render } from '@testing-library/react';
 import { PerspectiveCamera, Vector3 } from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useRemoteControlStore } from '../application/remoteControlStore.ts';
 import { BASE_CHAMBER_SPEC, getClearRect, getWalkableBounds } from '../domain/chamber.ts';
 import { createInitialEyePose, EYE_NAVIGATION_CONFIG } from '../domain/eyeNavigation.ts';
 import type { EyePose } from '../domain/eyeNavigation.ts';
@@ -60,6 +61,7 @@ describe('EyeCameraControls', () => {
   let camera: PerspectiveCamera;
 
   beforeEach(() => {
+    useRemoteControlStore.setState(useRemoteControlStore.getInitialState(), true);
     target = document.createElement('div');
     target.tabIndex = 0;
     document.body.appendChild(target);
@@ -221,6 +223,93 @@ describe('EyeCameraControls', () => {
 
     expect(poseRef.current).toEqual(walkedPose);
     expectFirstPersonCamera(walkedPose);
+  });
+
+  describe('on-screen remote control', () => {
+    it('walks forward while the remote control holds moveForward, with no keyboard event', () => {
+      const { poseRef } = renderControls();
+      runFrame(SETTLE_DELTA_SECONDS);
+
+      useRemoteControlStore.getState().pressAction('moveForward');
+      runFrame(WALK_DELTA_SECONDS);
+
+      const walked = Math.hypot(poseRef.current.x - START_POSE.x, poseRef.current.z - START_POSE.z);
+      expect(walked).toBeCloseTo(EYE_NAVIGATION_CONFIG.walkSpeed * WALK_DELTA_SECONDS);
+      expectFirstPersonCamera(poseRef.current);
+    });
+
+    it('turns while the remote control holds turnLeft, with no keyboard event', () => {
+      const { poseRef } = renderControls();
+
+      useRemoteControlStore.getState().pressAction('turnLeft');
+      runFrame(WALK_DELTA_SECONDS);
+
+      expect(poseRef.current.yaw).toBeCloseTo(
+        START_POSE.yaw + EYE_NAVIGATION_CONFIG.turnSpeed * WALK_DELTA_SECONDS,
+      );
+    });
+
+    it('combines a held key with a remote action in one intent', () => {
+      const { poseRef } = renderControls();
+
+      fireEvent.keyDown(target, { code: FORWARD_CODE });
+      useRemoteControlStore.getState().pressAction('turnLeft');
+      runFrame(WALK_DELTA_SECONDS);
+
+      expect(poseRef.current.yaw).toBeGreaterThan(START_POSE.yaw);
+      expect(poseRef.current.x).toBeLessThan(START_POSE.x);
+      expect(poseRef.current.z).toBeLessThan(START_POSE.z);
+    });
+
+    it('cancels a remote action against the opposite held key', () => {
+      const { poseRef } = renderControls();
+
+      fireEvent.keyDown(target, { code: FORWARD_CODE });
+      useRemoteControlStore.getState().pressAction('moveBackward');
+      fireEvent.keyDown(target, { code: TURN_CODE });
+      useRemoteControlStore.getState().pressAction('turnRight');
+      runFrame(WALK_DELTA_SECONDS);
+
+      expect(poseRef.current.x).toBeCloseTo(START_POSE.x);
+      expect(poseRef.current.z).toBeCloseTo(START_POSE.z);
+      expect(poseRef.current.yaw).toBeCloseTo(START_POSE.yaw);
+    });
+
+    it('counts an action held on both inputs once', () => {
+      const { poseRef } = renderControls();
+
+      fireEvent.keyDown(target, { code: FORWARD_CODE });
+      useRemoteControlStore.getState().pressAction('moveForward');
+      runFrame(WALK_DELTA_SECONDS);
+
+      const walked = Math.hypot(poseRef.current.x - START_POSE.x, poseRef.current.z - START_POSE.z);
+      expect(walked).toBeCloseTo(EYE_NAVIGATION_CONFIG.walkSpeed * WALK_DELTA_SECONDS);
+    });
+
+    it('stops as soon as the remote action is released', () => {
+      const { poseRef } = renderControls();
+      useRemoteControlStore.getState().pressAction('moveForward');
+      runFrame(WALK_DELTA_SECONDS);
+      const walkedPose = poseRef.current;
+
+      useRemoteControlStore.getState().releaseAction('moveForward');
+      runFrame(WALK_DELTA_SECONDS);
+
+      expect(poseRef.current).toEqual(walkedPose);
+    });
+
+    it('stops when every remote action is released at once', () => {
+      const { poseRef } = renderControls();
+      useRemoteControlStore.getState().pressAction('moveForward');
+      useRemoteControlStore.getState().pressAction('turnLeft');
+      runFrame(WALK_DELTA_SECONDS);
+      const walkedPose = poseRef.current;
+
+      useRemoteControlStore.getState().releaseAllActions();
+      runFrame(WALK_DELTA_SECONDS);
+
+      expect(poseRef.current).toEqual(walkedPose);
+    });
   });
 
   it('ignores navigation keys pressed on other elements', () => {

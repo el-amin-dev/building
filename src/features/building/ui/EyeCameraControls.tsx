@@ -1,6 +1,7 @@
 import { useFrame } from '@react-three/fiber';
 import type { RefObject } from 'react';
 import type { EulerOrder } from 'three';
+import { useRemoteControlStore } from '../application/remoteControlStore.ts';
 import { getMovementIntent, isEyeNavigationKey, stepEyePose } from '../domain/eyeNavigation.ts';
 import type { EyePose } from '../domain/eyeNavigation.ts';
 import { PERSON_SPEC } from '../domain/person.ts';
@@ -43,8 +44,10 @@ export interface EyeCameraControlsProps {
 /**
  * Per-frame camera of the interior view, in first or third person.
  *
- * Every frame it reads the navigation keys held on `targetRef`, advances the pose in
- * `poseRef` once with `stepEyePose` and writes it back. Then it places the default camera:
+ * Every frame it reads both inputs — the navigation keys held on `targetRef` and the
+ * actions held on the on-screen `RemoteControl` — merges them into one `MovementIntent`,
+ * advances the pose in `poseRef` once with `stepEyePose` and writes it back. Then it places
+ * the default camera:
  *
  * - first person: at `PERSON_SPEC.eyeHeight` above the pose, with Euler order `YXZ` and
  *   rotation `(pitch, yaw, 0)`;
@@ -54,8 +57,11 @@ export interface EyeCameraControlsProps {
  *   close behind leaves too little room to see the body.
  *
  * The pose lives in a ref owned by the parent, so moving never re-renders React and
- * switching `cameraMode` keeps the pose. The frame callback runs with a negative priority,
- * before the person model's, so both use the same stepped pose within a frame.
+ * switching `cameraMode` keeps the pose. The remote control's actions are read with the
+ * store's non-reactive `getState()` rather than a hook, for the same reason: holding a
+ * button must not subscribe this component and re-render it 60 times a second. The frame
+ * callback runs with a negative priority, before the person model's, so both use the same
+ * stepped pose within a frame.
  *
  * @param props - {@link EyeCameraControlsProps}
  * @returns Nothing; it only drives the camera.
@@ -70,9 +76,10 @@ export function EyeCameraControls({
   const pressedKeys = usePressedKeys(targetRef, isEyeNavigationKey);
 
   useFrame((state, delta) => {
+    const { activeActions } = useRemoteControlStore.getState();
     const pose = stepEyePose(
       poseRef.current,
-      getMovementIntent(pressedKeys.current),
+      getMovementIntent(pressedKeys.current, activeActions),
       delta,
       bounds,
     );

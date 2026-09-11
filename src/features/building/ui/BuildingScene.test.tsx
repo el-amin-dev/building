@@ -26,7 +26,7 @@ const INTERIOR_DESCRIPTION =
 const THIRD_PERSON_DESCRIPTION =
   'Third-person 3D view following your person inside the chamber. Move and look around with the keys listed in the navigation hint.';
 const HINT_DESCRIPTION =
-  'W moves forward, S moves back, A steps left, D steps right, J turns left, L turns right, I looks up, K looks down. V switches between first-person and third-person view. Keys follow their positions on a QWERTY keyboard. Press Tab to reach the view toggle, then the Third person toggle. After using the Third person toggle with the keyboard, press Shift+Tab twice to return to the view.';
+  'W moves forward, S moves back, A steps left, D steps right, J turns left, L turns right, I looks up, K looks down. V switches between first-person and third-person view. Keys follow their positions on a QWERTY keyboard. Every movement is also available on the on-screen remote control in the HUD, which needs no keyboard: hold one of its buttons with a pointer or a finger, or with Space or Enter while the button has focus. Press Tab to reach the view toggle, then the Third person toggle, then the remote control buttons. After using the Third person toggle with the keyboard, press Shift+Tab twice to return to the view.';
 
 function renderScene() {
   return render(

@@ -2,6 +2,7 @@ import type { RootState } from '@react-three/fiber';
 import { act, fireEvent, render } from '@testing-library/react';
 import { PerspectiveCamera } from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useRemoteControlStore } from '../application/remoteControlStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
 import { BASE_CHAMBER_SPEC, getClearRect, getWalkableBounds } from '../domain/chamber.ts';
 import { createInitialEyePose, EYE_NAVIGATION_CONFIG } from '../domain/eyeNavigation.ts';
@@ -47,6 +48,7 @@ describe('InteriorExplorer', () => {
 
   beforeEach(() => {
     useViewStore.setState(useViewStore.getInitialState(), true);
+    useRemoteControlStore.setState(useRemoteControlStore.getInitialState(), true);
     target = document.createElement('div');
     target.tabIndex = 0;
     document.body.appendChild(target);
@@ -93,6 +95,44 @@ describe('InteriorExplorer', () => {
     expect(camera.position.y).toBeCloseTo(PERSON_SPEC.eyeHeight);
     expect(camera.position.z).toBeCloseTo(START_POSE.z);
     expect(camera.rotation.y).toBeCloseTo(START_POSE.yaw);
+  });
+
+  it('walks while the remote control holds an action, with no keyboard event', () => {
+    renderExplorer();
+    runFrame(SETTLE_DELTA_SECONDS);
+
+    act(() => {
+      useRemoteControlStore.getState().pressAction('moveForward');
+    });
+    runFrame(WALK_DELTA_SECONDS);
+
+    expect(camera.position.x).toBeLessThan(START_POSE.x);
+    expect(camera.position.z).toBeLessThan(START_POSE.z);
+  });
+
+  it('releases every held remote action when it unmounts', () => {
+    const { unmount } = renderExplorer();
+    act(() => {
+      useRemoteControlStore.getState().pressAction('turnLeft');
+    });
+    expect(useRemoteControlStore.getState().activeActions.size).toBe(1);
+
+    unmount();
+
+    expect(useRemoteControlStore.getState().activeActions.size).toBe(0);
+  });
+
+  it('releases every held remote action when the camera mode changes', () => {
+    renderExplorer();
+    act(() => {
+      useRemoteControlStore.getState().pressAction('moveForward');
+    });
+
+    act(() => {
+      useViewStore.getState().toggleInteriorCameraMode();
+    });
+
+    expect(useRemoteControlStore.getState().activeActions.size).toBe(0);
   });
 
   it('follows the camera mode of the view store without resetting the pose', () => {

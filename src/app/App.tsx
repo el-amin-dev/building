@@ -2,6 +2,7 @@ import { BuildingScene } from '../features/building/ui/BuildingScene.tsx';
 import { CameraModeToggle } from '../features/building/ui/CameraModeToggle.tsx';
 import { DebugPanel } from '../features/building/ui/DebugPanel.tsx';
 import { NavigationHint } from '../features/building/ui/NavigationHint.tsx';
+import { RemoteControl } from '../features/building/ui/RemoteControl.tsx';
 import { ViewModeToggle } from '../features/building/ui/ViewModeToggle.tsx';
 import { appConfig } from './config.ts';
 
@@ -22,6 +23,7 @@ export function App() {
             <CameraModeToggle />
           </div>
           <NavigationHint />
+          <RemoteControl />
         </div>
       </div>
       <DebugPanel visible={appConfig.showDebugPanel} />

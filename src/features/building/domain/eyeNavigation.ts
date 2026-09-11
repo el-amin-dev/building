@@ -13,16 +13,26 @@
 
 import type { PlanRect } from './planGeometry.ts';
 
-/** A navigation command that a key can trigger. */
-export type EyeAction =
-  | 'moveForward'
-  | 'moveBackward'
-  | 'strafeLeft'
-  | 'strafeRight'
-  | 'turnLeft'
-  | 'turnRight'
-  | 'lookUp'
-  | 'lookDown';
+/**
+ * Every navigation command of the eye, in HUD reading order: move, strafe, turn, look.
+ *
+ * The actions are the vocabulary of the navigation: a physical key
+ * ({@link EYE_KEY_BINDINGS}) and an on-screen control both name one of these, so neither
+ * input path has to imitate the other. Frozen.
+ */
+export const EYE_ACTIONS = Object.freeze([
+  'moveForward',
+  'moveBackward',
+  'strafeLeft',
+  'strafeRight',
+  'turnLeft',
+  'turnRight',
+  'lookUp',
+  'lookDown',
+] as const);
+
+/** A navigation command, triggered by a key or by an on-screen control. */
+export type EyeAction = (typeof EYE_ACTIONS)[number];
 
 /**
  * Key bindings of the eye navigation, keyed by `KeyboardEvent.code` so that
@@ -52,6 +62,11 @@ export function isEyeNavigationKey(code: string): boolean {
   return Object.hasOwn(EYE_KEY_BINDINGS, code);
 }
 
+/** The action a physical key triggers, or `undefined` when it is not bound. */
+function getEyeAction(code: string): EyeAction | undefined {
+  return isEyeNavigationKey(code) ? EYE_KEY_BINDINGS[code] : undefined;
+}
+
 /** A signed direction along one navigation axis: negative, none or positive. */
 export type Axis = -1 | 0 | 1;
 
@@ -71,25 +86,52 @@ export interface MovementIntent {
   readonly look: Axis;
 }
 
+/** No action at all: the default second argument of {@link getMovementIntent}. Read-only. */
+const NO_ACTIONS: ReadonlySet<EyeAction> = new Set<EyeAction>();
+
 /**
- * Derives the movement intent from the set of physical keys held down.
+ * Derives the movement intent from the actions currently being asked for.
  *
- * Unknown key codes are ignored and opposite actions cancel to `0`.
+ * This is the single rule both input paths share: the keyboard maps its held keys to
+ * actions, an on-screen control names them directly. Values that are not
+ * {@link EyeAction}s are ignored, duplicates make no difference and opposite actions
+ * cancel to `0`.
  *
- * @param pressedCodes - The `KeyboardEvent.code` values currently pressed.
+ * @param actions - The actions being asked for, in any order and with any repetitions.
  * @returns The signed intent along each navigation axis.
  */
-export function getMovementIntent(pressedCodes: ReadonlySet<string>): MovementIntent {
-  const actions = new Set<EyeAction>();
+export function getIntentFromActions(actions: Iterable<EyeAction>): MovementIntent {
+  return toIntent(new Set(actions));
+}
+
+/**
+ * Derives the movement intent from the physical keys held down, plus any actions asked
+ * for by another input (e.g. the on-screen remote control).
+ *
+ * Unknown key codes are ignored, an action asked for by both inputs counts once and
+ * opposite actions cancel to `0`.
+ *
+ * @param pressedCodes - The `KeyboardEvent.code` values currently pressed.
+ * @param extraActions - Actions held outside the keyboard; none by default.
+ * @returns The signed intent along each navigation axis.
+ */
+export function getMovementIntent(
+  pressedCodes: ReadonlySet<string>,
+  extraActions: Iterable<EyeAction> = NO_ACTIONS,
+): MovementIntent {
+  const actions = new Set<EyeAction>(extraActions);
   for (const code of pressedCodes) {
-    if (isEyeNavigationKey(code)) {
-      const action = EYE_KEY_BINDINGS[code];
-      if (action !== undefined) {
-        actions.add(action);
-      }
+    const action = getEyeAction(code);
+    if (action !== undefined) {
+      actions.add(action);
     }
   }
 
+  return toIntent(actions);
+}
+
+/** Reduces the held actions to one signed value per navigation axis. */
+function toIntent(actions: ReadonlySet<EyeAction>): MovementIntent {
   return {
     move: toAxis(actions.has('moveForward'), actions.has('moveBackward')),
     strafe: toAxis(actions.has('strafeRight'), actions.has('strafeLeft')),

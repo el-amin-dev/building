@@ -1,10 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
 
 /** Compact key summary shown on the HUD; `aria-hidden`, so it is found by text, not by role. */
-const INTERIOR_HINT_TEXT = 'Move: W A S D · Look: I J K L · Person view: V';
+const INTERIOR_HINT_TEXT =
+  'Move: W A S D · Look: I J K L · Person view: V · or use the on-screen remote control';
 /** Full key description the interior region is described by (visually hidden). */
 const INTERIOR_HINT_DESCRIPTION =
-  'W moves forward, S moves back, A steps left, D steps right, J turns left, L turns right, I looks up, K looks down. V switches between first-person and third-person view. Keys follow their positions on a QWERTY keyboard. Press Tab to reach the view toggle, then the Third person toggle. After using the Third person toggle with the keyboard, press Shift+Tab twice to return to the view.';
+  'W moves forward, S moves back, A steps left, D steps right, J turns left, L turns right, I looks up, K looks down. V switches between first-person and third-person view. Keys follow their positions on a QWERTY keyboard. Every movement is also available on the on-screen remote control in the HUD, which needs no keyboard: hold one of its buttons with a pointer or a finger, or with Space or Enter while the button has focus. Press Tab to reach the view toggle, then the Third person toggle, then the remote control buttons. After using the Third person toggle with the keyboard, press Shift+Tab twice to return to the view.';
 /** Accessible name of the view toggle button. */
 const VIEW_TOGGLE_NAME = 'Interior view';
 /** Accessible name of the camera mode toggle button, shown in the interior view only. */
@@ -39,11 +40,12 @@ const UNFOCUSED_KEY_HOLD_MS = 500;
 /**
  * Captures the canvas with the whole HUD overlay masked, so only the rendered scene is compared.
  *
- * The HUD (view toggle panel, camera toggle panel and navigation hint) overlays the canvas, and
- * its status text and `aria-pressed` colours change with the camera mode; unmasked, those alone
- * would make a frame comparison pass. The overlay is masked as one full-width block, found as
- * the child of `<main>` holding the status: masking each panel on its own is not enough, since
- * the panels resize with the status text and a mask of another size changes the frame by itself.
+ * The HUD (view toggle panel, camera toggle panel, navigation hint and remote control) overlays
+ * the canvas, and its status text and `aria-pressed` colours change with the camera mode;
+ * unmasked, those alone would make a frame comparison pass. The overlay is masked as one
+ * full-width block, found as the child of `<main>` holding the status: masking each panel on its
+ * own is not enough, since the panels resize with the status text and a mask of another size
+ * changes the frame by itself.
  */
 async function captureScene(page: Page): Promise<Buffer> {
   return page.locator('canvas').screenshot({ mask: [getHudOverlay(page)] });

@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
+import { useRemoteControlStore } from '../application/remoteControlStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
 import { createInitialEyePose } from '../domain/eyeNavigation.ts';
 import type { EyePose } from '../domain/eyeNavigation.ts';
@@ -30,13 +31,26 @@ export interface InteriorExplorerProps {
  * the opposite corner. Switching between first and third person (`interiorCameraMode` in
  * the view store) keeps the pose.
  *
+ * It also releases every action held on the on-screen `RemoteControl` when it unmounts
+ * (leaving the interior view) and whenever the camera mode changes: the pad can outlive
+ * both, and a held action nobody can release any more would keep the person walking or
+ * spinning forever.
+ *
  * @param props - {@link InteriorExplorerProps}
  * @returns The interior camera controls and the person model.
  */
 export function InteriorExplorer({ targetRef, bounds, roomBox }: InteriorExplorerProps) {
   const cameraMode = useViewStore((state) => state.interiorCameraMode);
+  const releaseAllActions = useRemoteControlStore((state) => state.releaseAllActions);
   const [initialPose] = useState(() => createInitialEyePose(bounds));
   const poseRef = useRef<EyePose>(initialPose);
+
+  useEffect(
+    () => () => {
+      releaseAllActions();
+    },
+    [releaseAllActions, cameraMode],
+  );
 
   return (
     <>
