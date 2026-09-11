@@ -56,6 +56,11 @@ const NEGATIVE_OFF_GRID_VALUE = -0.304;
 const NEGATIVE_GRID_VALUE = -0.3;
 const NEGATIVE_QUARTER_VALUE = -1.25;
 const ALTERED_VALUE = 99;
+const HALF_CENTIMETRE_VALUE = 0.005;
+const ONE_CENTIMETRE = 0.01;
+const ONE_AND_A_HALF_CENTIMETRE_VALUE = 0.015;
+const TWO_CENTIMETRES = 0.02;
+const BELOW_HALF_CENTIMETRE_VALUE = 0.004;
 
 const QUARTER_INSET = 0.25;
 const WALL_INSET = 0.3;
@@ -118,8 +123,27 @@ describe('planGeometry', () => {
       expect(toPlanLength(NEGATIVE_OFF_GRID_VALUE)).toBe(NEGATIVE_GRID_VALUE);
     });
 
+    it('rounds a half centimetre away from zero, symmetrically', () => {
+      expect(toPlanLength(ONE_AND_A_HALF_CENTIMETRE_VALUE)).toBe(TWO_CENTIMETRES);
+      expect(toPlanLength(-ONE_AND_A_HALF_CENTIMETRE_VALUE)).toBe(-TWO_CENTIMETRES);
+      expect(toPlanLength(HALF_CENTIMETRE_VALUE)).toBe(ONE_CENTIMETRE);
+      expect(toPlanLength(-HALF_CENTIMETRE_VALUE)).toBe(-ONE_CENTIMETRE);
+    });
+
+    it('returns +0, never -0, when a negative value rounds to zero', () => {
+      expect(Object.is(toPlanLength(-BELOW_HALF_CENTIMETRE_VALUE), 0)).toBe(true);
+      expect(Object.is(toPlanLength(BELOW_HALF_CENTIMETRE_VALUE), 0)).toBe(true);
+      expect(Object.is(toPlanLength(-0), 0)).toBe(true);
+    });
+
     it('keeps grid values unchanged', () => {
       expect(toPlanLength(GRID_VALUE)).toBe(GRID_VALUE);
+      expect(toPlanLength(NEGATIVE_QUARTER_VALUE)).toBe(NEGATIVE_QUARTER_VALUE);
+    });
+
+    it('keeps infinities', () => {
+      expect(toPlanLength(Number.POSITIVE_INFINITY)).toBe(Number.POSITIVE_INFINITY);
+      expect(toPlanLength(Number.NEGATIVE_INFINITY)).toBe(Number.NEGATIVE_INFINITY);
     });
 
     it('returns NaN for NaN', () => {
@@ -315,6 +339,30 @@ describe('planGeometry', () => {
       expect(insetRect(RECT, -WALL_INSET)).toEqual(
         makeRect(OUTSET_MIN_X, OUTSET_MAX_X, OUTSET_MIN_Z, OUTSET_MAX_Z),
       );
+    });
+
+    it('keeps a rectangle centred on the origin symmetric for an off-grid inset', () => {
+      const CENTRED_HALF_SIZE = 0.5;
+      const HALF_CENTIMETRE_INSET = 0.305;
+      const CENTRED_INSET_HALF_SIZE = 0.2;
+      const centred = makeRect(
+        -CENTRED_HALF_SIZE,
+        CENTRED_HALF_SIZE,
+        -CENTRED_HALF_SIZE,
+        CENTRED_HALF_SIZE,
+      );
+      const result = insetRect(centred, HALF_CENTIMETRE_INSET);
+
+      expect(result).toEqual(
+        makeRect(
+          -CENTRED_INSET_HALF_SIZE,
+          CENTRED_INSET_HALF_SIZE,
+          -CENTRED_INSET_HALF_SIZE,
+          CENTRED_INSET_HALF_SIZE,
+        ),
+      );
+      expect(result.minX).toBe(-result.maxX);
+      expect(result.minZ).toBe(-result.maxZ);
     });
 
     it('returns an equal rectangle for a zero inset', () => {

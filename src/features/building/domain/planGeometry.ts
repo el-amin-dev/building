@@ -58,14 +58,21 @@ export function makeRect(minX: number, maxX: number, minZ: number, maxZ: number)
  * Snaps a length or coordinate onto the centimetre plan grid.
  *
  * Removes floating-point noise from arithmetic on grid values, so that for
- * example `toPlanLength(3.7 - 0.3) === 3.4` exactly.
+ * example `toPlanLength(3.7 - 0.3) === 3.4` exactly. Rounding is symmetric
+ * about zero: a value exactly halfway between two centimetres rounds away from
+ * zero, so `toPlanLength(-v) === -toPlanLength(v)` for every non-zero result,
+ * and a result of zero is always `+0`, never `-0`.
  *
  * @param value - A length or coordinate, in metres.
- * @returns The value rounded to the nearest centimetre, in metres. Non-finite
- *   input is returned as `NaN` or `±Infinity`.
+ * @returns The value rounded to the nearest centimetre (halves away from zero),
+ *   in metres, with `-0` normalised to `0`. Non-finite input is returned as
+ *   `NaN` or `±Infinity`.
  */
 export function toPlanLength(value: number): number {
-  return Math.round(value * CENTIMETRES_PER_METRE) / CENTIMETRES_PER_METRE;
+  const magnitude = Math.round(Math.abs(value) * CENTIMETRES_PER_METRE) / CENTIMETRES_PER_METRE;
+  const snapped = Math.sign(value) * magnitude;
+  // `-0 === 0`, so this turns both zeros into +0.
+  return snapped === 0 ? 0 : snapped;
 }
 
 /**

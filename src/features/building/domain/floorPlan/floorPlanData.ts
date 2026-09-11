@@ -82,8 +82,12 @@ const SPACES: readonly Space[] = Object.freeze([
   defineSpace('linkCorridor', 'Link corridor', 'circulation', [[1.6, 7.0, 5.6, 6.5]]),
   // Brief §4.3: service row (B side).
   defineSpace('controlCenter', 'Control center', 'room', [[1.6, 3.8, 6.7, 8.4]]),
-  // Brief §4.3: net L (south arm, notch fill, east arm) minus the guest-sanitair
-  // block x 8.00–9.80 z 6.90–8.40.
+  // Brief §4.3: the net L, i.e. the gross L minus the guest-sanitair block
+  // x 8.00–9.80 z 6.90–8.40. Three rects: [0] x 4.00–8.00 z 6.70–8.40, the south
+  // arm west of the sanitair block; [1] x 7.20–8.00 z 5.60–6.70, the east-arm
+  // strip west of x 8.00; [2] x 8.00–9.80 z 5.60–6.90, the east arm east of
+  // x 8.00, down to the sanitair's north wall. The link-corridor notch
+  // (x 4.00–7.20 z 5.60–6.70) is not part of the room.
   defineSpace('guestRoom', 'Guest room', 'room', [
     [4.0, 8.0, 6.7, 8.4],
     [7.2, 8.0, 5.6, 6.7],

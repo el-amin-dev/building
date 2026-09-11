@@ -4,7 +4,7 @@
  * Validation is pure: it reads the plan and either returns it unchanged or
  * throws a `RangeError` naming the offending field, space ids and rect index.
  */
-import { isOnPlanGrid, rectContainsRect, rectsOverlap } from '../planGeometry.ts';
+import { isOnPlanGrid, rectContainsRect, rectsOverlap, toPlanLength } from '../planGeometry.ts';
 import type { PlanRect } from '../planGeometry.ts';
 import type { FloorPlan, SpaceId } from './types.ts';
 
@@ -121,7 +121,7 @@ function locateRects(plan: FloorPlan): readonly LocatedRect[] {
 
 /**
  * Checks that every coordinate is finite and on the centimetre grid, and that
- * no rect is inverted or empty.
+ * no rect is inverted or empty once its coordinates are snapped to the grid.
  *
  * @param rects - The located rects to check.
  * @throws RangeError naming the space id, rect index and coordinate.
@@ -136,7 +136,12 @@ function checkRectShapes(rects: readonly LocatedRect[]): void {
         );
       }
     }
-    if (rect.minX >= rect.maxX || rect.minZ >= rect.maxZ) {
+    // Compare the grid-snapped values: raw values within LENGTH_TOLERANCE of
+    // each other would otherwise pass as a non-empty rect.
+    if (
+      toPlanLength(rect.minX) >= toPlanLength(rect.maxX) ||
+      toPlanLength(rect.minZ) >= toPlanLength(rect.maxZ)
+    ) {
       throw new RangeError(
         `${formatLocation(located)} must have minX < maxX and minZ < maxZ, got ${formatRect(rect)}`,
       );
@@ -226,7 +231,7 @@ function checkJoinOverrides(plan: FloorPlan): void {
  * 2. space ids are unique;
  * 3. every space has at least one rect;
  * 4. every rect coordinate is finite and on the centimetre grid, with
- *    `minX < maxX` and `minZ < maxZ`;
+ *    `minX < maxX` and `minZ < maxZ` after snapping to the grid;
  * 5. every rect lies within `interior`;
  * 6. no two rects overlap, across spaces or within one space (touching edges
  *    are allowed);

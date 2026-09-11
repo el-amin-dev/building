@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { makeRect, toPlanLength } from '../planGeometry.ts';
+import { LENGTH_TOLERANCE, makeRect, toPlanLength } from '../planGeometry.ts';
 import type { PlanRect } from '../planGeometry.ts';
 import { WALL_SPEC } from '../wallSpec.ts';
 import { FLOOR_PLAN } from './floorPlanData.ts';
@@ -27,6 +27,9 @@ const OVERLAP_Z = 4.9;
 const NEGATIVE_THICKNESS = -0.2;
 const KITCHEN_SHIFT_X = -0.25;
 const FIRST_RECT = 0;
+const HALF = 0.5;
+/** A width that passes the grid check but snaps to zero. */
+const SUB_TOLERANCE_WIDTH = LENGTH_TOLERANCE * HALF;
 
 const SMALL_PLOT = makeRect(PLOT_MIN, PLOT_MAX_X, PLOT_MIN, PLOT_MAX_Z);
 const SMALL_INTERIOR = makeRect(INTERIOR_MIN, INTERIOR_MAX_X, INTERIOR_MIN, INTERIOR_MAX_Z);
@@ -152,6 +155,35 @@ const REJECTION_CASES: readonly { label: string; plan: FloorPlan; offender: stri
       spaces: [
         KITCHEN,
         room('laundry', [makeRect(LAUNDRY_MAX_X, LAUNDRY_MIN_X, INTERIOR_MIN, INTERIOR_MAX_Z)]),
+      ],
+    }),
+    offender: 'laundry',
+  },
+  {
+    label: 'a rect whose width is below the tolerance (empty once snapped to the grid)',
+    plan: smallPlan({
+      spaces: [
+        KITCHEN,
+        room('laundry', [
+          makeRect(
+            UTILITY_MIN_X,
+            UTILITY_MIN_X + SUB_TOLERANCE_WIDTH,
+            INTERIOR_MIN,
+            INTERIOR_MAX_Z,
+          ),
+        ]),
+      ],
+    }),
+    offender: 'laundry',
+  },
+  {
+    label: 'a rect whose depth is below the tolerance (empty once snapped to the grid)',
+    plan: smallPlan({
+      spaces: [
+        KITCHEN,
+        room('laundry', [
+          makeRect(LAUNDRY_MIN_X, LAUNDRY_MAX_X, SPLIT_Z, SPLIT_Z + SUB_TOLERANCE_WIDTH),
+        ]),
       ],
     }),
     offender: 'laundry',

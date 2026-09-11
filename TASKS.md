@@ -85,7 +85,7 @@
 - [ ] V key (focused view only) and HUD "Third person" toggle button; navigation hint updated + tests
 - [ ] e2e: V and the button switch views, walking works in both
 - [ ] ADR-007 third-person view; RUNBOOK "Controls" updated
-- [ ] DoD gate → PRs #1, #2, #3 merged
+- [ ] DoD gate → issues #1, #2, #3 closed by merged pull requests
 
 ## Part 2 — Built floor: walls, ports, openings, light
 

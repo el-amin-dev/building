@@ -60,26 +60,69 @@ const JOIN_EXCEPTIONS: readonly (readonly [SpaceId, SpaceId, number])[] = [
   ['kitchen', 'balconySlabB', WALL_SPEC.voidFacing],
 ];
 
-/** Neighbour ids, derived by hand from the clear rects: facing faces within 0.30 m that overlap. */
-const EXPECTED_NEIGHBOURS: readonly (readonly [SpaceId, readonly SpaceId[]])[] = [
-  [
-    'corridor',
-    [
-      'masterBedroom',
-      'livingRoom',
-      'bedroomMaleKids',
-      'bedroomFemaleKids',
-      'stairsElevator',
-      'linkCorridor',
-      'guestRoom',
-      'kitchen',
-      'laundry',
-      'mainSanitair',
-      'utilityRoom',
-    ],
+/**
+ * Neighbour ids of every space, derived by hand from the clear rects of
+ * `floorPlanData.ts`: two spaces are neighbours when a face of one rect lies
+ * within 0.30 m of a parallel face of the other and the two overlap along that
+ * face by more than the tolerance. Several 0.30 m gaps are 0.30000000000000004
+ * in floating point (for example balconyA maxX 1.30 → x 1.60), so these sets
+ * also guard the tolerance of the contact gap. Symmetric: A lists B iff B lists A.
+ */
+const EXPECTED_NEIGHBOURS: Readonly<Record<SpaceId, readonly SpaceId[]>> = {
+  // x 1.30 → 1.60 along the whole A side.
+  balconyA: ['masterBedroom', 'stairsElevator', 'linkCorridor', 'controlCenter', 'voidWest'],
+  masterBedroom: ['balconyA', 'livingRoom', 'stairsElevator', 'corridor'],
+  livingRoom: ['masterBedroom', 'bedroomMaleKids', 'corridor'],
+  bedroomMaleKids: ['livingRoom', 'bedroomFemaleKids', 'corridor'],
+  bedroomFemaleKids: ['bedroomMaleKids', 'corridor', 'utilityRoom'],
+  stairsElevator: ['balconyA', 'masterBedroom', 'corridor', 'linkCorridor'],
+  corridor: [
+    'masterBedroom',
+    'livingRoom',
+    'bedroomMaleKids',
+    'bedroomFemaleKids',
+    'stairsElevator',
+    'linkCorridor',
+    'guestRoom',
+    'kitchen',
+    'laundry',
+    'mainSanitair',
+    'utilityRoom',
   ],
-  ['laundry', ['corridor', 'kitchen', 'mainSanitair', 'balconySlabB', 'voidEast']],
-  ['utilityRoom', ['bedroomFemaleKids', 'corridor', 'mainSanitair', 'voidEast']],
+  linkCorridor: ['balconyA', 'stairsElevator', 'corridor', 'controlCenter', 'guestRoom'],
+  controlCenter: ['balconyA', 'linkCorridor', 'guestRoom', 'voidWest'],
+  guestRoom: ['corridor', 'linkCorridor', 'controlCenter', 'guestSanitair', 'kitchen', 'voidWest'],
+  guestSanitair: ['guestRoom', 'kitchen', 'voidWest'],
+  kitchen: ['corridor', 'guestRoom', 'guestSanitair', 'laundry', 'balconySlabB', 'voidWest'],
+  laundry: ['corridor', 'kitchen', 'mainSanitair', 'balconySlabB', 'voidEast'],
+  mainSanitair: ['corridor', 'laundry', 'utilityRoom', 'voidEast'],
+  utilityRoom: ['bedroomFemaleKids', 'corridor', 'mainSanitair', 'voidEast'],
+  balconySlabB: ['kitchen', 'laundry', 'voidWest', 'voidEast'],
+  voidWest: ['balconyA', 'controlCenter', 'guestRoom', 'guestSanitair', 'kitchen', 'balconySlabB'],
+  voidEast: ['laundry', 'mainSanitair', 'utilityRoom', 'balconySlabB'],
+};
+
+/** A cross-section join skipped because its line runs inside a wall parallel to the line. */
+interface SkippedJoin {
+  /** Space before the join. */
+  readonly before: SpaceId;
+  /** Space after the join. */
+  readonly after: SpaceId;
+  /** Axis the line runs along. */
+  readonly axis: Axis;
+  /** Position of the line on the other axis, snapped to the plan grid, in metres. */
+  readonly at: number;
+}
+
+/** The line z 7.00 through the kitchen centre, inside the guest-sanitair north wall. */
+const GUEST_KITCHEN_LINE_Z = 7.0;
+/** The line x 7.15 through the west void centre, inside the wall between the link corridor end and the guest room. */
+const CORRIDOR_GUEST_LINE_X = 7.15;
+
+/** Every join the cross-section check is expected to skip; any other skip fails. */
+const EXPECTED_SKIPPED_JOINS: readonly SkippedJoin[] = [
+  { before: 'guestRoom', after: 'kitchen', axis: 'x', at: GUEST_KITCHEN_LINE_Z },
+  { before: 'corridor', after: 'guestRoom', axis: 'z', at: CORRIDOR_GUEST_LINE_X },
 ];
 
 /**
@@ -222,6 +265,66 @@ function runsAlongWall(plan: FloorPlan, axis: Axis, at: number, join: SectionJoi
 }
 
 /**
+ * Checks every join on a cross-section line against its expected thickness.
+ *
+ * Joins at the plot boundary must be exterior walls and joins between two
+ * segments of the same space must be empty. A join that runs alongside a nearby
+ * parallel wall (see {@link runsAlongWall}) is skipped and reported as such.
+ *
+ * @param plan - The floor plan to cut.
+ * @param axis - The axis the line runs along.
+ * @param at - Position of the line on the other axis, in metres.
+ * @returns The mismatch descriptions and the skipped joins of the line.
+ */
+function checkSectionJoins(
+  plan: FloorPlan,
+  axis: Axis,
+  at: number,
+): { readonly mismatches: string[]; readonly skipped: SkippedJoin[] } {
+  const mismatches: string[] = [];
+  const skipped: SkippedJoin[] = [];
+  sectionJoins(plan, axis, at).forEach((join) => {
+    const gap = toPlanLength(join.end - join.start);
+    const label = `${join.before ?? 'plot'} → ${join.after ?? 'plot'} at ${String(join.start)}: gap ${String(gap)}`;
+    if (join.before === undefined || join.after === undefined) {
+      if (gap !== WALL_SPEC.exterior) {
+        mismatches.push(`${label}, exterior ${String(WALL_SPEC.exterior)}`);
+      }
+      return;
+    }
+    if (join.before === join.after) {
+      if (gap !== NO_WALL) {
+        mismatches.push(`${label}, same space`);
+      }
+      return;
+    }
+    if (runsAlongWall(plan, axis, at, join)) {
+      skipped.push({ before: join.before, after: join.after, axis, at: toPlanLength(at) });
+      return;
+    }
+    const expected = getJoinThickness(
+      plan,
+      getSpace(plan, join.before),
+      getSpace(plan, join.after),
+    );
+    if (Math.abs(gap - expected) > LENGTH_TOLERANCE) {
+      mismatches.push(`${label}, join ${String(expected)}`);
+    }
+  });
+  return { mismatches, skipped };
+}
+
+/**
+ * Formats a skipped join as a stable, comparable key.
+ *
+ * @param skip - The skipped join.
+ * @returns A label such as `guestRoom → kitchen along x at 7`.
+ */
+function skippedJoinKey(skip: SkippedJoin): string {
+  return `${skip.before} → ${skip.after} along ${skip.axis} at ${String(skip.at)}`;
+}
+
+/**
  * Checks whether two rects touch along an edge with a shared length.
  *
  * @param a - First rectangle.
@@ -343,33 +446,19 @@ describe('floor plan invariants', () => {
     it.each(CENTRE_LINES)(
       'gives every join along $axis through the centre of $id rect $index its thickness',
       ({ axis, at }) => {
-        const mismatches = sectionJoins(FLOOR_PLAN, axis, at).flatMap((join) => {
-          const gap = toPlanLength(join.end - join.start);
-          const label = `${join.before ?? 'plot'} → ${join.after ?? 'plot'} at ${String(join.start)}: gap ${String(gap)}`;
-          if (join.before === undefined || join.after === undefined) {
-            return gap === WALL_SPEC.exterior
-              ? []
-              : [`${label}, exterior ${String(WALL_SPEC.exterior)}`];
-          }
-          if (join.before === join.after) {
-            return gap === NO_WALL ? [] : [`${label}, same space`];
-          }
-          if (runsAlongWall(FLOOR_PLAN, axis, at, join)) {
-            return [];
-          }
-          const expected = getJoinThickness(
-            FLOOR_PLAN,
-            getSpace(FLOOR_PLAN, join.before),
-            getSpace(FLOOR_PLAN, join.after),
-          );
-          return Math.abs(gap - expected) > LENGTH_TOLERANCE
-            ? [`${label}, join ${String(expected)}`]
-            : [];
-        });
-
-        expect(mismatches).toEqual([]);
+        expect(checkSectionJoins(FLOOR_PLAN, axis, at).mismatches).toEqual([]);
       },
     );
+
+    it('skips exactly the expected joins that run inside a parallel wall', () => {
+      const skippedKeys = new Set(
+        CENTRE_LINES.flatMap(({ axis, at }) =>
+          checkSectionJoins(FLOOR_PLAN, axis, at).skipped.map(skippedJoinKey),
+        ),
+      );
+
+      expect([...skippedKeys].sort()).toEqual(EXPECTED_SKIPPED_JOINS.map(skippedJoinKey).sort());
+    });
   });
 
   describe('join exceptions', () => {
@@ -393,10 +482,39 @@ describe('floor plan invariants', () => {
         expect(contact.gap).toBeCloseTo(thickness, PRECISION_DIGITS);
       });
     });
+
+    it.each(FLOOR_PLAN.joinOverrides.map((override) => override.spaces))(
+      'overrides %s ↔ %s only on a pair that has a contact',
+      (id, neighbourId) => {
+        const contacts = getNeighbours(FLOOR_PLAN, id).filter(
+          (contact) => contact.neighbourId === neighbourId,
+        );
+
+        expect(contacts.length).toBeGreaterThan(0);
+      },
+    );
   });
 
   describe('neighbour sets', () => {
-    it.each(EXPECTED_NEIGHBOURS)('lists the neighbours of %s', (id, expected) => {
+    const expectedEntries = Object.entries(EXPECTED_NEIGHBOURS) as [SpaceId, readonly SpaceId[]][];
+
+    it('lists an expected neighbour set for every space of the plan', () => {
+      expect(Object.keys(EXPECTED_NEIGHBOURS).sort()).toEqual(
+        FLOOR_PLAN.spaces.map((space) => space.id).sort(),
+      );
+    });
+
+    it('keeps the expected sets symmetric: A lists B iff B lists A', () => {
+      const oneSided = expectedEntries.flatMap(([id, neighbours]) =>
+        neighbours
+          .filter((neighbourId) => !EXPECTED_NEIGHBOURS[neighbourId].includes(id))
+          .map((neighbourId) => `${id} → ${neighbourId}`),
+      );
+
+      expect(oneSided).toEqual([]);
+    });
+
+    it.each(expectedEntries)('lists the neighbours of %s', (id, expected) => {
       const actual = new Set(getNeighbours(FLOOR_PLAN, id).map((contact) => contact.neighbourId));
 
       expect([...actual].sort()).toEqual([...expected].sort());

@@ -287,6 +287,37 @@ describe('floorPlan queries', () => {
       });
     });
 
+    it('keeps a 0.30 m contact whose raw gap is just above 0.30 from float noise', () => {
+      const NOISY_WALL_MIN_X = 0.3;
+      const NOISY_WALL_MAX_X = 1.3;
+      const NOISY_NEIGHBOUR_MIN_X = 1.6;
+      const NOISY_NEIGHBOUR_MAX_X = 3.0;
+      const NOISY_MIN_Z = 1.0;
+      const NOISY_MAX_Z = 4.0;
+      const NOISY_GAP = 0.3;
+      const west = makeSpace('balconyA', 'openAir', [
+        makeRect(NOISY_WALL_MIN_X, NOISY_WALL_MAX_X, NOISY_MIN_Z, NOISY_MAX_Z),
+      ]);
+      const east = makeSpace('masterBedroom', 'room', [
+        makeRect(NOISY_NEIGHBOUR_MIN_X, NOISY_NEIGHBOUR_MAX_X, NOISY_MIN_Z, NOISY_MAX_Z),
+      ]);
+      const contacts = getNeighbours(makePlan([west, east]), 'balconyA');
+
+      expect(NOISY_NEIGHBOUR_MIN_X - NOISY_WALL_MAX_X).toBeGreaterThan(NOISY_GAP);
+      expect(contacts).toEqual([
+        {
+          neighbourId: 'masterBedroom',
+          side: 'maxX',
+          rectIndex: 0,
+          neighbourRectIndex: 0,
+          gap: NOISY_GAP,
+          spanMin: NOISY_MIN_Z,
+          spanMax: NOISY_MAX_Z,
+        },
+      ]);
+      expect(contacts[0].gap).toBe(NOISY_GAP);
+    });
+
     it('excludes a neighbour 0.35 m away', () => {
       const tooFar = makeSpace('kitchen', 'room', [TOO_FAR_EAST_RECT]);
 
