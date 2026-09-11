@@ -72,8 +72,8 @@
 
 ## CI
 
-- Workflow `.github/workflows/ci.yml` runs on every pull request and on every push to `main`; a newer push to the same branch cancels the run in progress
-- One job, `ci` (Ubuntu, Node from `.nvmrc`, pnpm from `packageManager`): `pnpm install --frozen-lockfile`, then `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, `pnpm test`, `pnpm build`, `pnpm exec playwright install --with-deps chromium`, `pnpm test:e2e` — the same full gate as locally
+- Workflow `.github/workflows/ci.yml` runs on every pull request and on every push to `main`; a newer push to a pull request cancels that pull request's run in progress, while every push to `main` runs to completion
+- One job, `ci` (Ubuntu, Node from `.nvmrc`, pnpm from `packageManager`, 15-minute timeout): `pnpm install --frozen-lockfile`, then `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, `pnpm test`, `pnpm build`, `pnpm exec playwright install --with-deps chromium`, `pnpm test:e2e` — the same full gate as locally
 - `ci` is the required status check on `main`: a pull request merges only when it is green
 - `pnpm install --frozen-lockfile` fails when `pnpm-lock.yaml` does not match `package.json` → run `pnpm install` locally and commit the lockfile
 - On CI, Playwright retries a failing test twice (a trace is recorded on the first retry) and writes a GitHub annotation plus an HTML report
@@ -87,9 +87,12 @@
 
 ### Playwright report artifact
 
-- Uploaded only when the job fails, as the artifact `playwright-report` (contains `playwright-report/` and `test-results/`), kept 7 days
+- Uploaded whenever the job is not cancelled (passed or failed), so traces of tests that passed on retry are kept too; artifact `playwright-report`, kept 7 days
+- It holds `playwright-report/` and, when tests wrote traces or failure output, `test-results/`
+- No artifact exists when the job failed before the end-to-end tests produced output; `gh run download` then prints `no valid artifacts found to download`
 - `gh run download <run-id> --name playwright-report --dir /tmp/floor-playwright-report` — download and extract it
 - `pnpm exec playwright show-report /tmp/floor-playwright-report/playwright-report` — open the HTML report (traces of retried tests open from the report)
+- If that path does not exist, open `index.html` wherever it sits in the downloaded folder: `find /tmp/floor-playwright-report -name index.html`
 
 ### Rerun
 
@@ -99,7 +102,11 @@
 ### Dependabot
 
 - `.github/dependabot.yml` opens weekly pull requests for npm packages and GitHub Actions; minor and patch updates arrive grouped in one pull request per ecosystem, majors one per dependency
-- The ADR-001 version caps are ignore rules there: `react`, `react-dom`, `@types/react`, `@types/react-dom` stay below 19.3.0, `typescript` below 6.1.0, `jsdom` below 30.0.0, `@types/node` below 23.0.0 — change a cap in `docs/DECISIONS.md` and `.github/dependabot.yml` together
+- Workflow actions stay on major tags (for example `actions/checkout@v7`); Dependabot proposes the next major tag when one is released
+- Version caps are ignore rules there, each with its own reason:
+  - ADR-001: `react`, `react-dom` stay below 19.3.0, `typescript` below 6.1.0, `jsdom` below 30.0.0 — change one of these in `docs/DECISIONS.md` and `.github/dependabot.yml` together
+  - `@types/react`, `@types/react-dom` stay below 19.3.0 to follow the React cap — change them together with the `react` / `react-dom` cap
+  - `@types/node` stays below 23.0.0 so Node types match the Node 22 baseline in `.nvmrc`, the lowest supported runtime — change it together with `.nvmrc`
 - Dependabot pull requests run the same `ci` check as any other pull request
 
 ## Services / Ports

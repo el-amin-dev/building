@@ -9,7 +9,10 @@ updates:
       npm-minor-and-patch:
         patterns: ['*']
         update-types: [minor, patch]
-    # Version caps from ADR-001 (docs/DECISIONS.md): peer ranges and Node support.
+    # Version caps:
+    # - react, react-dom (< 19.3), typescript (< 6.1), jsdom (< 30): ADR-001 in docs/DECISIONS.md.
+    # - @types/react, @types/react-dom (< 19.3): follow the React 19.2 runtime cap above.
+    # - @types/node (< 23): Node types stay at the Node 22 baseline in .nvmrc, the lowest supported runtime.
     ignore:
       - dependency-name: react
         versions: ['>=19.3.0']
