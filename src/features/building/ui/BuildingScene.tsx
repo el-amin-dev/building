@@ -54,20 +54,40 @@ const INTERIOR_REGION_TAB_INDEX = 0;
 const REGION_CLASS_NAME =
   'absolute inset-0 focus:outline-none after:pointer-events-none after:absolute after:inset-0 after:z-10 focus:after:outline-3 focus:after:-outline-offset-3 focus:after:outline-amber-400 focus:after:inset-ring-5 focus:after:inset-ring-slate-900';
 
-const GROUND_COLOR = '#86efac';
+/**
+ * Colour of the ground: a deep green, where it was a light one while the ground sat just
+ * below the slabs.
+ *
+ * There are no shadow maps until Part 4, so the only cue that the side-B void is a hole is
+ * that what shows through it is markedly darker than the lit slabs around it. A dark ground a
+ * storey down reads as the bottom of a shaft; a bright one at the same distance still reads as
+ * more floor.
+ */
+const GROUND_COLOR = '#166534';
 const GROUND_ROTATION_X = -Math.PI / 2;
 /**
- * How far the ground is dropped below the underside of the floor slabs, in metres.
+ * How many storeys below this floor's slab the ground lies.
  *
- * The floor is seen from outside and from above, so the ground must not touch it: at the
- * same level as the underside, the ground and the slabs would be coplanar and z-fight, and
- * the side-B void would read as green land instead of as a hole through the floor. A few
- * centimetres are enough to separate them at every allowed zoom, and small enough that the
- * ground still reads as the ground the building stands on.
+ * This is floor 1 of a building, so the ground genuinely belongs a storey down. It also has to
+ * clear the slabs by enough that the two are never coplanar (which would z-fight) and — the
+ * reason it moved — by enough that the 1.00 m wide side-B void reads as a shaft: at the 0.35 m
+ * the ground used to sit at, the opening showed a flat grey surface rather than a hole through
+ * the floor.
  */
-const GROUND_DROP = 0.05;
-/** Level of the ground plane, in metres: just under the slab underside (`slabs.ts`). */
-const GROUND_LEVEL = -(getSlabThickness() + GROUND_DROP);
+export const GROUND_STOREYS_BELOW_SLAB = 1;
+/**
+ * Level of the ground plane, in metres: {@link GROUND_STOREYS_BELOW_SLAB} floor-to-floor
+ * heights below the underside of the floor slabs.
+ *
+ * Derived from `FLOOR_HEIGHTS.floorToFloor` (`heights.ts`) and the slab thickness
+ * (`getSlabThickness`, the single source of truth for the underside, `slabs.ts`) instead of
+ * being written down, so changing either height moves the ground with the building. Exported
+ * with {@link GROUND_STOREYS_BELOW_SLAB} so the tests can assert that derivation.
+ */
+export const GROUND_LEVEL = -(
+  getSlabThickness() +
+  FLOOR_HEIGHTS.floorToFloor * GROUND_STOREYS_BELOW_SLAB
+);
 
 /**
  * Where the interior viewer may stand and where its follow camera may go: one room.

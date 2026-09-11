@@ -15,14 +15,26 @@ import {
 import type { LightingView } from './lightingSpec.ts';
 import { SceneLighting } from './SceneLighting.tsx';
 
-/** Values standing for a viewer dragging a control, keyed by `folder.control`. */
-const { panelOverrides } = vi.hoisted(() => ({ panelOverrides: new Map<string, unknown>() }));
+/**
+ * The value Leva holds for each control, keyed by `folder.control`, and the seed each
+ * control was last rendered with.
+ *
+ * Kept separate on purpose: a control's value and its seed are two different things in
+ * Leva, and the defect these tests guard lived exactly in the gap between them.
+ */
+const { controlValues, renderedSeeds } = vi.hoisted(() => ({
+  controlValues: new Map<string, unknown>(),
+  renderedSeeds: new Map<string, unknown>(),
+}));
 
-// Leva is replaced by a plain reader of the control schemas: `useControls` resolves each
-// schema (a function, since the component re-seeds on a view change) and returns the seed
-// of every control, with anything in `panelOverrides` standing for a dragged control. No
-// Leva store and no Leva DOM are needed, and the hook stays inert in jsdom — the same
-// reasoning as the `@react-three/fiber` mock in `BuildingScene.test.tsx`.
+// Leva is replaced by a mock of the one behaviour that matters here: its store creates a
+// control's value from the seed the first time that control is rendered and never re-seeds
+// it afterwards (`addData` strips `value` from the properties it overrides, and
+// `useValuesForPath` lets the store win over a fresh seed), while a plain number input
+// survives unmounting, so the value outlives the component. Reproducing that is what makes
+// the regression tests below meaningful: a mock that simply returned the current seed would
+// pass however the component is written. No Leva DOM is needed and the hook stays inert in
+// jsdom — the same reasoning as the `@react-three/fiber` mock in `BuildingScene.test.tsx`.
 vi.mock('leva', () => {
   interface SeededControl {
     readonly value: unknown;
@@ -41,13 +53,22 @@ vi.mock('leva', () => {
         Object.entries(schema).map(([key, control]) => {
           const path = `${folder}.${key}`;
           const seed = isSeeded(control) ? control.value : control;
-          return [key, panelOverrides.has(path) ? panelOverrides.get(path) : seed];
+          renderedSeeds.set(path, seed);
+          if (!controlValues.has(path)) {
+            controlValues.set(path, seed);
+          }
+          return [key, controlValues.get(path)];
         }),
       );
       return [values, vi.fn(), vi.fn()];
     },
   };
 });
+
+/** Stands for a viewer dragging one control: it writes into the store, as Leva would. */
+function dragControl(path: string, value: unknown): void {
+  controlValues.set(path, value);
+}
 
 const FOV_DEGREES = 50;
 const WIDESCREEN_ASPECT = 16 / 9;
@@ -69,13 +90,15 @@ const EXPECTED_ORDER = [BACKGROUND, FOG, ...LIGHTS];
 const ONE = 1;
 
 /** Panel values far from the seeds, to prove no control can change the light count. */
-const OVERRIDE_SUN_INTENSITY = 0;
+const OVERRIDE_SUN_FACTOR = 0;
 const OVERRIDE_ELEVATION_DEGREES = 10;
 const OVERRIDE_AZIMUTH_DEGREES = -170;
-const OVERRIDE_HEMISPHERE_INTENSITY = 3;
-const OVERRIDE_AMBIENT_INTENSITY = 0;
+const OVERRIDE_HEMISPHERE_FACTOR = 3;
+const OVERRIDE_AMBIENT_FACTOR = 0;
 const OVERRIDE_SKY_COLOR = '#101820';
 const OVERRIDE_GROUND_COLOR = '#000000';
+/** How many times the view is toggled back and forth, to prove the spec keeps being applied. */
+const TOGGLE_ROUNDS = 3;
 
 /** An element of the lighting tree, with its props readable by name. */
 type LightingElement = ReactElement<Record<string, unknown>>;
@@ -165,7 +188,8 @@ function expectThreeLights(elements: readonly LightingElement[]): void {
 
 describe('SceneLighting', () => {
   beforeEach(() => {
-    panelOverrides.clear();
+    controlValues.clear();
+    renderedSeeds.clear();
   });
 
   it.each(VIEWS)('lights the %s view with a background, fog and exactly three lights', (view) => {
@@ -242,36 +266,96 @@ describe('SceneLighting', () => {
   });
 
   it.each(VIEWS)('keeps the %s light count whatever the panel is set to', (view) => {
-    panelOverrides.set('Sun.intensity', OVERRIDE_SUN_INTENSITY);
-    panelOverrides.set('Sun.elevationDegrees', OVERRIDE_ELEVATION_DEGREES);
-    panelOverrides.set('Sun.azimuthDegrees', OVERRIDE_AZIMUTH_DEGREES);
-    panelOverrides.set('Sky.hemisphereIntensity', OVERRIDE_HEMISPHERE_INTENSITY);
-    panelOverrides.set('Sky.ambientIntensity', OVERRIDE_AMBIENT_INTENSITY);
-    panelOverrides.set('Sky.skyColor', OVERRIDE_SKY_COLOR);
-    panelOverrides.set('Sky.groundColor', OVERRIDE_GROUND_COLOR);
+    dragControl('Sun.intensityFactor', OVERRIDE_SUN_FACTOR);
+    dragControl('Sun.elevationDegrees', OVERRIDE_ELEVATION_DEGREES);
+    dragControl('Sun.azimuthDegrees', OVERRIDE_AZIMUTH_DEGREES);
+    dragControl('Sky.hemisphereFactor', OVERRIDE_HEMISPHERE_FACTOR);
+    dragControl('Sky.ambientFactor', OVERRIDE_AMBIENT_FACTOR);
+    dragControl('Sky.skyColor', OVERRIDE_SKY_COLOR);
+    dragControl('Sky.groundColor', OVERRIDE_GROUND_COLOR);
     const expected = getSunPosition(
       OVERRIDE_ELEVATION_DEGREES,
       OVERRIDE_AZIMUTH_DEGREES,
       SUN_DISTANCE,
     );
+    const spec = getLightingSpec(view, FRAMING);
 
     const elements = renderLighting(view);
 
     expectThreeLights(elements);
+    // A dragged factor scales the spec of the current view: the panel overrides the
+    // lighting, it never replaces the spec as the value the view is lit from.
     expect(propsOf(elements, DIRECTIONAL_LIGHT)).toMatchObject({
-      intensity: OVERRIDE_SUN_INTENSITY,
+      intensity: spec.sunIntensity * OVERRIDE_SUN_FACTOR,
       position: [expected.x, expected.y, expected.z],
     });
     expect(propsOf(elements, HEMISPHERE_LIGHT)).toMatchObject({
       color: OVERRIDE_SKY_COLOR,
       groundColor: OVERRIDE_GROUND_COLOR,
-      intensity: OVERRIDE_HEMISPHERE_INTENSITY,
+      intensity: spec.hemisphereIntensity * OVERRIDE_HEMISPHERE_FACTOR,
     });
-    expect(propsOf(elements, AMBIENT_LIGHT).intensity).toBe(OVERRIDE_AMBIENT_INTENSITY);
+    expect(propsOf(elements, AMBIENT_LIGHT).intensity).toBe(
+      spec.ambientIntensity * OVERRIDE_AMBIENT_FACTOR,
+    );
     expect(propsOf(elements, FOG).args).toStrictEqual([
       OVERRIDE_SKY_COLOR,
       FRAMING.fogNear,
       FRAMING.fogFar,
     ]);
+  });
+
+  // Regression, the two-shading defect: Leva's store keeps the value a control was first
+  // rendered with, so while the panel owned the intensities themselves, whichever view
+  // rendered first pinned its fill and ambient term onto the other one. The interior then
+  // showed the exterior shading — the same geometry lit two different ways, one stable image
+  // per page load, decided by mount order rather than by the view.
+  it('applies the spec of the current view however many times the view is toggled', () => {
+    const exterior = getLightingSpec('exterior', FRAMING);
+    const interior = getLightingSpec('interior', FRAMING);
+    // Guards the test itself: with equal intensities it could not tell the views apart.
+    expect(interior.hemisphereIntensity).not.toBe(exterior.hemisphereIntensity);
+    expect(interior.ambientIntensity).not.toBe(exterior.ambientIntensity);
+
+    for (let round = 0; round < TOGGLE_ROUNDS; round += 1) {
+      for (const view of VIEWS) {
+        // The store is never cleared inside the loop: every render after the first sees the
+        // values the previous view left behind, exactly as Leva's store does in the browser.
+        const spec = getLightingSpec(view, FRAMING);
+        const elements = renderLighting(view);
+
+        expectThreeLights(elements);
+        expect(propsOf(elements, HEMISPHERE_LIGHT).intensity, view).toBe(spec.hemisphereIntensity);
+        expect(propsOf(elements, AMBIENT_LIGHT).intensity, view).toBe(spec.ambientIntensity);
+      }
+    }
+  });
+
+  it.each(VIEWS)('lights the %s view from its own spec whatever seeded the panel first', (view) => {
+    const other = VIEWS.find((candidate) => candidate !== view);
+    const spec = getLightingSpec(view, FRAMING);
+
+    // The other view renders first, so it is the one that creates every Leva value.
+    renderLighting(other ?? view);
+    const elements = renderLighting(view);
+
+    expect(propsOf(elements, HEMISPHERE_LIGHT).intensity).toBe(spec.hemisphereIntensity);
+    expect(propsOf(elements, AMBIENT_LIGHT).intensity).toBe(spec.ambientIntensity);
+    expect(propsOf(elements, DIRECTIONAL_LIGHT).intensity).toBe(spec.sunIntensity);
+  });
+
+  it('seeds no control from a value that depends on the view', () => {
+    // The root cause, asserted directly: Leva creates a control's value once and keeps it, so
+    // any seed that differs between the views is a value one view can pin onto the other. The
+    // component must hand Leva view-independent seeds only — factors, angles and the colours
+    // both views share — and apply the view's own spec itself.
+    renderLighting('exterior');
+    const exteriorSeeds = Object.fromEntries(renderedSeeds);
+    controlValues.clear();
+    renderedSeeds.clear();
+
+    renderLighting('interior');
+
+    expect(Object.keys(exteriorSeeds).length).toBeGreaterThan(0);
+    expect(Object.fromEntries(renderedSeeds)).toStrictEqual(exteriorSeeds);
   });
 });

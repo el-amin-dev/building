@@ -1,7 +1,9 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useViewStore } from '../application/viewStore.ts';
-import { BuildingScene } from './BuildingScene.tsx';
+import { FLOOR_HEIGHTS } from '../domain/heights.ts';
+import { getSlabThickness } from '../domain/slabs.ts';
+import { BuildingScene, GROUND_LEVEL, GROUND_STOREYS_BELOW_SLAB } from './BuildingScene.tsx';
 import { INTERIOR_REGION_ID, NAVIGATION_HINT_ID } from './hudIds.ts';
 import { NavigationHint } from './NavigationHint.tsx';
 
@@ -18,6 +20,10 @@ vi.mock('@react-three/fiber', () => ({
 vi.mock('@react-three/drei', () => ({ OrbitControls: () => null }));
 
 const INTERIOR_REGION_NAME = 'Interior 3D view';
+/** Decimal digits two lengths must share to count as equal (sub-nanometre). */
+const PRECISION_DIGITS = 9;
+/** Fewest storeys the ground may sit below the slab, for the void to read as a shaft. */
+const MINIMUM_STOREYS_BELOW = 1;
 const CAMERA_MODE_CODE = 'KeyV';
 const EXTERIOR_DESCRIPTION =
   '3D view of the whole floor from outside: its rooms, balconies, corridors and stairs, seen from above the open side of the building. The camera moves by dragging and scrolling; keyboard camera controls are not available in this view yet.';
@@ -168,5 +174,23 @@ describe('BuildingScene', () => {
 
     expect(getCameraMode()).toBe('thirdPerson');
     expect(screen.getByText(THIRD_PERSON_DESCRIPTION)).toBeInTheDocument();
+  });
+});
+
+describe('the ground plane', () => {
+  it('lies a whole storey below the slab underside, derived from FLOOR_HEIGHTS', () => {
+    const slabUnderside = -getSlabThickness();
+
+    // Derived, not written down: the level is the slab underside less whole floor-to-floor
+    // heights, so a change to either height in `heights.ts` moves the ground with the building.
+    expect(GROUND_LEVEL).toBeCloseTo(
+      slabUnderside - FLOOR_HEIGHTS.floorToFloor * GROUND_STOREYS_BELOW_SLAB,
+      PRECISION_DIGITS,
+    );
+    // At least one storey down, so the 1.00 m side-B void reads as a shaft through the floor
+    // rather than as the flat grey strip it read as when the ground sat 0.35 m under the slabs.
+    expect(GROUND_STOREYS_BELOW_SLAB).toBeGreaterThanOrEqual(MINIMUM_STOREYS_BELOW);
+    expect(slabUnderside - GROUND_LEVEL).toBeGreaterThanOrEqual(FLOOR_HEIGHTS.floorToFloor);
+    expect(GROUND_LEVEL).toBeLessThan(slabUnderside);
   });
 });
