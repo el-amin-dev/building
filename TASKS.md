@@ -69,9 +69,9 @@
 - [x] Owner answer: sanitairs → `[open sink [shower][bath]]`, guest `[open sink [bath]]`; sub-room sizes and inner doors proposed in Part 4 (ADR-006)
 - [x] Owner answer: heights confirmed; eye 1.68 from a 1.80 m person; windows 1.20 × 1.20 sill 0.90; stairs + elevator as blocked volumes; self-hosted; public repo (ADR-006)
 - [x] Create public GitHub repo `el-amin-dev/building`, add `origin`, push `main`
-- [ ] CI workflow: frozen install → typecheck → lint → format:check → test → build → Playwright e2e (report on failure)
-- [ ] Protect `main` (PR + green CI, squash-only) and add Dependabot with ignore rules for ADR-001 caps
-- [ ] Issues #1–#6 opened; RUNBOOK "CI" section
+- [x] CI workflow: frozen install → typecheck → lint → format:check → test → build → Playwright e2e (report artifact kept unless cancelled)
+- [x] Protect `main` (PR + green CI, squash-only, linear history) and add Dependabot with ignore rules for the version caps
+- [x] Issues #1–#6 opened; RUNBOOK "CI" section
 - [x] ADR-005 floor coordinates: origin at outer A/C corner, x along A→D, z along C→B, y up, metres
 - [x] `domain/floorPlan` — `Space` types and every brief §4–§5 space with exact clear rects (guest room net L as 3 rects; void split west/east)
 - [x] Wall spec constants: exterior 0.30 · partition 0.20 · void-facing 0.30
