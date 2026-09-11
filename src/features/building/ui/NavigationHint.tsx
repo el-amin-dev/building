@@ -5,7 +5,7 @@ import { NAVIGATION_HINT_ID } from './hudIds.ts';
 const NAVIGATION_HINT_TEXT = 'Move: W A S D · Look: I J K L · Person view: V';
 /** Full key description read by assistive technology in place of the compact summary. */
 const NAVIGATION_HINT_DESCRIPTION =
-  'W moves forward, S moves back, A steps left, D steps right, J turns left, L turns right, I looks up, K looks down. V switches between first-person and third-person view. Keys follow their positions on a QWERTY keyboard. Press Tab to reach the view toggle, then the Third person toggle. After using the HUD buttons with the keyboard, press Shift+Tab to return to the view: once from the view toggle, twice from the Third person toggle.';
+  'W moves forward, S moves back, A steps left, D steps right, J turns left, L turns right, I looks up, K looks down. V switches between first-person and third-person view. Keys follow their positions on a QWERTY keyboard. Press Tab to reach the view toggle, then the Third person toggle. After using the Third person toggle with the keyboard, press Shift+Tab twice to return to the view.';
 
 /**
  * HUD panel listing the interior navigation keys.
@@ -18,8 +18,9 @@ const NAVIGATION_HINT_DESCRIPTION =
  * - a visually hidden (`sr-only`) full description carrying {@link NAVIGATION_HINT_ID}.
  *   It spells out which key moves, turns, looks or switches the camera, notes that the
  *   keys follow their QWERTY positions, says how to reach the HUD toggles with Tab, and how
- *   to return to the view with Shift+Tab after using them (the region precedes the HUD in
- *   the Tab order: region, view toggle, Third person toggle).
+ *   to return to the view with Shift+Tab after using the Third person toggle (the region
+ *   precedes the HUD in the Tab order: region, view toggle, Third person toggle). Only that
+ *   toggle is covered: Enter on the view toggle leaves the interior view.
  *
  * It is not a live region, because the view status of the view mode toggle already
  * announces the change. The interior view region points `aria-describedby` at the full

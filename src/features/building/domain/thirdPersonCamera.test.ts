@@ -8,6 +8,7 @@ import type { PlanRect } from './planGeometry.ts';
 import {
   createCameraRoomBox,
   getThirdPersonCamera,
+  MIN_ELEVATION_RADIANS,
   shouldHidePersonModel,
   THIRD_PERSON_CAMERA_CONFIG,
 } from './thirdPersonCamera.ts';
@@ -406,11 +407,15 @@ describe('thirdPersonCamera', () => {
       expect(lookingDown.position.y).toBeGreaterThan(level.position.y);
     });
 
-    it('lowers the camera when looking up', () => {
+    it('lowers the camera down to head level when looking up, never below', () => {
       const level = getThirdPersonCamera(pose(), LARGE_BOX);
       const lookingUp = getThirdPersonCamera(pose({ pitch: -LOOK_DOWN_PITCH }), LARGE_BOX);
+      const fullyUp = getThirdPersonCamera(pose({ pitch: MAX_PITCH }), LARGE_BOX);
 
       expect(lookingUp.position.y).toBeLessThan(level.position.y);
+      expect(lookingUp.position.y).toBeGreaterThan(lookingUp.target.y);
+      expect(fullyUp.position.y).toBeCloseTo(fullyUp.target.y, PRECISION_DIGITS);
+      expect(fullyUp.distance).toBe(FOLLOW_DISTANCE);
     });
 
     it('stays under a low ceiling and pulls in when looking down', () => {
@@ -421,14 +426,10 @@ describe('thirdPersonCamera', () => {
       expect(camera.position.y).toBeCloseTo(LOW_CEILING_BOX.maxY, PRECISION_DIGITS);
     });
 
-    it('stays above the floor when looking up', () => {
-      const camera = getThirdPersonCamera(
-        pose({ pitch: EYE_NAVIGATION_CONFIG.maxPitch }),
-        CHAMBER_BOX,
-      );
+    it('stays level with the head, inside the room, when looking fully up', () => {
+      const camera = getThirdPersonCamera(pose({ pitch: MAX_PITCH }), CHAMBER_BOX);
 
-      expect(camera.position.y).toBeLessThan(camera.target.y);
-      expect(camera.position.y).toBeGreaterThanOrEqual(CHAMBER_BOX.minY);
+      expect(camera.position.y).toBeCloseTo(camera.target.y, PRECISION_DIGITS);
       expectInsideBox(camera, CHAMBER_BOX);
     });
   });
@@ -453,7 +454,7 @@ describe('thirdPersonCamera', () => {
     it.each([
       ['level', 0, BASE_ELEVATION],
       ['fully down', -MAX_PITCH, MAX_ELEVATION],
-      ['fully up', MAX_PITCH, -MAX_ELEVATION],
+      ['fully up', MAX_PITCH, MIN_ELEVATION_RADIANS],
     ])('maps the %s pitch onto its elevation', (_label, pitch, expected) => {
       const camera = getThirdPersonCamera(pose({ pitch }), LARGE_BOX);
 
@@ -474,13 +475,96 @@ describe('thirdPersonCamera', () => {
 
     it.each([
       ['looking down', -BEYOND_LIMIT_PITCH, MAX_ELEVATION],
-      ['looking up', BEYOND_LIMIT_PITCH, -MAX_ELEVATION],
+      ['looking up', BEYOND_LIMIT_PITCH, MIN_ELEVATION_RADIANS],
     ])('clamps the elevation when %s beyond the limit', (_label, pitch, expected) => {
       const camera = getThirdPersonCamera(pose({ pitch }), LARGE_BOX);
 
       expect(camera.distance).toBeGreaterThan(0);
       expect(elevationOf(camera)).toBeCloseTo(expected, PRECISION_DIGITS);
     });
+
+    it('never places the camera below head height, whatever the pose', () => {
+      /** Number of equal steps sampled across each axis of the camera box, walls included. */
+      const POSITION_SAMPLES = 12;
+      /** Number of equal yaw steps sampled across a full turn. */
+      const YAW_SAMPLES = 16;
+      const FULL_TURN = Math.PI + Math.PI;
+      const boxes = [CHAMBER_BOX, LOW_CEILING_BOX];
+      let lowestElevation = Number.POSITIVE_INFINITY;
+      let lowestHeightAboveHead = Number.POSITIVE_INFINITY;
+
+      for (const box of boxes) {
+        const { plan } = box;
+        for (let i = 0; i <= POSITION_SAMPLES; i += 1) {
+          const x = plan.minX + (i / POSITION_SAMPLES) * (plan.maxX - plan.minX);
+          for (let j = 0; j <= POSITION_SAMPLES; j += 1) {
+            const z = plan.minZ + (j / POSITION_SAMPLES) * (plan.maxZ - plan.minZ);
+            for (let k = 0; k < YAW_SAMPLES; k += 1) {
+              const yaw = (k / YAW_SAMPLES) * FULL_TURN;
+              for (let step = 0; step <= PITCH_SAMPLES; step += 1) {
+                const pitch =
+                  -BEYOND_LIMIT_PITCH +
+                  (step / PITCH_SAMPLES) * (BEYOND_LIMIT_PITCH + BEYOND_LIMIT_PITCH);
+                const camera = getThirdPersonCamera({ x, z, yaw, pitch }, box);
+                lowestElevation = Math.min(lowestElevation, camera.elevation);
+                lowestHeightAboveHead = Math.min(
+                  lowestHeightAboveHead,
+                  camera.position.y - camera.target.y,
+                );
+              }
+            }
+          }
+        }
+      }
+
+      expect(lowestElevation).toBeGreaterThanOrEqual(MIN_ELEVATION_RADIANS);
+      expect(lowestHeightAboveHead).toBeGreaterThanOrEqual(-TOLERANCE);
+    });
+  });
+
+  describe('getThirdPersonCamera looking up with a wall close behind', () => {
+    /** Number of equal pitch steps from level to fully up. */
+    const LOOK_UP_STEPS = 160;
+    /**
+     * Largest camera movement allowed between two consecutive pitch steps (0.5° each), in
+     * metres. A flip below the head moved the camera by 0.35 m to 1 m in a single step.
+     */
+    const MAX_STEP_MOVEMENT = 0.01;
+
+    it.each([
+      ['back flat against the +z wall', pose({ z: WALKABLE_BOUNDS.maxZ, yaw: YAW_FACING_MINUS_Z })],
+      ['back flat against the -z wall', pose({ z: WALKABLE_BOUNDS.minZ, yaw: YAW_FACING_PLUS_Z })],
+      ['back flat against the +x wall', pose({ x: WALKABLE_BOUNDS.maxX, yaw: YAW_FACING_MINUS_X })],
+      ['back flat against the -x wall', pose({ x: WALKABLE_BOUNDS.minX, yaw: YAW_FACING_PLUS_X })],
+      ['back to the start corner', START_POSE],
+      [
+        'a wall 0.5 m behind',
+        pose({ z: CHAMBER_BOX.plan.maxZ - WALL_GAP, yaw: YAW_FACING_MINUS_Z }),
+      ],
+    ] as const)(
+      'stays at or above the head, shows the person and moves smoothly: %s',
+      (_label, start) => {
+        let previous: ThirdPersonCamera | undefined;
+        for (let step = 0; step <= LOOK_UP_STEPS; step += 1) {
+          const pitch = (step / LOOK_UP_STEPS) * MAX_PITCH;
+          const camera = getThirdPersonCamera({ ...start, pitch }, CHAMBER_BOX);
+
+          expect(camera.position.y).toBeGreaterThanOrEqual(camera.target.y - TOLERANCE);
+          expect(shouldHidePersonModel(camera)).toBe(false);
+          expectNotInFront(camera, start.yaw);
+          expectInsideBox(camera, CHAMBER_BOX);
+          if (previous) {
+            const movement = Math.hypot(
+              camera.position.x - previous.position.x,
+              camera.position.y - previous.position.y,
+              camera.position.z - previous.position.z,
+            );
+            expect(movement).toBeLessThanOrEqual(MAX_STEP_MOVEMENT);
+          }
+          previous = camera;
+        }
+      },
+    );
   });
 
   it('clamps a target outside the box into it before following', () => {

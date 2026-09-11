@@ -19,6 +19,10 @@ const KEYBOARD_CLICK_DETAIL = 0;
  * After a pointer click, focus moves back to the interior view region
  * (`INTERIOR_REGION_ID`), so the navigation keys keep working without an extra step.
  * Keyboard activation (Enter or Space) leaves focus on the button, where the user put it.
+ * The two are told apart by `event.detail`, which is 0 for a keyboard click. Some screen
+ * readers (iOS VoiceOver, TalkBack) activate buttons with real pointer events, so focus also
+ * returns to the view there; that is acceptable, because the view precedes the button in the
+ * Tab order and is labelled.
  *
  * @returns The camera mode toggle in the interior view, otherwise `null`.
  */

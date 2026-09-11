@@ -11,6 +11,7 @@
  * closer than the follow distance, the camera is pulled in along its ray. When
  * that would bring it too close to see the body (e.g. with the person's back to
  * a wall), the camera rises toward overhead instead, looking down at the head.
+ * It never goes below head height (see {@link MIN_ELEVATION_RADIANS}).
  */
 
 import { EYE_NAVIGATION_CONFIG } from './eyeNavigation.ts';
@@ -46,11 +47,11 @@ export interface ThirdPersonCameraConfig {
   readonly targetHeight: number;
   /** Angle the camera sits above the target's horizontal at pitch 0, in radians. */
   readonly baseElevation: number;
-  /** Largest absolute elevation of the camera, in radians. */
+  /** Largest elevation of the camera, in radians. */
   readonly maxElevation: number;
   /**
-   * Largest absolute pitch of the person, in radians: pitch ±`maxPitch` maps to elevation
-   * ∓`maxElevation`.
+   * Largest absolute pitch of the person, in radians: pitch −`maxPitch` (looking down) maps to
+   * elevation `maxElevation` and pitch +`maxPitch` (looking up) to {@link MIN_ELEVATION_RADIANS}.
    */
   readonly maxPitch: number;
   /** Distance the camera keeps from walls, floor and ceiling, in metres. */
@@ -80,6 +81,16 @@ const DIRECTION_EPSILON = 1e-12;
  * raised to exactly the threshold distance must not be hidden by a last-bit rounding error.
  */
 const DISTANCE_TOLERANCE_METRES = 1e-9;
+
+/**
+ * Lowest elevation of the third-person camera, in radians: level with the head.
+ *
+ * Below head height, a camera behind the person looks up through the torso and clips it; with the
+ * person's back near a wall, the raise toward overhead would also flip the camera from above the
+ * head to below it as the pitch crosses this value. Looking fully up therefore gives a level view
+ * from behind, never one from below.
+ */
+export const MIN_ELEVATION_RADIANS = 0;
 
 /** Default tuning of the third-person camera. Frozen. */
 export const THIRD_PERSON_CAMERA_CONFIG: ThirdPersonCameraConfig = Object.freeze({
@@ -157,9 +168,10 @@ export function createCameraRoomBox(
  * - target = (pose.x, config.targetHeight, pose.z), clamped into `roomBox` first when it lies
  *   outside, so the ray always starts inside the box;
  * - requested elevation e0: pitch maps piecewise-linearly so that pitch 0 gives
- *   `baseElevation`, pitch −`maxPitch` (looking down) gives +`maxElevation` and pitch
- *   +`maxPitch` (looking up) gives −`maxElevation`; the result is clamped to ±`maxElevation`.
- *   Looking up lowers the camera, looking down raises it, with no dead zone in between;
+ *   `baseElevation`, pitch −`maxPitch` (looking down) gives `maxElevation` and pitch
+ *   +`maxPitch` (looking up) gives {@link MIN_ELEVATION_RADIANS} (level with the head); the
+ *   result is clamped to [`MIN_ELEVATION_RADIANS`, `maxElevation`]. Looking up lowers the
+ *   camera down to head level, never below; looking down raises it, with no dead zone;
  * - direction(e) (unit, from target toward camera) = (sin yaw · cos e, sin e, cos yaw · cos e),
  *   i.e. backward on the plan;
  * - exit(e) = distance along that ray at which it leaves `roomBox`; axes whose direction
@@ -244,8 +256,9 @@ export function getThirdPersonCamera(
 /**
  * Whether the person model should be hidden because the camera is pulled in too close.
  *
- * A distance within rounding slack (1e-9 m) of the threshold still shows the model, so a camera
- * raised to exactly `minBodyVisibleDistance` is never hidden by a rounding error.
+ * A distance within rounding slack (`DISTANCE_TOLERANCE_METRES`) of the threshold still shows the
+ * model, so a camera raised to exactly `minBodyVisibleDistance` is never hidden by a rounding
+ * error.
  *
  * @param camera - The camera placement (see {@link getThirdPersonCamera}).
  * @param config - Camera tuning; defaults to {@link THIRD_PERSON_CAMERA_CONFIG}.
@@ -261,8 +274,9 @@ export function shouldHidePersonModel(
 /**
  * Camera elevation asked for by the person's pitch, before any wall is taken into account.
  *
- * Piecewise-linear: pitch 0 gives `baseElevation`, −`maxPitch` gives +`maxElevation` and
- * +`maxPitch` gives −`maxElevation`; clamped to ±`maxElevation` as a guard.
+ * Piecewise-linear: pitch 0 gives `baseElevation`, −`maxPitch` gives `maxElevation` and
+ * +`maxPitch` gives {@link MIN_ELEVATION_RADIANS}; clamped to [`MIN_ELEVATION_RADIANS`,
+ * `maxElevation`], so the camera never asks to go below head height.
  *
  * @returns The requested elevation, in radians.
  */
@@ -272,8 +286,8 @@ function getRequestedElevation(pitch: number, config: ThirdPersonCameraConfig): 
   const elevation =
     ratio <= 0
       ? baseElevation - ratio * (maxElevation - baseElevation)
-      : baseElevation - ratio * (maxElevation + baseElevation);
-  return clamp(elevation, -maxElevation, maxElevation);
+      : baseElevation + ratio * (MIN_ELEVATION_RADIANS - baseElevation);
+  return clamp(elevation, MIN_ELEVATION_RADIANS, maxElevation);
 }
 
 /**

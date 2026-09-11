@@ -4,7 +4,7 @@ import { expect, test, type Page } from '@playwright/test';
 const INTERIOR_HINT_TEXT = 'Move: W A S D · Look: I J K L · Person view: V';
 /** Full key description the interior region is described by (visually hidden). */
 const INTERIOR_HINT_DESCRIPTION =
-  'W moves forward, S moves back, A steps left, D steps right, J turns left, L turns right, I looks up, K looks down. V switches between first-person and third-person view. Keys follow their positions on a QWERTY keyboard. Press Tab to reach the view toggle, then the Third person toggle. After using the HUD buttons with the keyboard, press Shift+Tab to return to the view: once from the view toggle, twice from the Third person toggle.';
+  'W moves forward, S moves back, A steps left, D steps right, J turns left, L turns right, I looks up, K looks down. V switches between first-person and third-person view. Keys follow their positions on a QWERTY keyboard. Press Tab to reach the view toggle, then the Third person toggle. After using the Third person toggle with the keyboard, press Shift+Tab twice to return to the view.';
 /** Accessible name of the view toggle button. */
 const VIEW_TOGGLE_NAME = 'Interior view';
 /** Accessible name of the camera mode toggle button, shown in the interior view only. */
@@ -117,6 +117,8 @@ async function expectCanvasVisible(page: Page): Promise<void> {
 
 test.describe('interior navigation', () => {
   test('moves and turns with the keyboard, then returns to the exterior view', async ({ page }) => {
+    // Polling frames rendered by software WebGL comes close to the default test timeout.
+    test.slow();
     const pageErrors: Error[] = [];
     page.on('pageerror', (error) => pageErrors.push(error));
 
@@ -177,8 +179,8 @@ test.describe('interior navigation', () => {
     await expect(cameraToggle).toHaveAttribute('aria-pressed', 'false');
     await expect(status).toHaveText(FIRST_PERSON_STATUS);
 
-    // At the start pose, right after entering, with the person's back in a corner: V must still
-    // move the camera (up and behind the person), which only the masked scene can prove.
+    // At the start pose, right after entering, with the person's back in a corner: pressing V
+    // must change the rendered 3D frame (HUD masked). The unit tests guard the camera raise.
     const firstPersonScene = await captureSettledScene(page);
     await page.keyboard.press(CAMERA_MODE_KEY);
     await expect(cameraToggle).toHaveAttribute('aria-pressed', 'true');
