@@ -21,7 +21,7 @@ import type { SpaceKind } from '../domain/floorPlan/index.ts';
 const PLASTER_WHITE = '#e9e4db';
 /** Plaster shaded one step down, so a parapet reads as an element and not as a wall. */
 const PARAPET_GREY = '#d3ccbf';
-/** Warm beige screed of the rooms, as in the interim chamber's floor. */
+/** Warm beige screed of the rooms. */
 const SCREED_BEIGE = '#d6c7ae';
 /** Slightly cooler, darker screed marking the circulation spaces (stairs, corridors). */
 const CIRCULATION_BEIGE = '#c2b49b';

@@ -4,8 +4,7 @@
  * Part 2 renders the whole floor, but the viewer has no wall collision yet, so
  * walking is still restricted to a single rectangular room instead of the whole
  * plan. This module derives that restriction from the floor plan, in plan
- * coordinates, replacing the clamp the interior view used to take from the
- * origin-centred base chamber.
+ * coordinates.
  *
  * THIS MODULE IS TEMPORARY. Part 3 introduces wall collision against the real
  * plan, after which the viewer walks the whole floor and this module — together

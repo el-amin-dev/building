@@ -2,10 +2,9 @@
  * Turns plan boxes into three.js box geometry, merged into a single buffer.
  *
  * The floor is described by hundreds of {@link PlanBox} extrusions (walls, slabs,
- * parapets, steps). Rendering one mesh per box, as `ChamberModel.tsx` does for the
- * single interim chamber, would cost one draw call each. Every box that shares a
- * material is therefore baked into one {@link BufferGeometry} here, and drawn by a
- * single mesh (`MergedBoxesMesh.tsx`).
+ * parapets, steps). Rendering one mesh per box would cost one draw call each. Every
+ * box that shares a material is therefore baked into one {@link BufferGeometry}
+ * here, and drawn by a single mesh (`MergedBoxesMesh.tsx`).
  *
  * The module is free of React and of the WebGL renderer: it only builds geometry,
  * so it runs and is tested under jsdom.

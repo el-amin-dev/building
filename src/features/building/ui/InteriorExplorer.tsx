@@ -23,7 +23,7 @@ export interface InteriorExplorerProps {
 }
 
 /**
- * The explorer inside the chamber: the person's pose, the interior camera and the person model.
+ * The explorer inside the building: the person's pose, the interior camera and the person model.
  *
  * Rendered inside the canvas only while the interior view is active. It owns the pose,
  * created with `createInitialEyePose(bounds)` once per mount, so every entry into the

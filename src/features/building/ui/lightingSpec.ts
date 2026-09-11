@@ -80,7 +80,7 @@ export const SUN_DISTANCE_FACTOR = 0.5;
 
 /**
  * Colour of the sky: the scene background, the upper half of the hemisphere fill and the
- * fog. The same light blue the exterior view has used since the first chamber.
+ * fog. The same light blue the exterior view has used from the start.
  */
 const SKY_COLOR = '#bfdbfe';
 
