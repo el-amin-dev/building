@@ -1,0 +1,39 @@
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-and-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
+    # Version caps:
+    # - react, react-dom (< 19.3), typescript (< 6.1), jsdom (< 30): ADR-001 in docs/DECISIONS.md.
+    # - @types/react, @types/react-dom (< 19.3): follow the React 19.2 runtime cap above.
+    # - @types/node (< 23): Node types stay at the Node 22 baseline in .nvmrc, the lowest supported runtime.
+    ignore:
+      - dependency-name: react
+        versions: ['>=19.3.0']
+      - dependency-name: react-dom
+        versions: ['>=19.3.0']
+      - dependency-name: '@types/react'
+        versions: ['>=19.3.0']
+      - dependency-name: '@types/react-dom'
+        versions: ['>=19.3.0']
+      - dependency-name: typescript
+        versions: ['>=6.1.0']
+      - dependency-name: jsdom
+        versions: ['>=30.0.0']
+      - dependency-name: '@types/node'
+        versions: ['>=23.0.0']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-and-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
