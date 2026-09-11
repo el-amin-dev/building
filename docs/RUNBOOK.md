@@ -27,6 +27,19 @@
 - `pnpm preview` — serve `dist/` on http://localhost:4173
 - `PREVIEW_SERVER_PORT=4180 pnpm preview` — preview on another port
 
+## Controls
+
+- Exterior view (default): drag to orbit, wheel or pinch to zoom — pointer only (ADR-002)
+- Interior view: activate the "Interior view" toggle; the "Interior 3D view" region takes focus (amber outline), the view opens in the +x/+z corner of the walkable area, 0.25 m from both walls, facing the opposite corner (every entry starts there), and the HUD shows "Move: W A S D · Look: I J K L" (screen readers get a full description of each key and of Tab to the toggle)
+  - `W` / `S` — walk forward / back
+  - `A` / `D` — step left / right
+  - `J` / `L` — turn left / right
+  - `I` / `K` — look up / down (limited to ±80°)
+  - keys act only while the view has focus; Ctrl, Alt and Meta combinations are ignored, and pressing or releasing Meta (Cmd) clears held keys because macOS sends no keyup for them while Cmd is held
+  - keys are physical positions (QWERTY labels): on AZERTY, `W A S D` are the keys labelled Z Q S D
+  - walls stop movement
+- `Tab` from the view moves focus to the "Interior view" toggle; `Enter` on the toggle switches back to the exterior view
+
 ## Test
 
 - `pnpm test` — all unit tests (Vitest; jsdom for `src/`, node for `tooling/`)
@@ -36,6 +49,7 @@
 - `pnpm test:e2e` — builds with the title `Floor E2E`, starts its own preview server on port 4174, runs Playwright on Chromium
 - `E2E_SERVER_PORT=4190 pnpm test:e2e` — end-to-end tests on another port
 - `pnpm test:e2e tests/e2e/smoke.spec.ts` — one end-to-end file
+- `pnpm test:e2e tests/e2e/navigation.spec.ts` — one end-to-end file (interior navigation: walk, turn and return to the exterior view; movement keys ignored while the interior view is not focused)
 
 ## Database
 
@@ -52,9 +66,9 @@
 
 ## Smoke checks
 
-- `pnpm test:e2e` — page title, a visible `<canvas>`, and the "Interior view" toggle switching `aria-pressed` and the "View:" status
+- `pnpm test:e2e` — page title, a visible `<canvas>`, and the "Interior view" toggle switching `aria-pressed` and the "View:" status; `tests/e2e/navigation.spec.ts`: (1) the "Interior 3D view" region takes focus, holding W walks and holding J turns (the canvas changes), Tab to the toggle and Enter return to the exterior view, no page errors; (2) movement keys are ignored while the interior view is not focused
 - `pnpm build && pnpm preview`, then in another shell `curl -s http://localhost:4173/ | grep '<title>'` — expect `<title>Floor</title>`
-- `pnpm dev`, open http://localhost:5173 — placeholder building renders, drag to orbit, Tab to "Interior view" and press Enter to switch the view
+- `pnpm dev`, open http://localhost:5173 — the chamber renders in the exterior view, drag to orbit; Tab to "Interior view" and press Enter: the view takes focus and the first frame shows two walls, the corner between them, the floor and the ceiling; hold W to walk, J / L to turn, I / K to look; walking into a wall stops; Tab to the toggle and press Enter to return to the exterior view
 
 ## Services / Ports
 

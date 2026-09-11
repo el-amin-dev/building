@@ -1,5 +1,6 @@
 import { BuildingScene } from '../features/building/ui/BuildingScene.tsx';
 import { DebugPanel } from '../features/building/ui/DebugPanel.tsx';
+import { NavigationHint } from '../features/building/ui/NavigationHint.tsx';
 import { ViewModeToggle } from '../features/building/ui/ViewModeToggle.tsx';
 import { appConfig } from './config.ts';
 
@@ -14,8 +15,9 @@ export function App() {
       <h1 className="sr-only">{appConfig.appTitle}</h1>
       <BuildingScene />
       <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-start p-4">
-        <div className="pointer-events-auto">
+        <div className="pointer-events-auto flex flex-col items-start gap-2">
           <ViewModeToggle />
+          <NavigationHint />
         </div>
       </div>
       <DebugPanel visible={appConfig.showDebugPanel} />
