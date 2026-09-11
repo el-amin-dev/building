@@ -5,6 +5,7 @@
  * along its depth, all values in metres. Vertical sizes are not handled here;
  * they live in the `FLOOR_HEIGHTS` module.
  */
+import { makeRect } from './planGeometry.ts';
 import type { PlanRect } from './planGeometry.ts';
 
 /** Horizontal dimensions of a rectangular chamber, in metres. */
@@ -64,19 +65,6 @@ export function validateChamberSpec(spec: ChamberSpec): ChamberSpec {
     }
   }
   return spec;
-}
-
-/**
- * Builds a frozen plan rectangle.
- *
- * @param minX - Smallest x coordinate.
- * @param maxX - Largest x coordinate.
- * @param minZ - Smallest z coordinate.
- * @param maxZ - Largest z coordinate.
- * @returns A frozen {@link PlanRect}.
- */
-function makeRect(minX: number, maxX: number, minZ: number, maxZ: number): PlanRect {
-  return Object.freeze({ minX, maxX, minZ, maxZ });
 }
 
 /**
