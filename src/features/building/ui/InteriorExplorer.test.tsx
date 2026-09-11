@@ -4,13 +4,14 @@ import { PerspectiveCamera } from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useRemoteControlStore } from '../application/remoteControlStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
-import { createInitialEyePose, EYE_NAVIGATION_CONFIG } from '../domain/eyeNavigation.ts';
+import { createRoomCentrePose, EYE_NAVIGATION_CONFIG } from '../domain/eyeNavigation.ts';
 import { FLOOR_PLAN } from '../domain/floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from '../domain/heights.ts';
 import { getRoomWalkArea, INTERIM_WALK_SPACE_ID } from '../domain/interimWalkArea.ts';
 import { PERSON_SPEC } from '../domain/person.ts';
 import { getThirdPersonCamera, THIRD_PERSON_CAMERA_CONFIG } from '../domain/thirdPersonCamera.ts';
 import { InteriorExplorer } from './InteriorExplorer.tsx';
+import { isPersonModelVisible } from './personModelParts.ts';
 
 type FrameCallback = (state: RootState, delta: number) => void;
 
@@ -41,7 +42,12 @@ const WALK_AREA = getRoomWalkArea(
 );
 const WALKABLE_BOUNDS = WALK_AREA.bounds;
 const ROOM_BOX = WALK_AREA.roomBox;
-const START_POSE = createInitialEyePose(WALKABLE_BOUNDS);
+const START_POSE = createRoomCentrePose(WALKABLE_BOUNDS);
+/**
+ * Share of the follow distance the camera must keep at the start pose: the point of starting
+ * in the centre is that no wall pulls the camera in, let alone raises it overhead.
+ */
+const NEAR_FOLLOW_DISTANCE_SHARE = 0.9;
 
 describe('InteriorExplorer', () => {
   let target: HTMLDivElement;
@@ -80,7 +86,7 @@ describe('InteriorExplorer', () => {
     callback({ camera } as unknown as RootState, delta);
   };
 
-  it('starts again from the corner pose after an unmount and remount', () => {
+  it('starts again from the room-centre pose after an unmount and remount', () => {
     const { unmount } = renderExplorer();
     fireEvent.keyDown(target, { code: FORWARD_CODE });
     fireEvent.keyDown(target, { code: TURN_CODE });
@@ -107,8 +113,24 @@ describe('InteriorExplorer', () => {
     });
     runFrame(WALK_DELTA_SECONDS);
 
+    // The start pose looks toward -x along the master bedroom's longer axis, so walking
+    // forward lowers x and leaves z where it was.
     expect(camera.position.x).toBeLessThan(START_POSE.x);
-    expect(camera.position.z).toBeLessThan(START_POSE.z);
+    expect(camera.position.z).toBeCloseTo(START_POSE.z);
+  });
+
+  it('shows the mannequin at the start pose, the camera a full follow distance behind', () => {
+    const camera = getThirdPersonCamera(START_POSE, ROOM_BOX);
+    // The camera sits straight behind the person, toward +x, so the maxX face is what limits it.
+    const roomBehind = ROOM_BOX.plan.maxX - START_POSE.x;
+
+    expect(camera.elevation).toBeCloseTo(THIRD_PERSON_CAMERA_CONFIG.baseElevation);
+    expect(camera.distance).toBeCloseTo(roomBehind / Math.cos(camera.elevation));
+    expect(camera.distance).toBeGreaterThan(
+      NEAR_FOLLOW_DISTANCE_SHARE * THIRD_PERSON_CAMERA_CONFIG.followDistance,
+    );
+    expect(camera.distance).toBeGreaterThan(THIRD_PERSON_CAMERA_CONFIG.minBodyVisibleDistance);
+    expect(isPersonModelVisible('thirdPerson', START_POSE, ROOM_BOX)).toBe(true);
   });
 
   it('releases every held remote action when it unmounts', () => {

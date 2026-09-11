@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createInitialEyePose,
+  createRoomCentrePose,
   EYE_ACTIONS,
   EYE_KEY_BINDINGS,
   EYE_NAVIGATION_CONFIG,
@@ -287,6 +288,89 @@ describe('eyeNavigation', () => {
     it('returns a fresh object on each call', () => {
       const first = createInitialEyePose(BASE_WALKABLE_BOUNDS);
       const second = createInitialEyePose(BASE_WALKABLE_BOUNDS);
+      expect(second).not.toBe(first);
+      expect(second).toEqual(first);
+    });
+  });
+
+  describe('createRoomCentrePose', () => {
+    /** Bounds wider than deep, so their longer axis is x. */
+    const TOWARD_MINUS_X_CASES = [
+      ['the base walkable bounds', BASE_WALKABLE_BOUNDS],
+      ['off-centre bounds', OFFSET_BOUNDS],
+      ['bounds with zero depth', SHALLOW_BOUNDS],
+    ] as const;
+    /** Deeper than wide: 2.00 m across, 6.00 m along z. */
+    const DEEP_BOUNDS: PlanRect = { minX: 2, maxX: 4, minZ: -1, maxZ: 5 };
+    /** As wide as it is deep: no longer axis to prefer. */
+    const SQUARE_BOUNDS: PlanRect = { minX: 0, maxX: 3, minZ: 1, maxZ: 4 };
+    const TOWARD_MINUS_Z_CASES = [
+      ['deeper bounds', DEEP_BOUNDS],
+      ['square bounds', SQUARE_BOUNDS],
+      ['bounds with zero width', THIN_BOUNDS],
+      ['degenerate bounds', DEGENERATE_BOUNDS],
+    ] as const;
+    const ALL_CASES = [...TOWARD_MINUS_X_CASES, ...TOWARD_MINUS_Z_CASES] as const;
+    const QUARTER_TURN = Math.PI / 2;
+
+    it.each(ALL_CASES)('stands level in the centre of %s', (_label, bounds) => {
+      const start = createRoomCentrePose(bounds);
+
+      expect(start.x).toBeCloseTo((bounds.minX + bounds.maxX) / 2);
+      expect(start.z).toBeCloseTo((bounds.minZ + bounds.maxZ) / 2);
+      expect(start.pitch).toBe(0);
+      expect(start.yaw).toBeGreaterThan(-Math.PI);
+      expect(start.yaw).toBeLessThanOrEqual(Math.PI);
+    });
+
+    it.each(ALL_CASES)('stays inside %s, so no clamping is needed', (_label, bounds) => {
+      const start = createRoomCentrePose(bounds);
+
+      expect(start.x).toBeGreaterThanOrEqual(bounds.minX);
+      expect(start.x).toBeLessThanOrEqual(bounds.maxX);
+      expect(start.z).toBeGreaterThanOrEqual(bounds.minZ);
+      expect(start.z).toBeLessThanOrEqual(bounds.maxZ);
+    });
+
+    // The forward vector is asserted, not assumed: it is the module's (−sin yaw, −cos yaw).
+    it.each(TOWARD_MINUS_X_CASES)('looks toward -x from %s, wider than deep', (_label, bounds) => {
+      const { yaw } = createRoomCentrePose(bounds);
+
+      expect(yaw).toBeCloseTo(QUARTER_TURN);
+      expect(-Math.sin(yaw)).toBeCloseTo(-1);
+      expect(-Math.cos(yaw)).toBeCloseTo(0);
+    });
+
+    it.each(TOWARD_MINUS_Z_CASES)('looks toward -z from %s', (_label, bounds) => {
+      const { yaw } = createRoomCentrePose(bounds);
+
+      expect(yaw).toBe(0);
+      expect(-Math.sin(yaw)).toBeCloseTo(0);
+      expect(-Math.cos(yaw)).toBeCloseTo(-1);
+    });
+
+    it('walks along the longer axis when it steps forward from the centre', () => {
+      const start = createRoomCentrePose(BASE_WALKABLE_BOUNDS);
+
+      const next = stepEyePose(start, intent({ move: 1 }), STEP, BASE_WALKABLE_BOUNDS);
+
+      expect(next.x).toBeCloseTo(start.x - EYE_NAVIGATION_CONFIG.walkSpeed * STEP);
+      expect(next.z).toBeCloseTo(start.z);
+    });
+
+    it('leaves the corner pose of createInitialEyePose untouched', () => {
+      const centre = createRoomCentrePose(BASE_WALKABLE_BOUNDS);
+      const corner = createInitialEyePose(BASE_WALKABLE_BOUNDS);
+
+      expect(corner.x).toBe(BASE_WALKABLE_BOUNDS.maxX);
+      expect(corner.z).toBe(BASE_WALKABLE_BOUNDS.maxZ);
+      expect(centre).not.toEqual(corner);
+    });
+
+    it('returns a fresh object on each call', () => {
+      const first = createRoomCentrePose(BASE_WALKABLE_BOUNDS);
+      const second = createRoomCentrePose(BASE_WALKABLE_BOUNDS);
+
       expect(second).not.toBe(first);
       expect(second).toEqual(first);
     });

@@ -173,6 +173,52 @@ export function createInitialEyePose(bounds: PlanRect): EyePose {
   return { x: bounds.maxX, z: bounds.maxZ, yaw, pitch: 0 };
 }
 
+/** Yaw whose forward vector is (0, −1): looking toward −z, the reference direction. */
+const YAW_TOWARD_MINUS_Z = 0;
+/** Yaw whose forward vector is (−1, 0): looking toward −x, since `−sin(π/2) = −1`. */
+const YAW_TOWARD_MINUS_X = Math.PI / 2;
+/** Factor giving the midpoint between the two faces of a rectangle. */
+const HALF = 0.5;
+
+/**
+ * Creates the pose the viewer starts a one-room walk from: in the centre of the
+ * walkable area, looking level along its longer axis toward the decreasing
+ * coordinate (−x when the area is wider than deep, −z otherwise).
+ *
+ * The third-person camera (ADR-007) follows from `followDistance` behind the
+ * person and rises toward overhead when a wall leaves no room behind, so
+ * entering at a corner shows a close-up of the head instead of the person.
+ * From the centre, the longest free run in the room is the one straight behind a
+ * person facing along the longer axis, so the camera keeps very nearly its whole
+ * follow distance and the body stays visible. Facing along the longer axis is
+ * also the best first-person framing the centre offers: the far wall is as far
+ * away as the room allows, both side walls recede, and in the room this pose was
+ * chosen for — the master bedroom, the interim walk area — the sightline runs
+ * straight through the balcony-A doorway in its −x wall (`portSchedule.ts`
+ * places that 0.90 m door at z 1.85–2.75, around the room's z centre of 2.00).
+ *
+ * {@link createInitialEyePose} keeps the corner pose of ADR-004, chosen when the
+ * interior had a first-person camera only; this is the pose a follow camera can
+ * live with.
+ *
+ * @param bounds - The walkable rectangle for the eye position, already shrunk by
+ *   the body radius (see {@link stepEyePose}), so its centre is a legal place to
+ *   stand and no clamping is needed.
+ * @returns A new pose at the centre of `bounds` with zero pitch, and a yaw of
+ *   `π/2` when the bounds are strictly wider than deep, `0` otherwise (so a
+ *   square or degenerate rectangle looks toward −z).
+ */
+export function createRoomCentrePose(bounds: PlanRect): EyePose {
+  const width = bounds.maxX - bounds.minX;
+  const depth = bounds.maxZ - bounds.minZ;
+  return {
+    x: (bounds.minX + bounds.maxX) * HALF,
+    z: (bounds.minZ + bounds.maxZ) * HALF,
+    yaw: width > depth ? YAW_TOWARD_MINUS_X : YAW_TOWARD_MINUS_Z,
+    pitch: 0,
+  };
+}
+
 /** Tuning of the eye navigation. */
 export interface EyeNavigationConfig {
   /** Walking speed, in metres per second. */

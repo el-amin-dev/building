@@ -76,8 +76,8 @@ test.describe('interior navigation', () => {
     await expect(hint).toBeVisible();
     await expect(status).toHaveText(FIRST_PERSON_STATUS);
 
-    // The eye starts in a corner of the walkable area facing the opposite corner, with several
-    // metres of floor ahead, so holding W walks forward and changes the frame.
+    // The eye starts in the centre of the walkable area looking along its longer axis, with
+    // half the room's length of floor ahead, so holding W walks forward and changes the frame.
     const beforeWalk = await captureSettledScene(page);
     await expectKeyChangesScene(page, beforeWalk, 'KeyW');
 
@@ -118,8 +118,9 @@ test.describe('interior navigation', () => {
     await expect(cameraToggle).toHaveAttribute('aria-pressed', 'false');
     await expect(status).toHaveText(FIRST_PERSON_STATUS);
 
-    // At the start pose, right after entering, with the person's back in a corner: pressing V
-    // must change the rendered 3D frame (HUD masked). The unit tests guard the camera raise.
+    // At the start pose, right after entering, with the room's length free behind the person:
+    // pressing V must change the rendered 3D frame (HUD masked). The unit tests guard the
+    // distance the follow camera keeps there.
     const firstPersonScene = await captureSettledScene(page);
     await page.keyboard.press(CAMERA_MODE_KEY);
     await expect(cameraToggle).toHaveAttribute('aria-pressed', 'true');
@@ -145,8 +146,11 @@ test.describe('interior navigation', () => {
     await expect(cameraToggle).toHaveAttribute('aria-pressed', 'true');
     await expect(status).toHaveText(THIRD_PERSON_STATUS);
     await expect(region).toBeFocused();
+    // S, not W: each hold above lasts until the software renderer draws a changed frame, which
+    // is long enough to walk the person into the wall it faces, and a walk key with no room
+    // left ahead cannot change anything. Backward is the direction the whole room is free in.
     const afterClick = await captureSettledScene(page);
-    await expectKeyChangesScene(page, afterClick, 'KeyW');
+    await expectKeyChangesScene(page, afterClick, 'KeyS');
 
     await viewToggle.click();
     await expect(status).toHaveText(EXTERIOR_STATUS);
