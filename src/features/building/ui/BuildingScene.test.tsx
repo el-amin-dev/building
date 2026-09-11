@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useViewStore } from '../application/viewStore.ts';
 import { BuildingScene } from './BuildingScene.tsx';
-import { NAVIGATION_HINT_ID } from './hudIds.ts';
+import { INTERIOR_REGION_ID, NAVIGATION_HINT_ID } from './hudIds.ts';
 import { NavigationHint } from './NavigationHint.tsx';
 
 const { CANVAS_TEST_ID } = vi.hoisted(() => ({ CANVAS_TEST_ID: 'scene-canvas' }));
@@ -26,7 +26,7 @@ const INTERIOR_DESCRIPTION =
 const THIRD_PERSON_DESCRIPTION =
   'Third-person 3D view following your person inside the chamber. Move and look around with the keys listed in the navigation hint.';
 const HINT_DESCRIPTION =
-  'W moves forward, S moves back, A steps left, D steps right, J turns left, L turns right, I looks up, K looks down. V switches between first-person and third-person view. Keys follow their positions on a QWERTY keyboard. Press Tab to reach the view toggle.';
+  'W moves forward, S moves back, A steps left, D steps right, J turns left, L turns right, I looks up, K looks down. V switches between first-person and third-person view. Keys follow their positions on a QWERTY keyboard. Press Tab to reach the view toggle, then the Third person toggle. After using the HUD buttons with the keyboard, press Shift+Tab to return to the view: once from the view toggle, twice from the Third person toggle.';
 
 function renderScene() {
   return render(
@@ -81,6 +81,7 @@ describe('BuildingScene', () => {
     expect(region).toBe(getRegion());
     expect(region).toHaveFocus();
     expect(region).toHaveAttribute('tabindex', '0');
+    expect(region).toHaveAttribute('id', INTERIOR_REGION_ID);
     expect(region).toHaveAttribute('aria-describedby', NAVIGATION_HINT_ID);
     expect(region).toHaveAccessibleDescription(HINT_DESCRIPTION);
     const hint = document.getElementById(NAVIGATION_HINT_ID);

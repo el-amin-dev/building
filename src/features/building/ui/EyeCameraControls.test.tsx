@@ -18,15 +18,22 @@ import { EyeCameraControls } from './EyeCameraControls.tsx';
 
 type FrameCallback = (state: RootState, delta: number) => void;
 
-// jsdom has no WebGL and no render loop: `useFrame` only records the latest callback so
-// each test can run a frame by hand against a real three.js camera.
-const frameLoop = vi.hoisted(() => ({ callback: null as FrameCallback | null }));
+// jsdom has no WebGL and no render loop: `useFrame` only records the latest callback and its
+// priority so each test can run a frame by hand against a real three.js camera.
+const frameLoop = vi.hoisted(() => ({
+  callback: null as FrameCallback | null,
+  priority: undefined as number | undefined,
+}));
 
 vi.mock('@react-three/fiber', () => ({
-  useFrame: (callback: FrameCallback) => {
+  useFrame: (callback: FrameCallback, priority?: number) => {
     frameLoop.callback = callback;
+    frameLoop.priority = priority;
   },
 }));
+
+/** Priority of `useFrame` callbacks registered without one, e.g. the person model's. */
+const DEFAULT_FRAME_PRIORITY = 0;
 
 const FORWARD_CODE = 'KeyW';
 const TURN_CODE = 'KeyJ';
@@ -63,6 +70,7 @@ describe('EyeCameraControls', () => {
   afterEach(() => {
     target.remove();
     frameLoop.callback = null;
+    frameLoop.priority = undefined;
   });
 
   /**
@@ -127,6 +135,13 @@ describe('EyeCameraControls', () => {
     expect(direction.y).toBeCloseTo(towardTarget.y);
     expect(direction.z).toBeCloseTo(towardTarget.z);
   };
+
+  it('steps the pose before default-priority frame callbacks, keeping automatic rendering', () => {
+    renderControls();
+
+    expect(frameLoop.priority).toBeDefined();
+    expect(frameLoop.priority).toBeLessThan(DEFAULT_FRAME_PRIORITY);
+  });
 
   it('places the camera at eye height in the start corner, level, with YXZ order', () => {
     renderControls();

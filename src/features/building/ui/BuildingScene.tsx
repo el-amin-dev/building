@@ -11,7 +11,7 @@ import { CAMERA_MODE_TOGGLE_KEY_CODE } from '../domain/viewMode.ts';
 import type { InteriorCameraMode } from '../domain/viewMode.ts';
 import { ChamberModel } from './ChamberModel.tsx';
 import { ExteriorCameraControls } from './ExteriorCameraControls.tsx';
-import { NAVIGATION_HINT_ID } from './hudIds.ts';
+import { INTERIOR_REGION_ID, NAVIGATION_HINT_ID } from './hudIds.ts';
 import { InteriorExplorer } from './InteriorExplorer.tsx';
 import { useKeyAction } from './useKeyAction.ts';
 
@@ -125,7 +125,8 @@ function SceneContent({ isInterior, regionRef }: SceneContentProps) {
  *   "Interior view" toggle), described by the full key description of the navigation
  *   hint, and takes focus as soon as the view opens, with a visible focus indicator.
  *
- * The canvas stays mounted across view changes. A visually hidden description tells
+ * The region carries `INTERIOR_REGION_ID`, so HUD controls can hand focus back to it after
+ * a pointer click. The canvas stays mounted across view changes. A visually hidden description tells
  * assistive technology what the current view and camera mode show.
  *
  * @returns The scene description and the canvas region.
@@ -155,6 +156,7 @@ export function BuildingScene() {
       </p>
       <div
         ref={regionRef}
+        id={INTERIOR_REGION_ID}
         className={REGION_CLASS_NAME}
         tabIndex={isInterior ? INTERIOR_REGION_TAB_INDEX : undefined}
         role={isInterior ? INTERIOR_REGION_ROLE : undefined}

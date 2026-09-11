@@ -14,6 +14,8 @@ import type { MannequinPart } from './personModelParts.ts';
 
 /** Decimal digits two lengths must share to count as equal (sub-nanometre). */
 const LENGTH_PRECISION_DIGITS = 9;
+/** A diameter is two radii. */
+const DIAMETER_PER_RADIUS = 2;
 const FLOOR_LEVEL = 0;
 const SCALED_HEIGHT = 2;
 const HEAD_NAME = 'head';
@@ -29,13 +31,15 @@ const ROOM_BOX = createCameraRoomBox(
 );
 /** In the middle of the room, facing −z: the follow camera backs away along +z freely. */
 const CENTRE_POSE: EyePose = { x: 0, z: 0, yaw: FACING_NEGATIVE_Z_YAW, pitch: LEVEL_PITCH };
-/** Back against the +z wall: the follow camera is pulled in almost onto the head. */
+/** Back against the +z wall at the walking limit: the follow camera rises above the head. */
 const BACK_TO_WALL_POSE: EyePose = {
   x: 0,
   z: WALKABLE_BOUNDS.maxZ,
   yaw: FACING_NEGATIVE_Z_YAW,
   pitch: LEVEL_PITCH,
 };
+/** On the camera box's +z face, beyond the walking limit: no room at all behind the head. */
+const NO_ROOM_BEHIND_POSE: EyePose = { ...BACK_TO_WALL_POSE, z: ROOM_BOX.plan.maxZ };
 
 const PARTS = getMannequinParts(PERSON_SPEC.height);
 
@@ -84,7 +88,9 @@ describe('getMannequinParts', () => {
       ...PARTS.map((part) => part.position.x + getMannequinPartHalfExtent(part).x),
     );
 
-    expect(right - left).toBeLessThanOrEqual(2 * EYE_NAVIGATION_CONFIG.bodyRadius);
+    expect(right - left).toBeLessThanOrEqual(
+      DIAMETER_PER_RADIUS * EYE_NAVIGATION_CONFIG.bodyRadius,
+    );
   });
 
   it('has a single facing marker on the front (−z), ahead of every body part', () => {
@@ -158,7 +164,11 @@ describe('isPersonModelVisible', () => {
     expect(isPersonModelVisible('thirdPerson', CENTRE_POSE, ROOM_BOX)).toBe(true);
   });
 
-  it('hides the model in third person when a wall pulls the camera in too close', () => {
-    expect(isPersonModelVisible('thirdPerson', BACK_TO_WALL_POSE, ROOM_BOX)).toBe(false);
+  it('shows the model in third person with the back against a wall, the camera raised', () => {
+    expect(isPersonModelVisible('thirdPerson', BACK_TO_WALL_POSE, ROOM_BOX)).toBe(true);
+  });
+
+  it('hides the model in third person when there is no room at all behind the person', () => {
+    expect(isPersonModelVisible('thirdPerson', NO_ROOM_BEHIND_POSE, ROOM_BOX)).toBe(false);
   });
 });

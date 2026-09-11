@@ -81,6 +81,8 @@ export type MannequinPart =
   MannequinBoxPart | MannequinCapsulePart | MannequinSpherePart | MannequinCylinderPart;
 
 const HALF = 0.5;
+/** A diameter is two radii: a capsule has two caps, a sphere spans two radii. */
+const DIAMETER_PER_RADIUS = 2;
 const PLAN_CENTRE = 0;
 
 /** The head is about one eighth of the standing height. */
@@ -151,7 +153,7 @@ function uprightCapsule(
     role: 'body',
     shape: 'capsule',
     radius,
-    length: top - bottom - 2 * radius,
+    length: top - bottom - DIAMETER_PER_RADIUS * radius,
     position: point(x, (bottom + top) * HALF, PLAN_CENTRE),
   });
 }
@@ -196,7 +198,7 @@ export function getMannequinParts(height: number): readonly MannequinPart[] {
   }
 
   const headRadius = HEAD_RADIUS_RATIO * height;
-  const headBottom = height - 2 * headRadius;
+  const headBottom = height - DIAMETER_PER_RADIUS * headRadius;
   const shoulder = SHOULDER_HEIGHT_RATIO * height;
   const waist = WAIST_HEIGHT_RATIO * height;
   const hipsBottom = HIPS_BOTTOM_HEIGHT_RATIO * height;
@@ -272,7 +274,8 @@ export function getMannequinPartHalfExtent(part: MannequinPart): ScenePoint {
 
 /**
  * Whether the person model is shown: only in the third-person view, and only while the
- * follow camera stands far enough from the person (see `shouldHidePersonModel`).
+ * follow camera stands far enough from the person (see `shouldHidePersonModel`). The camera
+ * rises above the person when a wall is close behind, so the model stays visible there.
  *
  * @param cameraMode - The current interior camera mode.
  * @param pose - The person's pose. Not mutated.

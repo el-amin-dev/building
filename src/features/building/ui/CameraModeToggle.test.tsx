@@ -3,8 +3,11 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useViewStore } from '../application/viewStore.ts';
 import { CameraModeToggle } from './CameraModeToggle.tsx';
+import { INTERIOR_REGION_ID } from './hudIds.ts';
 
 const TOGGLE_NAME = 'Third person';
+const REGION_TEST_ID = 'interior-region';
+const FOCUSABLE_TAB_INDEX = 0;
 
 function toggleView() {
   act(() => {
@@ -14,6 +17,17 @@ function toggleView() {
 
 function getToggle(): HTMLElement {
   return screen.getByRole('button', { name: TOGGLE_NAME });
+}
+
+/** Renders a focusable stand-in for the interior region before the toggle, as in the app. */
+function renderWithRegion() {
+  render(
+    <>
+      <div id={INTERIOR_REGION_ID} data-testid={REGION_TEST_ID} tabIndex={FOCUSABLE_TAB_INDEX} />
+      <CameraModeToggle />
+    </>,
+  );
+  return screen.getByTestId(REGION_TEST_ID);
 }
 
 describe('CameraModeToggle', () => {
@@ -64,20 +78,35 @@ describe('CameraModeToggle', () => {
     expect(useViewStore.getState().interiorCameraMode).toBe('firstPerson');
   });
 
-  it('is reachable with Tab and operable with Enter and Space', async () => {
+  it('moves focus back to the interior region after a pointer click', async () => {
     const user = userEvent.setup();
     toggleView();
-    render(<CameraModeToggle />);
+    const region = renderWithRegion();
+
+    await user.click(getToggle());
+
+    expect(useViewStore.getState().interiorCameraMode).toBe('thirdPerson');
+    expect(region).toHaveFocus();
+  });
+
+  it('is reachable with Tab and operable with Enter and Space, keeping focus on itself', async () => {
+    const user = userEvent.setup();
+    toggleView();
+    const region = renderWithRegion();
     const button = getToggle();
 
+    await user.tab();
+    expect(region).toHaveFocus();
     await user.tab();
     expect(button).toHaveFocus();
 
     await user.keyboard('{Enter}');
     expect(button).toHaveAttribute('aria-pressed', 'true');
+    expect(button).toHaveFocus();
 
     await user.keyboard(' ');
     expect(button).toHaveAttribute('aria-pressed', 'false');
     expect(useViewStore.getState().interiorCameraMode).toBe('firstPerson');
+    expect(button).toHaveFocus();
   });
 });

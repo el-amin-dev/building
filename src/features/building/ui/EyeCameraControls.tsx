@@ -13,6 +13,12 @@ import { usePressedKeys } from './usePressedKeys.ts';
 /** Yaw first, then pitch: the order `stepEyePose` angles are defined in. */
 const EYE_EULER_ORDER: EulerOrder = 'YXZ';
 const NO_ROLL = 0;
+/**
+ * Runs before default-priority (0) frame callbacks, so the pose is stepped before
+ * `PersonModel` reads it in the same frame, whatever the JSX order. A negative priority keeps
+ * R3F's automatic rendering (only a positive one takes over the render loop).
+ */
+const POSE_STEP_FRAME_PRIORITY = -1;
 
 /** Props of {@link EyeCameraControls}. */
 export interface EyeCameraControlsProps {
@@ -44,10 +50,12 @@ export interface EyeCameraControlsProps {
  *   rotation `(pitch, yaw, 0)`;
  * - third person: at the position given by `getThirdPersonCamera(pose, roomBox)`, looking
  *   at its target (the head); the camera is pulled in when a wall, the floor or the
- *   ceiling is closer than the follow distance.
+ *   ceiling is closer than the follow distance, and rises above the person when a wall
+ *   close behind leaves too little room to see the body.
  *
  * The pose lives in a ref owned by the parent, so moving never re-renders React and
- * switching `cameraMode` keeps the pose.
+ * switching `cameraMode` keeps the pose. The frame callback runs with a negative priority,
+ * before the person model's, so both use the same stepped pose within a frame.
  *
  * @param props - {@link EyeCameraControlsProps}
  * @returns Nothing; it only drives the camera.
@@ -79,7 +87,7 @@ export function EyeCameraControls({
     }
     camera.position.set(pose.x, PERSON_SPEC.eyeHeight, pose.z);
     camera.rotation.set(pose.pitch, pose.yaw, NO_ROLL, EYE_EULER_ORDER);
-  });
+  }, POSE_STEP_FRAME_PRIORITY);
 
   return null;
 }
