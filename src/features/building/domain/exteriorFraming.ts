@@ -19,6 +19,7 @@
 
 import type { FloorHeights } from './heights.ts';
 import type { PlanRect } from './planGeometry.ts';
+import { getSlabThickness } from './slabs.ts';
 
 const DEGREES_PER_HALF_TURN = 180;
 const RADIANS_PER_DEGREE = Math.PI / DEGREES_PER_HALF_TURN;
@@ -108,9 +109,10 @@ export interface ExteriorFraming {
  * Derives the exterior camera framing of one floor.
  *
  * The floor occupies the box that spans `plot` on the plan and, vertically, from the
- * bottom of its slab (`-(heights.floorToFloor - heights.wall)`) to the top of its walls
- * (`heights.wall`). The orbit target is the centre of the plot at half the wall height,
- * and `radius` is the distance from that target to the furthest corner of the box.
+ * bottom of its slab (`-getSlabThickness(heights)`, the one place that level is computed,
+ * `slabs.ts`) to the top of its walls (`heights.wall`). The orbit target is the centre of
+ * the plot at half the wall height, and `radius` is the distance from that target to the
+ * furthest corner of the box.
  *
  * The floor fits the frame at `radius / sin(halfFov)`, taking the narrower of the two
  * half-angles of the frustum: the vertical one is half of `fovDegrees`, and the
@@ -128,9 +130,9 @@ export interface ExteriorFraming {
  * @param aspect - Width divided by height of the canvas.
  * @returns A deeply frozen framing.
  * @throws RangeError naming the offending argument when `plot` has a non-finite or
- *   inverted coordinate, when `heights` has a non-finite size or a wall height that is
- *   not positive, when `fovDegrees` is outside (0, 180), or when `aspect` is not a finite
- *   positive number.
+ *   inverted coordinate, when `heights` has a non-finite size, a wall height that is not
+ *   positive or one that leaves no positive slab thickness (see `getSlabThickness`), when
+ *   `fovDegrees` is outside (0, 180), or when `aspect` is not a finite positive number.
  */
 export function getExteriorFraming(
   plot: PlanRect,
@@ -154,7 +156,7 @@ export function getExteriorFraming(
     y: heights.wall * HALF,
     z: (plot.minZ + plot.maxZ) * HALF,
   };
-  const slabBottom = -(heights.floorToFloor - heights.wall);
+  const slabBottom = -getSlabThickness(heights);
   const verticalReach = Math.max(heights.wall - target.y, target.y - slabBottom);
   const radius = Math.hypot(
     (plot.maxX - plot.minX) * HALF,

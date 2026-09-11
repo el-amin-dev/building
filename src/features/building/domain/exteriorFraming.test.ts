@@ -7,6 +7,7 @@ import { FLOOR_HEIGHTS } from './heights.ts';
 import type { FloorHeights } from './heights.ts';
 import { makeRect } from './planGeometry.ts';
 import type { PlanRect } from './planGeometry.ts';
+import { getSlabThickness } from './slabs.ts';
 
 const PRECISION_DIGITS = 9;
 const HALF = 0.5;
@@ -48,6 +49,22 @@ const EXPECTED_POSITION_Z_METRES = 27.4458448269;
 const SCALE = 2;
 /** Number of corners of a box. */
 const BOX_CORNER_COUNT = 8;
+
+/**
+ * Vertical sizes other than {@link FLOOR_HEIGHTS} whose raw difference is noisy too:
+ * `3.40 - 3.10` is 0.2999999999999998, while the slab is 0.30 m thick.
+ */
+const SYNTHETIC_HEIGHTS: FloorHeights = { ...FLOOR_HEIGHTS, floorToFloor: 3.4, wall: 3.1 };
+
+/**
+ * A plot small enough on the plan that the vertical reach of the floor box dominates its
+ * bounding radius, so the underside of the slab is observable in the framing.
+ *
+ * On the real plot it is not: the half-extents are 11.25 and 5.00 m against a reach of
+ * 1.65 m, so `Math.hypot` absorbs the 1e-16 between a snapped and an unsnapped underside
+ * and every returned number is bit for bit the same either way.
+ */
+const NARROW_PLOT: PlanRect = makeRect(0, 0.01, 0, 0.01);
 
 const FRAMING = getExteriorFraming(PLOT_RECT, FLOOR_HEIGHTS, FOV_DEGREES, WIDESCREEN_ASPECT);
 
@@ -101,8 +118,10 @@ function scaleHeights(heights: FloorHeights, factor: number): FloorHeights {
  * @returns The floor box in scene coordinates.
  */
 function floorBox(plot: PlanRect, heights: FloorHeights): Box3 {
+  // The underside comes from `slabs.ts`, the one place that level is computed, rather than
+  // from subtracting the two heights again, which yields -0.2999999999999998.
   return new Box3(
-    new Vector3(plot.minX, -(heights.floorToFloor - heights.wall), plot.minZ),
+    new Vector3(plot.minX, -getSlabThickness(heights), plot.minZ),
     new Vector3(plot.maxX, heights.wall, plot.maxZ),
   );
 }
@@ -153,6 +172,32 @@ function frustumOf(framing: ExteriorFraming, aspect: number, fovDegrees: number)
 function startDistance(framing: ExteriorFraming): number {
   const { position, target } = framing;
   return Math.hypot(position.x - target.x, position.y - target.y, position.z - target.z);
+}
+
+/**
+ * Fit distance the module owes a floor box with a given underside, at {@link FOV_DEGREES}
+ * and {@link WIDESCREEN_ASPECT}.
+ *
+ * Repeats the arithmetic of the module in the same order, so the result can be compared
+ * with `toBe`: a framing built on a different underside fails rather than rounding into
+ * place within nine digits.
+ *
+ * @param plot - Outer boundary of the floor.
+ * @param heights - Vertical sizes of the floor.
+ * @param underside - Level the floor box starts at, in metres.
+ * @returns The fit distance, in metres.
+ */
+function fitDistanceFor(plot: PlanRect, heights: FloorHeights, underside: number): number {
+  const targetY = heights.wall * HALF;
+  const verticalReach = Math.max(heights.wall - targetY, targetY - underside);
+  const radius = Math.hypot(
+    (plot.maxX - plot.minX) * HALF,
+    verticalReach,
+    (plot.maxZ - plot.minZ) * HALF,
+  );
+  const halfFovVertical = FOV_DEGREES * HALF * RADIANS_PER_DEGREE;
+  const halfFovHorizontal = Math.atan(Math.tan(halfFovVertical) * WIDESCREEN_ASPECT);
+  return radius / Math.sin(Math.min(halfFovVertical, halfFovHorizontal));
 }
 
 describe('exteriorFraming', () => {
@@ -293,6 +338,29 @@ describe('exteriorFraming', () => {
       expect(doubled.position.x).toBeCloseTo(FRAMING.position.x * SCALE, PRECISION_DIGITS);
       expect(doubled.position.y).toBeCloseTo(FRAMING.position.y * SCALE, PRECISION_DIGITS);
       expect(doubled.position.z).toBeCloseTo(FRAMING.position.z * SCALE, PRECISION_DIGITS);
+    });
+  });
+
+  describe('getExteriorFraming starts the floor box at the underside of the slab', () => {
+    it.each([
+      ['the default heights', FLOOR_HEIGHTS],
+      ['injected heights', SYNTHETIC_HEIGHTS],
+    ] as const)('frames the box the slab ends at, with %s', (_label, heights) => {
+      const framing = getExteriorFraming(NARROW_PLOT, heights, FOV_DEGREES, WIDESCREEN_ASPECT);
+      const snapped = -getSlabThickness(heights);
+      const unsnapped = -(heights.floorToFloor - heights.wall);
+
+      // Exact equality, not toBeCloseTo: the framing must fit a box whose underside is the
+      // level `slabs.ts` owns, so the camera and the building agree bit for bit.
+      expect(framing.fitDistance).toBe(fitDistanceFor(NARROW_PLOT, heights, snapped));
+      expect(unsnapped).not.toBe(snapped);
+      expect(framing.fitDistance).not.toBe(fitDistanceFor(NARROW_PLOT, heights, unsnapped));
+    });
+
+    it('frames the real plot at exactly the distance that underside requires', () => {
+      expect(FRAMING.fitDistance).toBe(
+        fitDistanceFor(PLOT_RECT, FLOOR_HEIGHTS, -getSlabThickness(FLOOR_HEIGHTS)),
+      );
     });
   });
 
