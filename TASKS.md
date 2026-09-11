@@ -72,12 +72,12 @@
 - [ ] CI workflow: frozen install → typecheck → lint → format:check → test → build → Playwright e2e (report on failure)
 - [ ] Protect `main` (PR + green CI, squash-only) and add Dependabot with ignore rules for ADR-001 caps
 - [ ] Issues #1–#6 opened; RUNBOOK "CI" section
-- [ ] ADR-005 floor coordinates: origin at outer A/C corner, x along A→D, z along C→B, y up, metres
-- [ ] `domain/floorPlan` — `Space` types and every brief §4–§5 space with exact clear rects (guest room net L as 3 rects; void split west/east)
-- [ ] Wall spec constants: exterior 0.30 · partition 0.20 · void-facing 0.30
-- [ ] Tests: width chain 22.50, depth chain 10.00, every §8 area, totals 167.38 / 15.10 / 42.52 / 225.00
-- [ ] Tests: no overlapping spaces, all spaces inside the envelope, neighbour gaps equal the wall spec
-- [ ] Queries `getSpace`, `findSpaceAt`, `getNeighbours` + tests; base chamber spec derived from the model
+- [x] ADR-005 floor coordinates: origin at outer A/C corner, x along A→D, z along C→B, y up, metres
+- [x] `domain/floorPlan` — `Space` types and every brief §4–§5 space with exact clear rects (guest room net L as 3 rects; void split west/east)
+- [x] Wall spec constants: exterior 0.30 · partition 0.20 · void-facing 0.30
+- [x] Tests: width chain 22.50, depth chain 10.00, every §8 area, totals 167.38 / 15.10 / 42.52 / 225.00
+- [x] Tests: no overlapping spaces, all spaces inside the envelope, neighbour gaps equal the wall spec
+- [x] Queries `getSpace`, `findSpaceAt`, `getNeighbours` + tests; base chamber spec derived from the model
 - [ ] `domain/person.ts` — `PERSON_SPEC` height 1.80 · eye 1.68; eye removed from `FLOOR_HEIGHTS` + tests
 - [ ] `domain/thirdPersonCamera.ts` — follow camera 2.5 m behind the head, pulled in at walls and ceiling + tests
 - [ ] View store: interior camera mode first/third person, kept across view changes + tests
@@ -98,13 +98,13 @@
 - [ ] `domain/ports` — `Port` model and full §6 schedule (0.90 doors, 3.50 living opening, entry via the stairs (no side-A door), link door 0.80, guest–kitchen door z 6.00–6.90 (ADR-006)) with Page-2 offsets
 - [ ] Tests: every port sits on a wall shared by its two spaces and fits inside it
 - [ ] Tests: laundry has no corridor door, utility exactly one door, master not on stairs, guest + control via link corridor
-- [ ] Tests: every floor space reachable from the stairs; voids unreachable
+- [ ] Tests: every floor space reachable from the stairs arrival point; voids unreachable
 - [ ] Split walls around ports with lintels up to wall height + tests
 - [ ] `domain/windows.ts` — windows on A/B-facing walls only, 1.20 × 1.20, sill 0.90 + test: none on C or D
 - [ ] `ui/SpaceModel.tsx` + `ui/FloorModel.tsx` — whole floor from the model, geometry merged per material
 - [ ] Test: every vertical size comes from `FLOOR_HEIGHTS`
 - [ ] Railings on the A balcony, balcony slab and void edges; void open to sky; TV panel facing the living opening
-- [ ] Stairs + elevator as blocked placeholder volumes; named material palette per space kind
+- [ ] Stairs + elevator as blocked placeholder volumes; named material palette per space kind; owner to confirm the walkable arrival area in front of the volumes
 - [ ] Lighting: sun from side B, sky, per-room light (hemisphere fill, material dithering, horizon fog); Leva debug controls for sun and materials
 - [ ] Exterior orbit framed on the full floor + e2e screenshot baseline
 - [ ] DoD gate → PR merged
@@ -119,14 +119,14 @@
 - [ ] Walkable area = slabs; void edges and blocked volumes stop movement; doorways pass only if wider than the body + tests
 - [ ] `stepEyePose` uses floor collision instead of the single-chamber clamp; third-person camera pull-in uses the same wall collision
 - [ ] `getCurrentSpace(pose)` and HUD room name in a polite live region + tests
-- [ ] Interior start pose on the stairs landing, facing the corridor
+- [ ] Interior start pose at the stairs arrival point (position agreed with the owner alongside the Part 2 stairs volumes), facing the corridor
 - [ ] Exterior orbit keyboard controls (rotate, tilt, zoom), scoped to the focused view + tests
 - [ ] On-screen hold-to-act move / turn / look buttons (WCAG 2.5.7) + tests
 - [ ] "Go to room" menu operable by keyboard and single click + tests
 - [ ] Animated exterior ↔ interior transitions, instant under `prefers-reduced-motion`
 - [ ] SVG minimap from the model with position and heading; select a room to jump there + tests
 - [ ] HUD usable at 400 px width with touch targets ≥ 24 × 24 px
-- [ ] Playwright axe check on both views; e2e walk stairs → link corridor → corridor → kitchen
+- [ ] Playwright axe check on both views; e2e walk stairs arrival → link corridor → corridor → kitchen
 - [ ] ADR superseding ADR-002; RUNBOOK "Controls" updated
 - [ ] DoD gate → PR merged
 
