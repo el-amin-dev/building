@@ -1,4 +1,5 @@
 import { BuildingScene } from '../features/building/ui/BuildingScene.tsx';
+import { CameraModeToggle } from '../features/building/ui/CameraModeToggle.tsx';
 import { DebugPanel } from '../features/building/ui/DebugPanel.tsx';
 import { NavigationHint } from '../features/building/ui/NavigationHint.tsx';
 import { ViewModeToggle } from '../features/building/ui/ViewModeToggle.tsx';
@@ -16,7 +17,10 @@ export function App() {
       <BuildingScene />
       <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-start p-4">
         <div className="pointer-events-auto flex flex-col items-start gap-2">
-          <ViewModeToggle />
+          <div className="flex flex-wrap items-start gap-2">
+            <ViewModeToggle />
+            <CameraModeToggle />
+          </div>
           <NavigationHint />
         </div>
       </div>

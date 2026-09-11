@@ -18,7 +18,7 @@ test.describe('smoke', () => {
 
     await toggle.click();
     await expect(toggle).toHaveAttribute('aria-pressed', 'true');
-    await expect(status).toHaveText('View: Interior');
+    await expect(status).toHaveText('View: Interior · First person');
 
     await toggle.press('Enter');
     await expect(toggle).toHaveAttribute('aria-pressed', 'false');
