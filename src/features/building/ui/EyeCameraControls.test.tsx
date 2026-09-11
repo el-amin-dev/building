@@ -4,7 +4,7 @@ import { PerspectiveCamera } from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BASE_CHAMBER_SPEC, getWalkableBounds } from '../domain/chamber.ts';
 import { createInitialEyePose, EYE_NAVIGATION_CONFIG } from '../domain/eyeNavigation.ts';
-import { FLOOR_HEIGHTS } from '../domain/heights.ts';
+import { PERSON_SPEC } from '../domain/person.ts';
 import { EyeCameraControls } from './EyeCameraControls.tsx';
 
 type FrameCallback = (state: RootState, delta: number) => void;
@@ -63,7 +63,7 @@ describe('EyeCameraControls', () => {
 
   const expectCameraAtStart = () => {
     expect(camera.position.x).toBeCloseTo(START_POSE.x);
-    expect(camera.position.y).toBeCloseTo(FLOOR_HEIGHTS.eye);
+    expect(camera.position.y).toBeCloseTo(PERSON_SPEC.eyeHeight);
     expect(camera.position.z).toBeCloseTo(START_POSE.z);
     expect(camera.rotation.order).toBe(EYE_EULER_ORDER);
     expect(camera.rotation.x).toBeCloseTo(LEVEL_PITCH);
@@ -88,7 +88,7 @@ describe('EyeCameraControls', () => {
 
     expect(camera.position.x).toBeLessThan(START_POSE.x);
     expect(camera.position.z).toBeLessThan(START_POSE.z);
-    expect(camera.position.y).toBeCloseTo(FLOOR_HEIGHTS.eye);
+    expect(camera.position.y).toBeCloseTo(PERSON_SPEC.eyeHeight);
     const walked = Math.hypot(camera.position.x - START_POSE.x, camera.position.z - START_POSE.z);
     expect(walked).toBeCloseTo(EYE_NAVIGATION_CONFIG.walkSpeed * WALK_DELTA_SECONDS);
     expect(camera.rotation.y).toBeCloseTo(START_POSE.yaw);

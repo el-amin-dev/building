@@ -9,7 +9,7 @@ import {
   stepEyePose,
 } from '../domain/eyeNavigation.ts';
 import type { EyePose } from '../domain/eyeNavigation.ts';
-import { FLOOR_HEIGHTS } from '../domain/heights.ts';
+import { PERSON_SPEC } from '../domain/person.ts';
 import type { PlanRect } from '../domain/planGeometry.ts';
 import { usePressedKeys } from './usePressedKeys.ts';
 
@@ -32,7 +32,7 @@ export interface EyeCameraControlsProps {
  * Per-frame eye-level camera of the interior view.
  *
  * Every frame it reads the navigation keys held on `targetRef`, advances the eye pose
- * with `stepEyePose` and places the default camera at `FLOOR_HEIGHTS.eye` with Euler
+ * with `stepEyePose` and places the default camera at `PERSON_SPEC.eyeHeight` with Euler
  * order `YXZ` and rotation `(pitch, yaw, 0)`. The pose lives in a ref, so moving never
  * re-renders React.
  *
@@ -57,7 +57,7 @@ export function EyeCameraControls({ targetRef, bounds }: EyeCameraControlsProps)
       bounds,
     );
     poseRef.current = pose;
-    state.camera.position.set(pose.x, FLOOR_HEIGHTS.eye, pose.z);
+    state.camera.position.set(pose.x, PERSON_SPEC.eyeHeight, pose.z);
     state.camera.rotation.set(pose.pitch, pose.yaw, NO_ROLL, EYE_EULER_ORDER);
   });
 
