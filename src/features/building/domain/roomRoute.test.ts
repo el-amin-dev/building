@@ -36,12 +36,15 @@ import type { PlanPoint, PlanRect } from './planGeometry.ts';
 import { PORT_SCHEDULE, getPortOpening, getPortPartners } from './ports/index.ts';
 import type { Port } from './ports/index.ts';
 import { findSpaceRoute, getReachableSpaceIds } from './reachability.ts';
-import { ROOM_ROUTE_CONFIG, getRouteWaypoints, getSpaceDestination } from './roomRoute.ts';
+import { ROOM_ROUTE_CONFIG, getRouteWaypoints } from './roomRoute.ts';
 import type { RoomRouteConfig } from './roomRoute.ts';
 import { getSlabs } from './slabs.ts';
 
 /** Where the stairs deliver the explorer onto this floor, on the arrival landing. */
 const ARRIVAL: PlanPoint = Object.freeze({ x: 5.1, z: 5.0 });
+
+/** A point inside no space of the plan: a `from` that starts a route where it ends. */
+const OFF_PLAN: PlanPoint = Object.freeze({ x: -10, z: -10 });
 
 /** Radius of the body every expectation below is measured for, in metres. */
 const BODY_RADIUS = ROOM_ROUTE_CONFIG.bodyRadius;
@@ -212,6 +215,30 @@ function isBodyCovered(centre: PlanPoint, rects: readonly PlanRect[]): boolean {
 }
 
 /**
+ * The point a walker sent to a space is put down at.
+ *
+ * Read through the only API that exposes it: `getRouteWaypoints` of the
+ * single-space route `[id]` ends at exactly that point, and a `from` lying in no
+ * walkable rect of the space starts the route in the destination rect itself, so
+ * no connector precedes it and the one waypoint yielded IS the destination.
+ *
+ * @param plan - The plan to read.
+ * @param id - Identifier of the space to walk to.
+ * @param config - Tuning; defaults to {@link ROOM_ROUTE_CONFIG}.
+ * @returns The destination point of that space.
+ * @throws RangeError for the same reasons `getRouteWaypoints` does.
+ */
+function destinationOf(
+  plan: FloorPlan,
+  id: SpaceId,
+  config: RoomRouteConfig = ROOM_ROUTE_CONFIG,
+): PlanPoint {
+  const waypoints = getRouteWaypoints(plan, PORT_SCHEDULE, [id], OFF_PLAN, config);
+  expect(waypoints).toHaveLength(1);
+  return waypoints[0];
+}
+
+/**
  * Samples a straight leg at no more than {@link SAMPLE_STEP_METRES} apart.
  *
  * @param from - Start of the leg.
@@ -244,18 +271,18 @@ describe('ROOM_ROUTE_CONFIG', () => {
   });
 });
 
-describe('getSpaceDestination', () => {
+describe('the destination of a space', () => {
   it('sends the walker into the corridor, the kitchen and the stair landing', () => {
-    expect(getSpaceDestination(FLOOR_PLAN, 'corridor')).toEqual({ x: 12.9, z: 4.75 });
-    expect(getSpaceDestination(FLOOR_PLAN, 'kitchen')).toEqual({ x: 13.15, z: 7.2 });
-    expect(getSpaceDestination(FLOOR_PLAN, 'stairs')).toEqual({ x: 5.1, z: 5 });
+    expect(destinationOf(FLOOR_PLAN, 'corridor')).toEqual({ x: 12.9, z: 4.75 });
+    expect(destinationOf(FLOOR_PLAN, 'kitchen')).toEqual({ x: 13.15, z: 7.2 });
+    expect(destinationOf(FLOOR_PLAN, 'stairs')).toEqual({ x: 5.1, z: 5 });
   });
 
   it('prefers the kitchen rect with the greater standing area, not the greater area', () => {
     const [west, east] = getSpace(FLOOR_PLAN, 'kitchen').rects;
     expect(rectArea(west)).toBeCloseTo(5.06, PRECISION_DIGITS);
     expect(rectArea(east)).toBeCloseTo(5.32, PRECISION_DIGITS);
-    const destination = getSpaceDestination(FLOOR_PLAN, 'kitchen');
+    const destination = destinationOf(FLOOR_PLAN, 'kitchen');
     expect(rectContainsPoint(east, destination)).toBe(true);
     expect(rectContainsPoint(west, destination)).toBe(false);
   });
@@ -271,9 +298,9 @@ describe('getSpaceDestination', () => {
     expect(boundsCentre.z).toBeCloseTo(5, PRECISION_DIGITS);
     const floor = getFloorRects();
     expect(floor.some((rect) => rectContainsPoint(rect, boundsCentre))).toBe(false);
-    expect(
-      floor.some((rect) => rectContainsPoint(rect, getSpaceDestination(FLOOR_PLAN, 'stairs'))),
-    ).toBe(true);
+    expect(floor.some((rect) => rectContainsPoint(rect, destinationOf(FLOOR_PLAN, 'stairs')))).toBe(
+      true,
+    );
   });
 
   it('sends the walker into the guest room, not into its 0.75 m circulation strip', () => {
@@ -281,7 +308,7 @@ describe('getSpaceDestination', () => {
     // The strip is the larger rect by plain area, and the wrong answer.
     expect(rectArea(strip)).toBeCloseTo(6.075, PRECISION_DIGITS);
     expect(rectArea(room)).toBeCloseTo(4.34, PRECISION_DIGITS);
-    const destination = getSpaceDestination(FLOOR_PLAN, 'guestRoom');
+    const destination = destinationOf(FLOOR_PLAN, 'guestRoom');
     expect(destination).toEqual({ x: 5.5, z: 7.825 });
     expect(rectContainsPoint(room, destination)).toBe(true);
     expect(rectContainsPoint(strip, destination)).toBe(false);
@@ -290,30 +317,30 @@ describe('getSpaceDestination', () => {
   it('stands the body clear of the walls in every space reachable from the arrival', () => {
     const floor = getFloorRects();
     const standing = [...getReachableSpaceIds(FLOOR_PLAN, PORT_SCHEDULE, ARRIVAL)].filter((id) =>
-      isBodyCovered(getSpaceDestination(FLOOR_PLAN, id), floor),
+      isBodyCovered(destinationOf(FLOOR_PLAN, id), floor),
     );
     expect(standing).toHaveLength(REACHABLE_SPACE_COUNT);
   });
 
   it('returns a frozen point', () => {
-    expect(Object.isFrozen(getSpaceDestination(FLOOR_PLAN, 'kitchen'))).toBe(true);
+    expect(Object.isFrozen(destinationOf(FLOOR_PLAN, 'kitchen'))).toBe(true);
   });
 
   it('refuses a space with no floor at this level', () => {
-    expect(() => getSpaceDestination(FLOOR_PLAN, 'voidWest')).toThrow(RangeError);
-    expect(() => getSpaceDestination(FLOOR_PLAN, 'voidWest')).toThrow(/"voidWest"/);
+    expect(() => destinationOf(FLOOR_PLAN, 'voidWest')).toThrow(RangeError);
+    expect(() => destinationOf(FLOOR_PLAN, 'voidWest')).toThrow(/"voidWest"/);
   });
 
   it('refuses a space too shallow for the body to stand in', () => {
     const flattened = withRects(FLOOR_PLAN, 'utilityRoom', [
       makeRect(20.5, 22.2, 4.15, 4.15 + UNSTANDABLE_DEPTH),
     ]);
-    expect(() => getSpaceDestination(flattened, 'utilityRoom')).toThrow(/"utilityRoom"/);
+    expect(() => destinationOf(flattened, 'utilityRoom')).toThrow(/"utilityRoom"/);
   });
 
   it('refuses a tuning with no positive body radius', () => {
     const noBody: RoomRouteConfig = { bodyRadius: 0, approachMargin: EXPECTED_APPROACH_MARGIN };
-    expect(() => getSpaceDestination(FLOOR_PLAN, 'kitchen', noBody)).toThrow(/bodyRadius/);
+    expect(() => destinationOf(FLOOR_PLAN, 'kitchen', noBody)).toThrow(/bodyRadius/);
   });
 });
 
@@ -367,7 +394,7 @@ describe('getRouteWaypoints', () => {
   it('ends every route at the destination of its last space', () => {
     const route: readonly SpaceId[] = ['guestRoom', 'stairs', 'corridor', 'kitchen'];
     const waypoints = getRouteWaypoints(FLOOR_PLAN, PORT_SCHEDULE, route, ARRIVAL);
-    expect(waypoints[waypoints.length - 1]).toEqual(getSpaceDestination(FLOOR_PLAN, 'kitchen'));
+    expect(waypoints[waypoints.length - 1]).toEqual(destinationOf(FLOOR_PLAN, 'kitchen'));
   });
 
   it('yields only the destination for a single-space route, and nothing for an empty one', () => {
@@ -563,7 +590,7 @@ describe('the wall-crossing proof', () => {
       const waypoints = getRouteWaypoints(FLOOR_PLAN, PORT_SCHEDULE, route, ARRIVAL);
       const allowed = getAllowedRects(route);
       expect(waypoints.length).toBeGreaterThan(0);
-      expect(waypoints[waypoints.length - 1]).toEqual(getSpaceDestination(FLOOR_PLAN, id));
+      expect(waypoints[waypoints.length - 1]).toEqual(destinationOf(FLOOR_PLAN, id));
       let previous = ARRIVAL;
       waypoints.forEach((waypoint, index) => {
         // Standing still, the body is on the floor and on nothing else.

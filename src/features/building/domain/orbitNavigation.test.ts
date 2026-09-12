@@ -4,7 +4,6 @@ import type { ExteriorFraming, Vector3Like } from './exteriorFraming.ts';
 import {
   clampOrbitPose,
   getOrbitIntent,
-  getOrbitIntentFromActions,
   getOrbitLimits,
   getOrbitPose,
   getOrbitPosition,
@@ -96,6 +95,9 @@ const OPPOSITE_ACTION_CASES = [
 ] as const satisfies ReadonlyArray<readonly [OrbitAction, OrbitAction]>;
 
 const BOUND_CODES = Object.keys(ORBIT_KEY_BINDINGS);
+
+/** No key held at all: what the on-screen pad's own path through `getOrbitIntent` passes. */
+const NO_KEYS: ReadonlySet<string> = new Set<string>();
 
 /**
  * The y component of `before × after` for two camera offsets from the target: positive
@@ -230,33 +232,37 @@ describe('orbitNavigation', () => {
     });
   });
 
-  describe('getOrbitIntentFromActions', () => {
+  describe('getOrbitIntent from actions alone, as the on-screen pad asks for them', () => {
     it.each(SINGLE_ACTION_CASES)('derives the intent of %s alone', (action, expected) => {
-      expect(getOrbitIntentFromActions([action])).toEqual(intent(expected));
+      expect(getOrbitIntent(NO_KEYS, [action])).toEqual(intent(expected));
     });
 
     it.each(OPPOSITE_ACTION_CASES)('cancels %s against %s', (first, second) => {
-      expect(getOrbitIntentFromActions([first, second])).toEqual(IDLE);
-      expect(getOrbitIntentFromActions([second, first])).toEqual(IDLE);
+      expect(getOrbitIntent(NO_KEYS, [first, second])).toEqual(IDLE);
+      expect(getOrbitIntent(NO_KEYS, [second, first])).toEqual(IDLE);
     });
 
     it('ignores unknown actions', () => {
-      expect(getOrbitIntentFromActions([UNKNOWN_ACTION, 'tiltUp'])).toEqual(intent({ tilt: 1 }));
+      expect(getOrbitIntent(NO_KEYS, [UNKNOWN_ACTION, 'tiltUp'])).toEqual(intent({ tilt: 1 }));
     });
 
     it.each([
       ['an empty array', [] as readonly OrbitAction[]],
       ['an empty set', new Set<OrbitAction>()],
     ] as const)('is idle for %s', (_label, actions) => {
-      expect(getOrbitIntentFromActions(actions)).toEqual(IDLE);
+      expect(getOrbitIntent(NO_KEYS, actions)).toEqual(IDLE);
+    });
+
+    it('is idle when the actions are left out altogether', () => {
+      expect(getOrbitIntent(NO_KEYS)).toEqual(IDLE);
     });
 
     it('counts a repeated action once', () => {
-      expect(getOrbitIntentFromActions(['orbitLeft', 'orbitLeft'])).toEqual(intent({ orbit: 1 }));
+      expect(getOrbitIntent(NO_KEYS, ['orbitLeft', 'orbitLeft'])).toEqual(intent({ orbit: 1 }));
     });
 
     it('combines actions across every axis', () => {
-      expect(getOrbitIntentFromActions(['orbitRight', 'tiltDown', 'zoomIn'])).toEqual({
+      expect(getOrbitIntent(NO_KEYS, ['orbitRight', 'tiltDown', 'zoomIn'])).toEqual({
         orbit: -1,
         tilt: -1,
         zoom: 1,
@@ -266,15 +272,11 @@ describe('orbitNavigation', () => {
     it.each(SINGLE_ACTION_CASES)('agrees with the key bound to %s', (action) => {
       const code = BOUND_CODES.find((key) => ORBIT_KEY_BINDINGS[key] === action);
       expect(code).toBeDefined();
-      expect(getOrbitIntentFromActions([action])).toEqual(getOrbitIntent(new Set([code ?? ''])));
+      expect(getOrbitIntent(NO_KEYS, [action])).toEqual(getOrbitIntent(new Set([code ?? ''])));
     });
   });
 
   describe('getOrbitIntent with actions from another input', () => {
-    it('is idle when neither input asks for anything', () => {
-      expect(getOrbitIntent(new Set(), [])).toEqual(IDLE);
-    });
-
     it('unions the held keys and the held actions', () => {
       expect(getOrbitIntent(new Set(['ArrowLeft']), ['zoomIn'])).toEqual(
         intent({ orbit: 1, zoom: 1 }),
@@ -288,10 +290,6 @@ describe('orbitNavigation', () => {
 
     it('counts an action asked for by both inputs once', () => {
       expect(getOrbitIntent(new Set(['ArrowUp']), ['tiltUp'])).toEqual(intent({ tilt: 1 }));
-    });
-
-    it('takes the actions alone when no key is held', () => {
-      expect(getOrbitIntent(new Set(), ['zoomOut'])).toEqual(intent({ zoom: -1 }));
     });
 
     it('ignores unknown codes and unknown actions alike', () => {

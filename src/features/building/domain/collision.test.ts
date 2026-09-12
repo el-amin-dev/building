@@ -41,7 +41,6 @@ import {
   getClearance,
   getWalkField,
   isClear,
-  isOnFloor,
   makeWalkField,
   moveBody,
 } from './collision.ts';
@@ -151,6 +150,19 @@ function sameRect(a: PlanRect, b: PlanRect): boolean {
 /** Sums the areas of a list of rectangles, in m². */
 function totalArea(rects: readonly PlanRect[]): number {
   return rects.reduce((sum, rect) => sum + rectArea(rect), NONE);
+}
+
+/**
+ * Tells whether a point has floor under it, restating the rule rather than
+ * importing it: a floor rectangle contains it, by the exact half-open test of
+ * `rectContainsPoint`, so rectangles tiling the floor never both claim an edge.
+ *
+ * Asked of the point, not of the body circle: this is what a body stands on, and
+ * a body may legitimately overhang a threshold or a slab edge its centre is
+ * clear of.
+ */
+function isOnFloor(point: PlanPoint, field: WalkField): boolean {
+  return field.floor.some((rect) => rectContainsPoint(rect, point));
 }
 
 /** The centre of a rectangle. */
@@ -645,7 +657,7 @@ describe('getClearance', () => {
   });
 });
 
-describe('isClear and isOnFloor', () => {
+describe('isClear against the floor rectangles', () => {
   it('lets the body stand on the arrival landing', () => {
     expect(isOnFloor(ARRIVAL, FIELD)).toBe(true);
     expect(isClear(ARRIVAL, FIELD, RADIUS)).toBe(true);

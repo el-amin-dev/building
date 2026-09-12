@@ -110,26 +110,14 @@ export interface OrbitIntent {
 const NO_ACTIONS: ReadonlySet<OrbitAction> = new Set<OrbitAction>();
 
 /**
- * Derives the orbit intent from the actions currently being asked for.
- *
- * This is the single rule both input paths share: the keyboard maps its held keys to
- * actions, an on-screen control names them directly. Values that are not
- * {@link OrbitAction}s are ignored, duplicates make no difference and opposite actions
- * cancel to `0`.
- *
- * @param actions - The actions being asked for, in any order and with any repetitions.
- * @returns The signed intent along each orbit axis.
- */
-export function getOrbitIntentFromActions(actions: Iterable<OrbitAction>): OrbitIntent {
-  return toIntent(new Set(actions));
-}
-
-/**
  * Derives the orbit intent from the physical keys held down, plus any actions asked for
  * by another input (e.g. the on-screen orbit pad).
  *
- * Unknown key codes are ignored, an action asked for by both inputs counts once and
- * opposite actions cancel to `0`. Whether a key event counted at all — modifiers,
+ * This is the single rule both input paths share: the keyboard maps its held keys to
+ * actions, an on-screen control names them directly, and a pad-only caller passes an
+ * empty key set. Unknown key codes and values that are not {@link OrbitAction}s are
+ * ignored, an action asked for by both inputs counts once, duplicates make no difference
+ * and opposite actions cancel to `0`. Whether a key event counted at all — modifiers,
  * repeats, focus — is the caller's business (`usePressedKeys`), not this module's.
  *
  * @param pressedCodes - The `KeyboardEvent.code` values currently pressed.

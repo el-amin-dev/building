@@ -72,7 +72,10 @@ export interface ThirdPersonCameraConfig {
    * the camera's own body on the plan, the way `PERSON_SPEC.radius` is the person's.
    */
   readonly wallMargin: number;
-  /** Camera distance below which the person model is hidden, in metres. */
+  /**
+   * Camera distance at or below which the person model is hidden, in metres: the body is
+   * only visible from further away than this.
+   */
   readonly minBodyVisibleDistance: number;
 }
 
@@ -84,13 +87,20 @@ const BASE_ELEVATION_DEGREES = 15;
 const MAX_ELEVATION_DEGREES = 80;
 const WALL_MARGIN_METRES = 0.15;
 /**
- * Reachable with the back flat against a wall face, in metres.
+ * Distance the body starts hiding the room rather than standing in it, in metres.
  *
- * The body stops flush against the face, its centre at `face − PERSON_SPEC.radius` (0.25 m); the
- * camera keeps `WALL_MARGIN_METRES` (0.15 m) from that same face, so 0.10 m of clearance is left
- * straight behind the body centre. The camera therefore rises to
- * acos(0.10 / 0.5) ≈ 78.5°, which is under the 80° elevation limit — so the body stays visible
- * in the tightest legal pose the collision field allows rather than being hidden.
+ * Half a metre behind a head roughly 0.22 m across — an eighth of the standing height — is
+ * the back of that head filling the middle of the frame, so at this distance and nearer the
+ * model is hidden and the viewer looks out from just behind it (see
+ * {@link shouldHidePersonModel}).
+ *
+ * It is also the distance the raise can always reach, which is why it is this number and not
+ * a larger one. The body stops flush against a wall face, its centre at
+ * `face − PERSON_SPEC.radius` (0.25 m); the camera keeps `WALL_MARGIN_METRES` (0.15 m) from
+ * that same face, so 0.10 m of clearance is left straight behind the body centre, and the
+ * camera reaches this distance by rising to acos(0.10 / 0.5) ≈ 78.5° — under the 80°
+ * elevation limit. A threshold the raise could not reach would instead leave the camera
+ * pinned against the wall in the tightest legal pose the collision field allows.
  */
 const MIN_BODY_VISIBLE_DISTANCE_METRES = 0.5;
 
@@ -102,8 +112,12 @@ const DIRECTION_EPSILON = 1e-12;
  */
 const VERTICAL_RAY_COSINE = 1e-12;
 /**
- * Rounding slack, in metres, when comparing a distance with the visibility threshold: a camera
- * raised to exactly the threshold distance must not be hidden by a last-bit rounding error.
+ * Rounding slack, in metres, when comparing a distance with the visibility threshold.
+ *
+ * The threshold is inclusive — a camera exactly there hides the model — and the raise aims at
+ * exactly that distance, so it lands a last bit either side of it. The slack puts both sides
+ * of that last bit on the hidden side, rather than letting floating-point noise decide
+ * whether the frame is filled by the back of a head.
  */
 const DISTANCE_TOLERANCE_METRES = 1e-9;
 
@@ -270,19 +284,22 @@ export function getThirdPersonCamera(
 /**
  * Whether the person model should be hidden because the camera is pulled in too close.
  *
- * A distance within rounding slack (`DISTANCE_TOLERANCE_METRES`) of the threshold still shows the
- * model, so a camera raised to exactly `minBodyVisibleDistance` is never hidden by a rounding
- * error.
+ * The threshold is **inclusive**: at exactly `minBodyVisibleDistance` the body already covers
+ * the centre of the frame, which is the distance the raise settles on whenever the plan leaves
+ * it no more room — the interior start pose among them — so hiding there is what lets the
+ * viewer see the room from just behind the head. A distance within rounding slack
+ * (`DISTANCE_TOLERANCE_METRES`) above the threshold is hidden too, so the last bit of a raise
+ * aimed at the threshold cannot show the model again.
  *
  * @param camera - The camera placement (see {@link getThirdPersonCamera}).
  * @param config - Camera tuning; defaults to {@link THIRD_PERSON_CAMERA_CONFIG}.
- * @returns `true` when `camera.distance` is below `config.minBodyVisibleDistance`.
+ * @returns `true` when `camera.distance` is at or below `config.minBodyVisibleDistance`.
  */
 export function shouldHidePersonModel(
   camera: ThirdPersonCamera,
   config: ThirdPersonCameraConfig = THIRD_PERSON_CAMERA_CONFIG,
 ): boolean {
-  return camera.distance < config.minBodyVisibleDistance - DISTANCE_TOLERANCE_METRES;
+  return camera.distance <= config.minBodyVisibleDistance + DISTANCE_TOLERANCE_METRES;
 }
 
 /**

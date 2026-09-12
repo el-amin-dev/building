@@ -14,6 +14,7 @@ import { PERSON_SPEC } from '../domain/person.ts';
 import type { PlanRect } from '../domain/planGeometry.ts';
 import { createCameraField, getThirdPersonCamera } from '../domain/thirdPersonCamera.ts';
 import type { CameraField, ScenePoint } from '../domain/thirdPersonCamera.ts';
+import { CAMERA_MODE_TOGGLE_KEY_CODE } from '../domain/viewMode.ts';
 import type { InteriorCameraMode } from '../domain/viewMode.ts';
 import { EyeCameraControls } from './EyeCameraControls.tsx';
 import { CAMERA_FIELD, INTERIOR_START_POSE, WALK_FIELD } from './floorInstance.ts';
@@ -138,6 +139,7 @@ function keyFor(action: EyeAction): string {
 }
 
 const FORWARD_CODE = keyFor('moveForward');
+const BACKWARD_CODE = keyFor('moveBackward');
 const TURN_CODE = keyFor('turnLeft');
 const LOOK_UP_CODE = keyFor('lookUp');
 
@@ -485,6 +487,50 @@ describe('EyeCameraControls', () => {
       expect(poseRef.current.yaw).toBeCloseTo(START_POSE.yaw);
       expect(walkedFrom(poseRef.current)).toBeCloseTo(
         EYE_NAVIGATION_CONFIG.walkSpeed * WALK_DELTA_SECONDS,
+      );
+    });
+
+    it('cancels the walk on two opposite keys, which collapse to no movement', () => {
+      routeFollower.intent = AUTO_TURN_INTENT;
+      startWalk();
+      const { poseRef } = renderControls();
+
+      fireEvent.keyDown(target, { code: FORWARD_CODE });
+      fireEvent.keyDown(target, { code: BACKWARD_CODE });
+      runFrame(WALK_DELTA_SECONDS);
+
+      // The viewer's hands are plainly on the controls, so the trip is over even though the
+      // two keys ask for nothing between them; the body stays put rather than walking on.
+      expect(walkStatus()).toBe('idle');
+      expect(walkedFrom(poseRef.current)).toBeCloseTo(0);
+      expect(poseRef.current.yaw).toBeCloseTo(START_POSE.yaw);
+    });
+
+    it('cancels the walk on the pad’s own opposite pair', () => {
+      routeFollower.intent = AUTO_TURN_INTENT;
+      startWalk();
+      const { poseRef } = renderControls();
+
+      useRemoteControlStore.getState().pressAction('moveForward');
+      useRemoteControlStore.getState().pressAction('moveBackward');
+      runFrame(WALK_DELTA_SECONDS);
+
+      expect(walkStatus()).toBe('idle');
+      expect(walkedFrom(poseRef.current)).toBeCloseTo(0);
+      expect(poseRef.current.yaw).toBeCloseTo(START_POSE.yaw);
+    });
+
+    it('leaves the walk running under a key that steers nothing, such as the mode toggle', () => {
+      routeFollower.intent = AUTO_TURN_INTENT;
+      startWalk();
+      const { poseRef } = renderControls();
+
+      fireEvent.keyDown(target, { code: CAMERA_MODE_TOGGLE_KEY_CODE });
+      runFrame(WALK_DELTA_SECONDS);
+
+      expect(walkStatus()).toBe('walking');
+      expect(poseRef.current.yaw).toBeCloseTo(
+        START_POSE.yaw + EYE_NAVIGATION_CONFIG.turnSpeed * WALK_DELTA_SECONDS,
       );
     });
 

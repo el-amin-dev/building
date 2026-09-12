@@ -50,9 +50,10 @@ export type HoldToActStore<TAction extends string> = UseBoundStore<
  * Creates a global store holding the actions one on-screen hold-to-act control is asking for.
  *
  * It is the on-screen counterpart of the held keys tracked by `usePressedKeys`: the
- * per-frame camera loop reads `activeActions` and turns it into a movement intent with the
- * navigation module's `get…IntentFromActions`, so both input paths go through the same
- * domain rule.
+ * per-frame camera loop reads `activeActions` and passes it as the `extraActions` of the
+ * navigation module's intent rule — `getMovementIntent` for the interior eye,
+ * `getOrbitIntent` for the exterior orbit — so both input paths are merged by the same
+ * domain rule in one call.
  *
  * Every update that changes nothing returns the previous state unchanged, so a repeated
  * press or a redundant release notifies no subscriber.

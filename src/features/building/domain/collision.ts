@@ -572,8 +572,8 @@ export function getClearance(
  * @param field - The walk field; only its blockers are consulted.
  * @param radius - Radius of the body on the plan, in metres.
  * @returns `true` when no blocker, grown by the radius, strictly contains the
- *   point. Says nothing about there being floor underneath — see
- *   {@link isOnFloor}.
+ *   point. Says nothing about there being floor underneath: that is
+ *   {@link WalkField.floor}, and a fall cell is clear of every blocker.
  */
 export function isClear(point: PlanPoint, field: WalkField, radius: number): boolean {
   return !field.blockers.some(
@@ -583,21 +583,4 @@ export function isClear(point: PlanPoint, field: WalkField, radius: number): boo
       point.z > rect.minZ - radius + LENGTH_TOLERANCE &&
       point.z < rect.maxZ + radius - LENGTH_TOLERANCE,
   );
-}
-
-/**
- * Tells whether a point has floor under it.
- *
- * Asked of the point, not of the body circle: this is what the body stands on,
- * and a body may legitimately overhang a threshold or a slab edge that its centre
- * is clear of.
- *
- * @param point - The point to test.
- * @param field - The walk field; only its floor is consulted.
- * @returns `true` when a floor rectangle contains the point, by the exact
- *   half-open test of `rectContainsPoint`, so that rectangles tiling the floor
- *   never both claim a shared edge.
- */
-export function isOnFloor(point: PlanPoint, field: WalkField): boolean {
-  return field.floor.some((rect) => rectContainsPoint(rect, point));
 }

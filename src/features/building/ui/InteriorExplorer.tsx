@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { useRemoteControlStore } from '../application/remoteControlStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
@@ -25,9 +25,9 @@ export interface InteriorExplorerProps {
  * starts at {@link INTERIOR_START_POSE} — the stairs arrival, because entry to the floor is
  * through the stairs (ADR-006) — so every entry into the interior view begins where the
  * viewer walked in. That pose is a frozen object shared with the exterior→interior camera
- * transition, so the two cannot land in different places; holding it in state is what makes
- * a remount start over rather than resume. Switching between first and third person
- * (`interiorCameraMode` in the view store) keeps the pose.
+ * transition, so the two cannot land in different places; the ref is initialised from it on
+ * mount, which is what makes a remount start over rather than resume. Switching between first
+ * and third person (`interiorCameraMode` in the view store) keeps the pose.
  *
  * The collision field and the camera field are handed down as props rather than imported by
  * the children: the children stay unit-testable against a small synthetic field, while the
@@ -47,8 +47,7 @@ export interface InteriorExplorerProps {
 export function InteriorExplorer({ targetRef }: InteriorExplorerProps) {
   const cameraMode = useViewStore((state) => state.interiorCameraMode);
   const releaseAllActions = useRemoteControlStore((state) => state.releaseAllActions);
-  const [initialPose] = useState(() => INTERIOR_START_POSE);
-  const poseRef = useRef<EyePose>(initialPose);
+  const poseRef = useRef<EyePose>(INTERIOR_START_POSE);
 
   useEffect(
     () => () => {

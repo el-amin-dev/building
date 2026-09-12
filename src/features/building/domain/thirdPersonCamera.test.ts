@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { getBuiltFloor } from './builtFloor.ts';
 import { getWalkField, isClear, makeWalkField } from './collision.ts';
 import type { WalkField } from './collision.ts';
-import { EYE_NAVIGATION_CONFIG } from './eyeNavigation.ts';
+import { createArrivalPose, EYE_NAVIGATION_CONFIG } from './eyeNavigation.ts';
 import type { EyePose } from './eyeNavigation.ts';
 import { FLOOR_PLAN } from './floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from './heights.ts';
@@ -158,11 +158,19 @@ const DOORWAY_WALK: WalkField = makeWalkField(
 );
 const DOORWAY_FIELD = createCameraField(DOORWAY_WALK, FLOOR_HEIGHTS.wall);
 
+const REAL_FLOOR = getBuiltFloor();
+
 /** The real collision field of the real floor, under its 2.70 m walls. */
-const REAL_FIELD = createCameraField(
-  getWalkField(getBuiltFloor(), FLOOR_PLAN.plot),
-  FLOOR_HEIGHTS.wall,
-);
+const REAL_FIELD = createCameraField(getWalkField(REAL_FLOOR, FLOOR_PLAN.plot), FLOOR_HEIGHTS.wall);
+
+/**
+ * Where every interior visit begins: the stairs arrival of the real floor, looking level.
+ *
+ * Derived here the way `ui/floorInstance.ts` derives the pose the explorer and the camera
+ * transition share, so this file pins the framing of the pose the viewer actually arrives in
+ * rather than of a synthetic one.
+ */
+const REAL_START_POSE: EyePose = createArrivalPose(REAL_FLOOR.stairs.arrival);
 
 const WALL_GAP = 0.5;
 const CORNER_GAP = 0.3;
@@ -272,10 +280,12 @@ describe('thirdPersonCamera', () => {
       expect(Object.isFrozen(THIRD_PERSON_CAMERA_CONFIG)).toBe(true);
     });
 
-    it('leaves the body visible with the back flat against a wall face', () => {
+    it('is a distance the raise can reach with the back flat against a wall face', () => {
       /** Clearance left behind the body centre: the body radius less the camera margin. */
       const ROOM_AT_WALKING_LIMIT = BODY_RADIUS - MARGIN;
 
+      // The elevation that buys the threshold distance from that clearance is inside the
+      // limit, so the camera is never pinned against the wall short of it.
       expect(Math.acos(ROOM_AT_WALKING_LIMIT / VISIBLE_DISTANCE)).toBeLessThan(MAX_ELEVATION);
     });
   });
@@ -418,7 +428,7 @@ describe('thirdPersonCamera', () => {
     /** Room left behind the person at the walking limit: body radius minus camera margin. */
     const ROOM_AT_WALKING_LIMIT = BODY_RADIUS - MARGIN;
 
-    it('shows the person from the start pose, raised just enough', () => {
+    it('raises the camera to the threshold distance from the start pose, model hidden', () => {
       const camera = getThirdPersonCamera(START_POSE, ROOM_FIELD);
       /** Plan clearance behind the corner start pose, along `(sin yaw, cos yaw)`. */
       const planRoom = Math.min(
@@ -427,8 +437,10 @@ describe('thirdPersonCamera', () => {
       );
       const lowestVisible = Math.acos(planRoom / VISIBLE_DISTANCE);
 
-      expect(shouldHidePersonModel(camera)).toBe(false);
-      expect(camera.distance).toBeGreaterThanOrEqual(VISIBLE_DISTANCE - TOLERANCE);
+      expect(camera.distance).toBeCloseTo(VISIBLE_DISTANCE, PRECISION_DIGITS);
+      // The raise buys the whole threshold distance and not one millimetre more, so the body
+      // still covers the middle of the frame: the model goes, the view stays behind the head.
+      expect(shouldHidePersonModel(camera)).toBe(true);
       expect(camera.elevation).toBeCloseTo(lowestVisible, PRECISION_DIGITS);
       expect(elevationOf(camera)).toBeCloseTo(lowestVisible, PRECISION_DIGITS);
       expectClearOfBlockers(camera, ROOM_FIELD);
@@ -440,11 +452,10 @@ describe('thirdPersonCamera', () => {
       ['+x', pose({ x: WALKABLE_BOUNDS.maxX, yaw: YAW_FACING_MINUS_X })],
       ['-x', pose({ x: WALKABLE_BOUNDS.minX, yaw: YAW_FACING_PLUS_X })],
     ] as const)(
-      'shows the person with the back flat against the %s wall, from above and behind',
+      'looks down on the person with the back flat against the %s wall, from above and behind',
       (_side, start) => {
         const camera = getThirdPersonCamera(start, ROOM_FIELD);
 
-        expect(shouldHidePersonModel(camera)).toBe(false);
         expect(camera.distance).toBeGreaterThanOrEqual(VISIBLE_DISTANCE - TOLERANCE);
         expect(camera.elevation).toBeCloseTo(
           Math.acos(ROOM_AT_WALKING_LIMIT / VISIBLE_DISTANCE),
@@ -642,7 +653,7 @@ describe('thirdPersonCamera', () => {
       ['back to the start corner', START_POSE],
       ['a wall 0.5 m behind', pose({ z: CAMERA_LIMITS.maxZ - WALL_GAP, yaw: YAW_FACING_MINUS_Z })],
     ] as const)(
-      'stays at or above the head, shows the person and moves smoothly: %s',
+      'stays at or above the head, keeps the threshold distance and moves smoothly: %s',
       (_label, start) => {
         let previous: ThirdPersonCamera | undefined;
         for (let step = 0; step <= LOOK_UP_STEPS; step += 1) {
@@ -650,7 +661,9 @@ describe('thirdPersonCamera', () => {
           const camera = getThirdPersonCamera({ ...start, pitch }, ROOM_FIELD);
 
           expect(camera.position.y).toBeGreaterThanOrEqual(camera.target.y - TOLERANCE);
-          expect(shouldHidePersonModel(camera)).toBe(false);
+          // The raise never gives up distance as the pitch rises: whether the model is shown
+          // at the end of it is {@link shouldHidePersonModel}'s own boundary case, below.
+          expect(camera.distance).toBeGreaterThanOrEqual(VISIBLE_DISTANCE - TOLERANCE);
           expectNotInFront(camera, start.yaw);
           expectClearOfBlockers(camera, ROOM_FIELD);
           if (previous) {
@@ -765,16 +778,33 @@ describe('thirdPersonCamera', () => {
     it.each([
       ['hides the model at distance 0', 0, true],
       ['hides the model just below the threshold', VISIBLE_DISTANCE - DISTANCE_STEP, true],
-      ['shows the model at the threshold', VISIBLE_DISTANCE, false],
+      // The boundary itself: the distance the raise settles on, and the one the interior
+      // start pose is entered at. A strict `<` here left the back of a head filling the frame.
+      ['hides the model at the threshold', VISIBLE_DISTANCE, true],
       [
-        'shows the model a rounding error below the threshold',
+        'hides the model a rounding error below the threshold',
         VISIBLE_DISTANCE - TOLERANCE / 2,
-        false,
+        true,
+      ],
+      [
+        'hides the model a rounding error above the threshold',
+        VISIBLE_DISTANCE + TOLERANCE / 2,
+        true,
       ],
       ['shows the model above the threshold', VISIBLE_DISTANCE + DISTANCE_STEP, false],
       ['shows the model at the follow distance', FOLLOW_DISTANCE, false],
     ])('%s', (_label, distance, expected) => {
       expect(shouldHidePersonModel(cameraAt(distance))).toBe(expected);
+    });
+
+    it('hides the model at the real interior start pose, the frame it is entered in', () => {
+      // The defect this boundary was moved for: on the 1.00 m landing the raise lands on
+      // exactly the threshold, and a strict `<` showed the back of a head filling the view
+      // at the pose every interior visit begins from.
+      const camera = getThirdPersonCamera(REAL_START_POSE, REAL_FIELD);
+
+      expect(camera.distance).toBeCloseTo(VISIBLE_DISTANCE, PRECISION_DIGITS);
+      expect(shouldHidePersonModel(camera)).toBe(true);
     });
 
     it('still hides the model when there is no room at all behind the person', () => {

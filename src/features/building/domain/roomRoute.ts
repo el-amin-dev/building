@@ -236,7 +236,18 @@ function getWalkableRects(slabs: readonly FloorSlab[], id: SpaceId): readonly Pl
 
 /**
  * Finds the rect of a space a body is best put down in: the one with the
- * greatest {@link standingArea}, ties broken by slab order.
+ * greatest {@link standingArea}, ties broken by slab order. Its centre is where
+ * a walk sent to that space ends (see {@link getRouteWaypoints}).
+ *
+ * The largest rect a body can stand in, rather than the centre of the space's
+ * bounding box or of its largest rect by plain area. Both alternatives are wrong
+ * on this floor. The stair bay's bounding centre, (3.60, 5.00), is inside a
+ * flight — a hole at this level — because only the arrival landing is floor here.
+ * And the guest room's north strip is the larger rect by plain area, 6.075 m²
+ * against 4.34 m², while being only 0.75 m deep: a plain-area rule would put
+ * "go to the guest room" in the circulation strip the room is entered through,
+ * rather than in the room. Shrinking each rect by the body radius before
+ * comparing puts it in the room, at (5.50, 7.825).
  *
  * @param rects - The walkable rects of the space, in slab order.
  * @param id - Identifier of the space, for the error message.
@@ -691,7 +702,9 @@ function findRectPath(
  * @returns The connectors in walking order, excluding both endpoints; empty when
  *   the body is already in the rect it has to reach.
  * @throws RangeError naming the space when its walkable rects are split by a gap
- *   the body cannot pass.
+ *   the body cannot pass, and (unreachably) when a join of the path just built
+ *   cannot be found again — dropping that connector would cut a notch corner, so
+ *   it is louder than a skip.
  */
 function getConnectors(
   rects: readonly PlanRect[],
@@ -714,7 +727,12 @@ function getConnectors(
   for (let step = 0; step + 1 < path.length; step += 1) {
     const join = findRectJoin(rects[path[step]], rects[path[step + 1]], diameter);
     if (join === undefined) {
-      continue;
+      // Unreachable: `findRectPath` links two rects only when `findRectJoin`
+      // finds that very face. Skipping the connector instead would drop it
+      // silently and cut the corner of the notch it turns, so it throws.
+      throw new RangeError(
+        `space "${id}" has no join of ${String(diameter)} m between its walkable rects ${String(path[step])} and ${String(path[step + 1])}, which the path through them was built from`,
+      );
     }
     const centre = (join.overlapMin + join.overlapMax) * HALF;
     const along = Math.min(
@@ -724,39 +742,6 @@ function getConnectors(
     connectors.push(makeAxialWaypoint(join.faceAxis, join.face, along));
   }
   return connectors;
-}
-
-/**
- * Returns the point a walker sent to a space is put down at: the centre of its
- * largest standing rect.
- *
- * The largest rect a body can stand in, rather than the centre of the space's
- * bounding box or of its largest rect by plain area. Both alternatives are wrong
- * on this floor. The stair bay's bounding centre, (3.60, 5.00), is inside a
- * flight — a hole at this level — because only the arrival landing is floor here.
- * And the guest room's north strip is the larger rect by plain area, 6.075 m²
- * against 4.34 m², while being only 0.75 m deep: a plain-area rule would put
- * "go to the guest room" in the circulation strip the room is entered through,
- * rather than in the room. Shrinking each rect by the body radius before
- * comparing puts it in the room, at (5.50, 7.825).
- *
- * @param plan - The floor plan to read. Not mutated.
- * @param id - Identifier of the space to walk to.
- * @param config - Tuning; defaults to {@link ROOM_ROUTE_CONFIG}.
- * @returns A frozen point on the half-centimetre grid, at the centre of the
- *   space's largest standing rect, ties broken by slab order.
- * @throws RangeError naming the space when it has no floor at this level, or
- *   none with room for the body to stand in, and when `config` is not a usable
- *   tuning.
- */
-export function getSpaceDestination(
-  plan: FloorPlan,
-  id: SpaceId,
-  config: RoomRouteConfig = ROOM_ROUTE_CONFIG,
-): PlanPoint {
-  validateConfig(config);
-  const rects = getWalkableRects(getSlabs(plan), id);
-  return rectCentre(rects[findDestinationRectIndex(rects, id, config)]);
 }
 
 /**

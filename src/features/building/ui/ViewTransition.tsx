@@ -6,7 +6,12 @@ import { getRememberedOrbitPose } from '../application/exteriorOrbitStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
 import type { CameraTransition } from '../application/viewStore.ts';
 import type { ExteriorFraming, Vector3Like } from '../domain/exteriorFraming.ts';
-import { getOrbitPosition } from '../domain/orbitNavigation.ts';
+import {
+  clampOrbitPose,
+  getOrbitLimits,
+  getOrbitPose,
+  getOrbitPosition,
+} from '../domain/orbitNavigation.ts';
 import { getThirdPersonCamera } from '../domain/thirdPersonCamera.ts';
 import type { InteriorCameraMode } from '../domain/viewMode.ts';
 import {
@@ -70,12 +75,15 @@ const MIN_LOOK_AHEAD_METRES = 1;
  * endpoint expression and the mounting control's placement expression must be the
  * same expression.** Concretely:
  *
- * - `toExterior` ends at `getRememberedOrbitPose() ?? framing.position` — the
- *   remembered orbit pose converted with `getOrbitPosition(framing.target, pose)`
- *   when the viewer has framed the exterior before, and the framing default
- *   otherwise — looking at `framing.target`. The exterior controls must place the
- *   camera with that identical expression, so their placement is a no-op after the
- *   travel instead of a snap;
+ * - `toExterior` ends at
+ *   `getOrbitPosition(framing.target, clampOrbitPose(getRememberedOrbitPose() ??
+ *   getOrbitPose(framing.target, framing.position), getOrbitLimits(framing)))`,
+ *   looking at `framing.target`: the remembered orbit pose when the viewer has
+ *   framed the exterior before and the framing default otherwise, clamped into
+ *   the limits of the live framing. That is the exterior controls' own placement
+ *   expression, character for character, so their placement is a no-op after the
+ *   travel instead of a snap — including after a resize, which can leave a
+ *   remembered distance outside the new limits;
  * - `toInterior` ends at `getEyeCameraPose(INTERIOR_START_POSE)` in first person or
  *   at `getThirdPersonCamera(INTERIOR_START_POSE, CAMERA_FIELD)` in third person,
  *   both derived from the *shared* start pose (`floorInstance.ts`), which is the
@@ -217,17 +225,24 @@ function getInteriorEndPose(cameraMode: InteriorCameraMode): CameraPose {
 
 /**
  * The exterior endpoint: the remembered orbit pose when there is one, else the
- * framing default. This expression is the hand-off contract (see
- * {@link ViewTransition}) and must stay identical to the exterior controls'.
+ * framing default, brought inside the limits of the live framing. This expression
+ * is the hand-off contract (see {@link ViewTransition}) and must stay identical to
+ * the exterior controls'.
+ *
+ * The clamp is the reason the whole expression is written out rather than
+ * shortcut to `framing.position` when nothing is remembered: a pose remembered at
+ * one canvas size can be illegal at another — resize the window while inside and
+ * `maxDistance` shrinks — and the mounting controls place the camera at the
+ * *clamped* pose. Landing at the unclamped one would be a visible snap at the
+ * very moment the controls take over.
  *
  * @param framing - The exterior framing at the live canvas size.
  * @returns The camera pose the exterior view will be framed at.
  */
 function getExteriorEndPose(framing: ExteriorFraming): CameraPose {
+  const framingPose = getOrbitPose(framing.target, framing.position);
   const remembered = getRememberedOrbitPose();
-  return {
-    position:
-      remembered === undefined ? framing.position : getOrbitPosition(framing.target, remembered),
-    target: framing.target,
-  };
+  const pose = clampOrbitPose(remembered ?? framingPose, getOrbitLimits(framing));
+
+  return { position: getOrbitPosition(framing.target, pose), target: framing.target };
 }

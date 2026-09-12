@@ -8,7 +8,7 @@ import { getExteriorFraming } from '../domain/exteriorFraming.ts';
 import type { Vector3Like } from '../domain/exteriorFraming.ts';
 import { PLOT_RECT } from '../domain/floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from '../domain/heights.ts';
-import { getOrbitPosition } from '../domain/orbitNavigation.ts';
+import { clampOrbitPose, getOrbitLimits, getOrbitPosition } from '../domain/orbitNavigation.ts';
 import type { OrbitPose } from '../domain/orbitNavigation.ts';
 import { getThirdPersonCamera } from '../domain/thirdPersonCamera.ts';
 import { getEyeCameraPose, VIEW_TRANSITION_SECONDS } from '../domain/viewTransition.ts';
@@ -54,6 +54,8 @@ const NO_TIME = 0;
 const LEFT_BEHIND: Vector3Like = { x: 12, y: 7, z: -9 };
 /** A pose the viewer could have orbited to, inside the framing's zoom range. */
 const ORBITED_POSE: OrbitPose = { azimuth: 1.1, polar: 1.2, distance: FRAMING.fitDistance };
+/** Factor taking a distance past the framing's furthest, as a resize can leave it. */
+const BEYOND_THE_LIMIT = 1.5;
 
 describe('ViewTransition', () => {
   let camera: PerspectiveCamera;
@@ -218,6 +220,28 @@ describe('ViewTransition', () => {
 
       expectCameraAt(FRAMING.position);
       expectCameraLookingAt(FRAMING.target);
+    });
+
+    it('clamps a remembered pose the live framing no longer allows, as the controls do', () => {
+      // The window was resized while the viewer was inside, so `maxDistance` is now below
+      // the distance the pose was remembered at. The mounting controls place the camera at
+      // the clamped pose, so the travel has to land there too or the hand-off snaps.
+      render(<ViewTransition />);
+      const illegal: OrbitPose = {
+        ...ORBITED_POSE,
+        distance: FRAMING.maxDistance * BEYOND_THE_LIMIT,
+      };
+      useExteriorOrbitStore.getState().rememberOrbitPose(illegal);
+      const clamped = clampOrbitPose(illegal, getOrbitLimits(FRAMING));
+      startLeaving();
+
+      runToArrival();
+
+      expectCameraAt(getOrbitPosition(FRAMING.target, clamped));
+      expectCameraLookingAt(FRAMING.target);
+      expect(clamped.distance).toBe(FRAMING.maxDistance);
+      expect(distanceTo(FRAMING.target)).toBeCloseTo(FRAMING.maxDistance);
+      expect(distanceTo(getOrbitPosition(FRAMING.target, illegal))).toBeGreaterThan(0);
     });
 
     it('ends at the remembered orbit pose when the viewer has framed the exterior', () => {

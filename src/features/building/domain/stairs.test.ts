@@ -14,7 +14,7 @@ import {
 } from './planGeometry.ts';
 import type { PlanRect } from './planGeometry.ts';
 import { STAIRS } from './sourceOfTruth/plan.ts';
-import { getBlockedRects, getStairsLayout, STAIRS_SPEC } from './stairs.ts';
+import { getStairsLayout, STAIRS_SPEC } from './stairs.ts';
 import type { StairPiece, StairsLayout } from './stairs.ts';
 
 /**
@@ -575,18 +575,18 @@ describe('stairs', () => {
     });
   });
 
-  describe('getBlockedRects', () => {
+  describe('the blocked rects', () => {
     it('blocks the two flights and the turn: three rects, not one', () => {
       // Was a single rect, the flight area of the straight stair. Everything but
       // the arrival landing is a hole at this level now.
-      const blocked = getBlockedRects(FLOOR_PLAN);
+      const blocked = DEFAULT_LAYOUT.blockedRects;
 
       expect(blocked).toHaveLength(BLOCKED_COUNT);
       expect(blocked).toEqual(BLOCKED_NAMES.map((name) => pieceNamed(DEFAULT_LAYOUT, name).rect));
     });
 
     it('blocks exactly the bay less the arrival landing', () => {
-      const blocked = getBlockedRects(FLOOR_PLAN);
+      const blocked = DEFAULT_LAYOUT.blockedRects;
       const area = blocked.reduce((sum, rect) => sum + rectArea(rect), 0);
 
       expect(area).toBeCloseTo(
@@ -596,7 +596,7 @@ describe('stairs', () => {
     });
 
     it('never blocks the landing or the arrival', () => {
-      const blocked = getBlockedRects(FLOOR_PLAN);
+      const blocked = DEFAULT_LAYOUT.blockedRects;
 
       expect(blocked).not.toContainEqual(EXPECTED_LANDING);
       blocked.forEach((rect) => {
@@ -637,7 +637,7 @@ describe('stairs', () => {
       };
 
       expect(findSpaceAt(FLOOR_PLAN, ahead)?.id).toBe('corridor');
-      getBlockedRects(FLOOR_PLAN).forEach((rect) => {
+      LAYOUT.blockedRects.forEach((rect) => {
         expect(rectContainsPoint(rect, ahead)).toBe(false);
       });
     });
@@ -698,7 +698,7 @@ describe('stairs', () => {
     });
 
     it('freezes the blocked rects', () => {
-      const blocked = getBlockedRects(FLOOR_PLAN);
+      const blocked = LAYOUT.blockedRects;
 
       expect(Object.isFrozen(blocked)).toBe(true);
       blocked.forEach((rect) => {
@@ -717,7 +717,6 @@ describe('stairs', () => {
 
       expect(call).toThrow(RangeError);
       expect(call).toThrow(/spec bay/u);
-      expect(() => getBlockedRects(withStairsBay(bay))).toThrow(RangeError);
     });
 
     it('rejects a plan with no stairs space', () => {
@@ -756,7 +755,6 @@ describe('stairs', () => {
 
     it('accepts the real plan and heights unchanged', () => {
       expect(() => getStairsLayout(FLOOR_PLAN)).not.toThrow();
-      expect(() => getBlockedRects(FLOOR_PLAN)).not.toThrow();
     });
   });
 });

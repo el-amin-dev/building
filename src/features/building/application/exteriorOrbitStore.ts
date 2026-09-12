@@ -38,8 +38,6 @@ export interface ExteriorOrbitState {
   readonly orbitPose: OrbitPose | undefined;
   /** Remembers where the exterior camera is. Remembering the same pose changes nothing. */
   readonly rememberOrbitPose: (pose: OrbitPose) => void;
-  /** Forgets the remembered pose, so the next entry reframes from the exterior framing default. */
-  readonly resetOrbitPose: () => void;
 }
 
 /**
@@ -74,8 +72,6 @@ export const useExteriorOrbitStore = create<ExteriorOrbitState>()((set) => ({
             }),
           },
     ),
-  resetOrbitPose: () =>
-    set((state) => (state.orbitPose === undefined ? state : { orbitPose: undefined })),
 }));
 
 /**

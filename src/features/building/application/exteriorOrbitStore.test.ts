@@ -99,35 +99,6 @@ describe('useExteriorOrbitStore', () => {
     unsubscribe();
   });
 
-  it('forgets the pose it remembered', () => {
-    useExteriorOrbitStore.getState().rememberOrbitPose(A_POSE);
-
-    useExteriorOrbitStore.getState().resetOrbitPose();
-
-    expect(remembered()).toBeUndefined();
-  });
-
-  it('remembers a pose again after forgetting one', () => {
-    useExteriorOrbitStore.getState().rememberOrbitPose(A_POSE);
-    useExteriorOrbitStore.getState().resetOrbitPose();
-
-    useExteriorOrbitStore.getState().rememberOrbitPose(ANOTHER_POSE);
-
-    expect(remembered()).toEqual(ANOTHER_POSE);
-  });
-
-  it('keeps the same state object when forgetting a pose it never had', () => {
-    const before = useExteriorOrbitStore.getState();
-    const listener = vi.fn();
-    const unsubscribe = useExteriorOrbitStore.subscribe(listener);
-
-    useExteriorOrbitStore.getState().resetOrbitPose();
-
-    expect(useExteriorOrbitStore.getState()).toBe(before);
-    expect(listener).not.toHaveBeenCalled();
-    unsubscribe();
-  });
-
   it('copies the pose in, so mutating the given object afterwards changes nothing', () => {
     const mutable = { ...A_POSE };
     useExteriorOrbitStore.getState().rememberOrbitPose(mutable);
@@ -142,7 +113,6 @@ describe('useExteriorOrbitStore', () => {
     const first = remembered();
 
     useExteriorOrbitStore.getState().rememberOrbitPose(ANOTHER_POSE);
-    useExteriorOrbitStore.getState().resetOrbitPose();
 
     expect(first).toEqual(A_POSE);
   });
@@ -169,10 +139,10 @@ describe('getRememberedOrbitPose', () => {
     expect(getRememberedOrbitPose()).toBe(remembered());
   });
 
-  it('reads no pose again once the store forgets', () => {
+  it('reads the pose that replaced an earlier one', () => {
     useExteriorOrbitStore.getState().rememberOrbitPose(A_POSE);
-    useExteriorOrbitStore.getState().resetOrbitPose();
+    useExteriorOrbitStore.getState().rememberOrbitPose(ANOTHER_POSE);
 
-    expect(getRememberedOrbitPose()).toBeUndefined();
+    expect(getRememberedOrbitPose()).toEqual(ANOTHER_POSE);
   });
 });

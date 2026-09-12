@@ -5,9 +5,8 @@ import { useRemoteControlStore } from '../application/remoteControlStore.ts';
 import { useRoomWalkStore } from '../application/roomWalkStore.ts';
 import type { WalkField } from '../domain/collision.ts';
 import { getMovementIntent, isEyeNavigationKey, stepEyePose } from '../domain/eyeNavigation.ts';
-import type { EyePose } from '../domain/eyeNavigation.ts';
+import type { EyeAction, EyePose } from '../domain/eyeNavigation.ts';
 import { PERSON_SPEC } from '../domain/person.ts';
-import { hasAnyInput } from '../domain/routeFollower.ts';
 import { getThirdPersonCamera } from '../domain/thirdPersonCamera.ts';
 import type { CameraField } from '../domain/thirdPersonCamera.ts';
 import type { InteriorCameraMode } from '../domain/viewMode.ts';
@@ -63,9 +62,14 @@ export interface EyeCameraControlsProps {
  * Three inputs can ask for movement: the navigation keys held on `targetRef`, the actions held
  * on the on-screen `RemoteControl`, and the automatic walk to a room followed by
  * `useRouteFollower`. The first two are the viewer's own hands and are merged into one manual
- * intent by `getMovementIntent`; the walk is only consulted when that manual intent asks for
- * nothing at all. **Manual input wins, and cancels the walk** — the viewer taking the controls
- * back ends the trip rather than fighting it for the body.
+ * intent by `getMovementIntent`; the walk is only consulted when neither of them is holding
+ * anything. **Manual input wins, and cancels the walk** — the viewer taking the controls back
+ * ends the trip rather than fighting it for the body.
+ *
+ * "Holding anything" is the held *action set* and not the intent it reduces to (see
+ * {@link isAnythingHeld}): opposite actions cancel to an all-zero intent, so W and S together
+ * would otherwise read as no input at all and leave the walk running under the viewer's hands.
+ * Any manual input cancels, which is the whole rule — a partial one leaves it walking.
  *
  * Cancelling is conditioned on the walk store being anything other than `idle`, not on a walk
  * still running, and that is deliberate: it is also what clears a finished `unreachable` or
@@ -98,7 +102,7 @@ export function EyeCameraControls({
     const { activeActions } = useRemoteControlStore.getState();
     const manual = getMovementIntent(pressedKeys.current, activeActions);
     const auto = advanceWalk(poseRef.current, delta);
-    const isManual = hasAnyInput(manual);
+    const isManual = isAnythingHeld(pressedKeys.current, activeActions);
 
     const walk = useRoomWalkStore.getState();
     if (isManual && walk.status !== 'idle') {
@@ -121,4 +125,36 @@ export function EyeCameraControls({
   }, POSE_STEP_FRAME_PRIORITY);
 
   return null;
+}
+
+/**
+ * Whether the viewer is holding anything at all: the **actions** asked for, not the intent they
+ * reduce to.
+ *
+ * Asked of the held set because opposite actions cancel: `moveForward` with `moveBackward` —
+ * two fingers on the pad's arrows, or W and S together — reduces to an intent of all zeros
+ * while plainly being the viewer's hands on the controls. Cancelling the walk on the reduced
+ * intent left it running through exactly those inputs, so it is cancelled on the set instead:
+ * **any** manual input ends the trip.
+ *
+ * Keys are counted through `isEyeNavigationKey`, so a key that steers nothing — the camera-mode
+ * toggle, say — never cancels a walk even if it were tracked.
+ *
+ * @param pressedCodes - The `KeyboardEvent.code` values held on the view region.
+ * @param activeActions - The actions held on the on-screen remote control.
+ * @returns `true` when either input is holding a navigation action.
+ */
+function isAnythingHeld(
+  pressedCodes: ReadonlySet<string>,
+  activeActions: ReadonlySet<EyeAction>,
+): boolean {
+  if (activeActions.size > 0) {
+    return true;
+  }
+  for (const code of pressedCodes) {
+    if (isEyeNavigationKey(code)) {
+      return true;
+    }
+  }
+  return false;
 }

@@ -83,8 +83,9 @@ const CENTRE_POSE: EyePose = Object.freeze({
 /**
  * Back flat against the wall: the tightest pose the collision model allows, since a body stops
  * with its centre at `face − PERSON_SPEC.radius`. It leaves the camera 0.10 m of plan clearance,
- * so the camera rises to nearly its elevation limit — and the body must stay visible there
- * (`thirdPersonCamera.ts` sizes `minBodyVisibleDistance` on exactly this pose).
+ * so the camera rises to nearly its elevation limit and reaches exactly `minBodyVisibleDistance`
+ * — the boundary the model is hidden at (`thirdPersonCamera.ts` sizes that distance on this very
+ * pose, as the one the raise must still be able to reach).
  */
 const BACK_TO_WALL_POSE: EyePose = Object.freeze({
   ...CENTRE_POSE,
@@ -224,12 +225,15 @@ describe('isPersonModelVisible', () => {
     expect(isPersonModelVisible('thirdPerson', CENTRE_POSE, CAMERA_FIELD)).toBe(true);
   });
 
-  it('shows the model in third person with the back against a wall, the camera raised', () => {
+  it('hides the model with the back against a wall, where the raise lands on the threshold', () => {
     const camera = getThirdPersonCamera(BACK_TO_WALL_POSE, CAMERA_FIELD);
 
     expect(camera.elevation).toBeGreaterThan(THIRD_PERSON_CAMERA_CONFIG.baseElevation);
-    expect(camera.distance).toBeLessThan(THIRD_PERSON_CAMERA_CONFIG.followDistance);
-    expect(isPersonModelVisible('thirdPerson', BACK_TO_WALL_POSE, CAMERA_FIELD)).toBe(true);
+    expect(camera.distance).toBeCloseTo(THIRD_PERSON_CAMERA_CONFIG.minBodyVisibleDistance);
+    // The visibility threshold is inclusive (`shouldHidePersonModel`): at exactly that
+    // distance the body still covers the middle of the frame, so the model goes and the
+    // viewer looks out from just behind the head.
+    expect(isPersonModelVisible('thirdPerson', BACK_TO_WALL_POSE, CAMERA_FIELD)).toBe(false);
   });
 
   it('hides the model in third person when there is no room at all behind the person', () => {
