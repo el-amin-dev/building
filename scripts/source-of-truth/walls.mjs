@@ -234,10 +234,177 @@ function declaredOpenings(spec) {
  *        spanMax, length, thickness, faces, openings }
  *
  * Extra fields beyond the contract, all additive so a renderer can ignore them:
- * `exterior`, `neighbours` (ids), `measuredGap` (the real distance to the
- * facing space, which is how `verify.mjs` catches a thickness rule that
- * disagrees with the drawn gap) and `thicknessNote`.
+ * `exterior`, `neighbours` (ids), `varies`, and `contacts`.
+ *
+ * `thickness` is the THICKEST contact, kept for quantities and takeoff. It must
+ * not be used to draw: isolation is now width, so one face is commonly heavy
+ * where it faces weather or an isolated room and thin where it faces an ordinary
+ * one, and a single rectangle at `thickness` overruns the thin stretches. Draw
+ * from `contacts`, which tiles the whole face span in order along the axis:
+ *
+ *   Contact { neighbourId, spanMin, spanMax, length, thickness, reason }
+ *
+ * `neighbourId` is null for an exterior face (one contact, reason 'exterior')
+ * and for a stretch that backs onto nothing (reason 'no facing space'), so a
+ * renderer can walk the list without special cases. `reason` is one of
+ * 'exterior', 'join override', 'weather-exposed', 'isolation', 'plain separator'
+ * or 'no facing space' — the rule that explains the number beside it.
+ *
+ * `measuredGap` and `thicknessNote` are gone: they were a second and third
+ * answer to the question `contacts` now answers once, and three fields that can
+ * disagree is two too many.
  */
+/** Opposite face of the same physical wall. */
+const OPPOSITE_SIDE = Object.freeze({ north: 'south', south: 'north', east: 'west', west: 'east' });
+
+/**
+ * Are these two faces the two sides of one built wall? Same axis, opposite
+ * sides, the second on the outward side of the first and no further than one
+ * exterior wall away, spans overlapping.
+ */
+function backToBack(a, b, maxGap) {
+  if (a.axis !== b.axis || b.side !== OPPOSITE_SIDE[a.side]) return false;
+  const gap =
+    a.side === 'north'
+      ? a.at - b.at
+      : a.side === 'south'
+        ? b.at - a.at
+        : a.side === 'east'
+          ? b.at - a.at
+          : a.at - b.at;
+  if (gap < -EPS || gap > maxGap + EPS) return false;
+  return Math.min(a.spanMax, b.spanMax) - Math.max(a.spanMin, b.spanMin) > EPS;
+}
+
+/**
+ * The stretches of one face, in order, tiling its whole span.
+ *
+ * WHY a sweep rather than one entry per neighbour: the stretches have to tile
+ * the face for a renderer to draw it by walking the list, which means the bits
+ * that back onto nothing must appear too, and two spaces that both claim a
+ * stretch must be resolved rather than both emitted. Cutting the span at every
+ * boundary and asking each cell which space is NEAREST does both, and cannot
+ * leave a hole or an overlap however the rooms are drawn.
+ */
+function contactsAlong(wall, neighbours, { WALLS, overrideFor, exposed, roomKind }) {
+  const pieces = [];
+  for (const n of neighbours) {
+    const override = overrideFor(wall.roomId, n.room.id);
+    // The gap the rects leave IS the thickness — the spec draws every wall at
+    // its real width, so measuring beats inferring. An override wins because it
+    // states a gap the geometry would not predict, and the kind rule is only
+    // reached when two spaces touch with no gap at all.
+    const thickness = override
+      ? override.thickness
+      : n.gap > EPS
+        ? n.gap
+        : exposed(n.room.kind) || exposed(roomKind)
+          ? WALLS.voidFacing
+          : WALLS.partition;
+    const reason = override
+      ? 'join override'
+      : exposed(n.room.kind) || exposed(roomKind)
+        ? 'weather-exposed'
+        : 'plain separator';
+    for (const [lo, hi] of n.spans) {
+      pieces.push({ neighbourId: n.room.id, lo, hi, gap: n.gap, thickness: cm(thickness), reason });
+    }
+  }
+
+  const bounds = new Set([wall.spanMin, wall.spanMax]);
+  for (const p of pieces) {
+    if (p.lo > wall.spanMin + EPS) bounds.add(cm(p.lo));
+    if (p.hi < wall.spanMax - EPS) bounds.add(cm(p.hi));
+  }
+  const cuts = [...bounds].sort((a, b) => a - b);
+
+  const cells = [];
+  for (let i = 0; i < cuts.length - 1; i += 1) {
+    const lo = cuts[i];
+    const hi = cuts[i + 1];
+    if (hi - lo <= EPS) continue;
+    const mid = (lo + hi) / 2;
+    const covering = pieces
+      .filter((p) => p.lo <= mid + EPS && p.hi >= mid - EPS)
+      .sort((a, b) => a.gap - b.gap);
+    cells.push({ lo, hi, piece: covering[0] ?? null });
+  }
+
+  const merged = [];
+  for (const cell of cells) {
+    const last = merged[merged.length - 1];
+    const same =
+      last &&
+      (last.piece?.neighbourId ?? null) === (cell.piece?.neighbourId ?? null) &&
+      Math.abs((last.piece?.thickness ?? -1) - (cell.piece?.thickness ?? -1)) < EPS &&
+      Math.abs(last.hi - cell.lo) < EPS;
+    if (same) last.hi = cell.hi;
+    else merged.push({ ...cell });
+  }
+
+  const contacts = merged.map((cell) => ({
+    neighbourId: cell.piece?.neighbourId ?? null,
+    spanMin: cm(cell.lo),
+    spanMax: cm(cell.hi),
+    length: cm(cell.hi - cell.lo),
+    thickness: cell.piece ? cell.piece.thickness : null,
+    reason: cell.piece ? cell.piece.reason : 'no facing space',
+  }));
+
+  // A stretch backing onto nothing is a corner or a return. Build it as thick as
+  // the thicker stretch it runs into, so the wall never thins at a junction; if
+  // no stretch of this face faces anything, the plain default is all there is.
+  for (let pass = 0; pass < 2; pass += 1) {
+    for (const [i, c] of contacts.entries()) {
+      if (c.thickness !== null) continue;
+      const around = [contacts[i - 1], contacts[i + 1]]
+        .filter((x) => x && x.thickness !== null)
+        .map((x) => x.thickness);
+      if (around.length) c.thickness = Math.max(...around);
+      else if (pass === 1) c.thickness = WALLS.partition;
+    }
+  }
+  return contacts;
+}
+
+/**
+ * Second pass: label the stretches the owner built heavy.
+ *
+ * Isolation is a width now, and it is declared per FACE, so what it means for a
+ * stretch is only knowable once every face exists — a named face makes whatever
+ * backs onto it heavy too. It only ever upgrades a plain separator: an override
+ * or a weather-exposed face already has a stronger reason for its number.
+ */
+function assignIsolationReasons(walls, spec) {
+  const insulated = spec.INSULATED_WALLS ?? [];
+  if (insulated.length === 0) return;
+  const maxGap = spec.WALLS.exterior;
+  const byMatricule = new Map(walls.map((w) => [w.matricule, w]));
+  const spans = new Map(walls.map((w) => [w.matricule, []]));
+
+  for (const entry of insulated) {
+    const wall = byMatricule.get(entry.matricule);
+    if (!wall) continue;
+    spans.get(wall.matricule).push([wall.spanMin, wall.spanMax]);
+    for (const other of walls) {
+      if (other.matricule === wall.matricule || !backToBack(wall, other, maxGap)) continue;
+      const lo = Math.max(wall.spanMin, other.spanMin);
+      const hi = Math.min(wall.spanMax, other.spanMax);
+      if (hi - lo > EPS) spans.get(other.matricule).push([cm(lo), cm(hi)]);
+    }
+  }
+
+  for (const wall of walls) {
+    const heavy = mergeSpans(spans.get(wall.matricule));
+    if (heavy.length === 0) continue;
+    for (const contact of wall.contacts) {
+      if (contact.reason !== 'plain separator') continue;
+      const inside = heavy.some(([lo, hi]) => contact.spanMin >= lo - EPS && contact.spanMax <= hi + EPS);
+      if (inside) contact.reason = 'isolation';
+    }
+  }
+}
+
 export function deriveWalls(spec = planV2) {
   const { FLOOR_NUMBER, PLOT, WALLS, ROOMS, JOIN_OVERRIDES } = spec;
   const exteriorT = WALLS.exterior;
@@ -277,50 +444,49 @@ export function deriveWalls(spec = planV2) {
         spanMax: cm(edge.span[1]),
         length: cm(edge.span[1] - edge.span[0]),
         thickness: 0,
+        varies: false,
         faces: '',
+        contacts: [],
         openings: [],
       };
 
       const neighbours = facingSpaces(wall, ROOMS, exteriorT);
       const onEnvelope = near(envelope[edge.side].at, wall.at);
+      const exposed = (kind) => kind === 'openAir' || kind === 'void';
 
       if (onEnvelope) {
         wall.exterior = true;
-        wall.thickness = exteriorT;
         wall.faces = `outside (side ${envelope[edge.side].side})`;
         wall.neighbours = [];
-        wall.measuredGap = null;
+        // One contact, so a renderer iterating `contacts` needs no special case
+        // for the envelope.
+        wall.contacts = [
+          {
+            neighbourId: null,
+            spanMin: wall.spanMin,
+            spanMax: wall.spanMax,
+            length: wall.length,
+            thickness: exteriorT,
+            reason: 'exterior',
+          },
+        ];
       } else {
         wall.exterior = false;
         wall.neighbours = neighbours.map((n) => n.room.id);
-        wall.measuredGap = neighbours.length ? Math.min(...neighbours.map((n) => n.gap)) : null;
-        // Precedence, highest first: a join override wins, because it states a
-        // gap the geometry alone would not predict (the stair landing, the
-        // continuous open-air strip, the utility wall of ADR-006). Otherwise the
-        // gap the rects actually leave IS the thickness — the spec draws every
-        // wall at its real thickness, so measuring beats inferring. Inferring
-        // from the two rooms' kinds was wrong twice: it made 13 open-air walls
-        // 0.20 inside a 0.30 gap, and then it made the guest room's west face
-        // 0.20 although the control center's east wall is 0.30 for its whole run,
-        // because a further stretch of that same wall line passes the balcony and
-        // one wall cannot change thickness along its length. The kind rule stays
-        // as the fallback for a face no space looks at.
-        const exposed = (kind) => kind === 'openAir' || kind === 'void';
-        const candidates = neighbours.map((n) => {
-          const override = overrideFor(room.id, n.room.id);
-          if (override) return override.thickness;
-          if (n.gap > EPS) return n.gap;
-          return exposed(n.room.kind) || exposed(room.kind) ? WALLS.voidFacing : WALLS.partition;
-        });
-        const distinct = [...new Set(candidates)];
-        wall.thickness = distinct.length ? Math.max(...distinct) : WALLS.partition;
-        if (distinct.length > 1) {
-          wall.thicknessNote = `facing spaces disagree: ${distinct.map((t) => t.toFixed(2)).join(' / ')}`;
-        }
         wall.faces = neighbours.length
           ? neighbours.map((n) => n.room.name).join(' / ')
           : 'nothing (no facing space found)';
+        wall.contacts = contactsAlong(wall, neighbours, {
+          WALLS,
+          overrideFor,
+          exposed,
+          roomKind: room.kind,
+        });
       }
+
+      // The thickest stretch, for quantities. Never for drawing — see the header.
+      wall.thickness = cm(Math.max(...wall.contacts.map((c) => c.thickness)));
+      wall.varies = new Set(wall.contacts.map((c) => cm(c.thickness))).size > 1;
 
       wall._facing = neighbours;
       walls.push(wall);
@@ -328,6 +494,7 @@ export function deriveWalls(spec = planV2) {
   }
 
   placeOpenings(walls, spec);
+  assignIsolationReasons(walls, spec);
   for (const wall of walls) delete wall._facing;
   return walls;
 }

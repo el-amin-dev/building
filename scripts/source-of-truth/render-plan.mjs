@@ -28,8 +28,8 @@
  * it is a sink or a shower. A screen of kind `partition` is the exception: it is
  * drawn as fabric and carries no label. Even so a label is usually wider than
  * the opening it names, so labels cannot simply sit inside the thing they name.
- * What saves it is that rooms are drawn as *clear* rectangles: the 12 px and
- * 18 px gaps between them form a continuous empty lattice, which is exactly
+ * What saves it is that rooms are drawn as *clear* rectangles: the gaps between
+ * them — the walls themselves — form a continuous lattice, which is exactly
  * where wall, port and window labels belong. So every such label is queued into
  * a "band" — one shared line of constant centreline per wall axis — and each
  * band is then packed:
@@ -148,6 +148,34 @@ const FIXTURE_COLORS = Object.freeze({ fill: '#cfd8dc', stroke: '#455a64', text:
 const PARTITION_FILL = '#8c8c8c';
 
 /**
+ * Every wall is drawn as one of two kinds: red if it is built for isolation,
+ * blue if it is only a separator (owner: "red wall mean hard, blue mean soft").
+ *
+ * Muted brick and muted slate, not saturated primaries, because the ports and
+ * windows are what a reader looks for first and these run along every wall on
+ * the page — 80 of them. Saturated red and blue would shout over the whole plan.
+ *
+ * Colour alone is never the signal. The fills differ in lightness, and the red
+ * carries a heavy dark outline where the blue carries a light one, so the two
+ * stay apart in a black-and-white print and for a colour-blind reader. The fills
+ * are kept pale for a second reason: the wall labels sit in lanes straddling
+ * these very bands, and grey text has to stay readable on top of them.
+ */
+const WALL_HARD = Object.freeze({ fill: '#e8c4bd', stroke: '#8f3f3a', width: 2 });
+/** @see WALL_HARD */
+const WALL_SOFT = Object.freeze({ fill: '#d4dde4', stroke: '#8fa3b0', width: 1 });
+
+/**
+ * Floor on a drawn wall's depth, in metres. NOT a wall thickness.
+ *
+ * A join the spec gives zero thickness — the stair to the corridor, which is one
+ * continuous floor — would otherwise render as a zero-height rectangle and
+ * vanish. Every real depth is read per wall from the spec, so a re-layout that
+ * makes isolated walls 0.30 and separators 0.15 needs no change here.
+ */
+const MIN_DRAWN_THICKNESS = 0.08;
+
+/**
  * How each spelling of a wall's `side` maps to the axis the wall runs along and
  * to the direction its solid lies in, away from the room that owns it.
  *
@@ -193,6 +221,13 @@ const ADJACENT_RINGS = 2;
  * Going further reaches deeper into the rooms for nothing.
  */
 const BAND_ROWS = Object.freeze([-0.5, 0.5, -1.5, 1.5, -2.5, 2.5]);
+/**
+ * How far outside its own rect a room matricule may reach, px, when the room has
+ * no free floor left at all — the guest sanitair, once five fixtures are in it.
+ * Sitting just outside beats being drawn across a bath.
+ */
+const LOOSE_REACH = 24;
+
 /** Font sizes a room matricule may use, largest first. */
 const ROOM_FONTS = Object.freeze([9, 8, 7, 6]);
 
@@ -216,7 +251,7 @@ const CHAR_W_PROSE = 0.58;
  * @returns {string} The `<mxGraphModel>…</mxGraphModel>` XML of the page.
  */
 export function renderPlanPage({ spec, walls }) {
-  const { PLOT, ROOMS, WALLS, STAIRS, SIDES, FIXTURES, FLOOR_NUMBER } = spec;
+  const { PLOT, ROOMS, WALLS, STAIRS, SIDES, FIXTURES, INSULATED_WALLS, FLOOR_NUMBER } = spec;
   const [plotMinX, plotMaxX, plotMinZ, plotMaxZ] = PLOT;
 
   /** Emitted cells, in z-order: later cells paint on top of earlier ones. */
@@ -294,12 +329,13 @@ export function renderPlanPage({ spec, walls }) {
       const anchor = placeRoomLabel(label, rectBox, placedLabels);
       // When every anchor is blocked — the guest sanitair, five fixtures in
       // 1.60 × 1.50 — the matricule comes out of the shape and is drawn as its
-      // own cell in whatever gap the room has left. Here that is the 15 px band
-      // between the basin and the screen, which no corner anchor can reach.
+      // own cell in whatever gap is left, shrinking and finally stepping just
+      // outside the room if it has to. No corner anchor can reach a gap in the
+      // middle of a room, and no gap at all is now possible in that one.
       const loose =
         anchor.free || label.lines.length === 0
           ? null
-          : findFreeBoxInRect(anchor.box, rectBox, placedLabels);
+          : placeLooseMatricule(label, rectBox, placedLabels);
       cells.push(
         shape({
           style:
@@ -318,19 +354,19 @@ export function renderPlanPage({ spec, walls }) {
         cells.push(
           text({
             style:
-              `text;html=1;align=center;verticalAlign=middle;fontSize=${label.fontSize};` +
+              `text;html=1;align=center;verticalAlign=middle;fontSize=${loose.fontSize};` +
               `fontStyle=1;${isVoid ? 'fontColor=#cc0000;' : ''}`,
             value: label.lines.join('\n'),
-            x: loose.x0,
-            y: loose.y0,
-            w: loose.x1 - loose.x0,
-            h: loose.y1 - loose.y0,
+            x: loose.box.x0,
+            y: loose.box.y0,
+            w: loose.box.x1 - loose.box.x0,
+            h: loose.box.y1 - loose.box.y0,
           }),
         );
       }
       // What must stay clear is the text itself, not the whole rect: a
       // rect-sized obstacle would push every wall label out of every room.
-      const placedBox = loose ?? anchor.box;
+      const placedBox = loose ? loose.box : anchor.box;
       if (placedBox) placedLabels.push(placedBox);
     });
   }
@@ -442,9 +478,77 @@ export function renderPlanPage({ spec, walls }) {
     });
   }
 
+  // ----------------------------------------------- every wall, red or blue
+  // Red is built for isolation, blue is only a separator — and a single face can
+  // be both along its length. `F1-R11-KIT-W4` is 0.30 thick for 0.80 where it
+  // wraps the guest room and 0.15 for 1.35 where it only divides the guest
+  // bathroom, because the owner asked for the room wrapped and its bathroom left
+  // out. So each stretch is drawn at its own depth over its own span, from
+  // `wall.contacts`. `wall.thickness` is the *thickest* contact, for quantities;
+  // drawing from it would swallow the 0.15 or show the wrap as not done.
+  //
+  // Both faces of a wall still land on the same centreline, so a stretch drawn
+  // from either side merges into one rectangle rather than two.
+  //
+  // Depth is part of the key, not just position: two walls can be collinear and
+  // of different depths, and now that isolation is expressed as width they
+  // routinely are. Nothing here assumes a depth — every one is read per contact.
+  //
+  // Red is `reason === 'isolation'` OR the face is named in INSULATED_WALLS, and
+  // the second half is not redundant. `reason` says why a stretch has the depth
+  // it has, so on an exterior wall it reads 'exterior' even when the owner named
+  // that wall for isolation: the whole side-C envelope and the balcony spine have
+  // no 'isolation' contact at all. Keying off `reason` alone drops 36.55 m of
+  // owner-named isolation and paints his heat boundary blue. `reason` earns its
+  // place by carrying isolation onto the *other* face of an interior wall, which
+  // is what makes the kitchen/guest-bathroom split come out right.
+  //
+  // Drawn before the openings, so a port or a window still sits on top.
+  const insulatedNames = new Set((INSULATED_WALLS ?? []).map((entry) => entry.matricule));
+  const wallBands = new Map();
+  for (const wall of walls) {
+    const { axis } = bandOf(wall, 0);
+    for (const stretch of wallStretches(wall, insulatedNames)) {
+      const key = `${axis}@${stretch.at.toFixed(3)}@${stretch.thickness.toFixed(3)}`;
+      let band = wallBands.get(key);
+      if (!band) {
+        band = { axis, at: stretch.at, thickness: stretch.thickness, every: [], hard: [] };
+        wallBands.set(key, band);
+      }
+      band.every.push([stretch.spanMin, stretch.spanMax]);
+      if (stretch.hard) band.hard.push([stretch.spanMin, stretch.spanMax]);
+    }
+  }
+  for (const key of [...wallBands.keys()].sort()) {
+    const { axis, at, thickness, every, hard } = wallBands.get(key);
+    const across = SCALE * Math.max(thickness, MIN_DRAWN_THICKNESS);
+    const hardRuns = mergeRanges(hard);
+    const runs = [
+      ...hardRuns.map((range) => [range, WALL_HARD]),
+      ...subtractRanges(mergeRanges(every), hardRuns).map((range) => [range, WALL_SOFT]),
+    ];
+    for (const [[min, max], look] of runs) {
+      const along = SCALE * (max - min);
+      // A sliver narrower than half a pixel is rounding, not wall.
+      if (along < 0.5) continue;
+      cells.push(
+        shape({
+          style:
+            `rounded=0;whiteSpace=wrap;html=1;fillColor=${look.fill};` +
+            `strokeColor=${look.stroke};strokeWidth=${look.width};`,
+          value: '',
+          x: axis === 'x' ? px(min) : px(at) - across / 2,
+          y: axis === 'x' ? py(at) - across / 2 : py(min),
+          w: axis === 'x' ? along : across,
+          h: axis === 'x' ? across : along,
+        }),
+      );
+    }
+  }
+
   // ----------------------------------------- walls, and the openings in them
   for (const wall of walls) {
-    const { axis, at } = bandOf(wall, WALLS.partition);
+    const { axis, at } = bandOf(wall, 0);
     const length = numberOr(wall.length, wall.spanMax - wall.spanMin);
     const mid = (wall.spanMin + wall.spanMax) / 2;
     queueBand({
@@ -461,17 +565,27 @@ export function renderPlanPage({ spec, walls }) {
       if (opening.alias) continue;
       const glazed = isWindow(opening);
       const colors = glazed ? WINDOW_COLORS : PORT_COLORS;
+      // The bar must cross the wall where the opening actually is, so its depth
+      // and its centreline come from the contact the opening sits in, not from
+      // `wall.thickness` — which is the thickest contact and would hang the bar
+      // off the face of any wall that changes depth along its length.
+      //
       // A zero-thickness join (the stairs/corridor continuity) would render as
       // an invisible zero-height bar; clamp so nothing silently disappears.
-      const thickness = Math.max(numberOr(wall.thickness, WALLS.partition), 0.08);
+      const contact = contactFor(wall, opening);
+      const thickness = Math.max(
+        numberOr(contact?.thickness, numberOr(wall.thickness, 0)),
+        MIN_DRAWN_THICKNESS,
+      );
+      const barAt = wall.at + outwardOf(wall) * (thickness / 2);
       const acrossPx = SCALE * thickness;
       const alongPx = SCALE * opening.width;
       cells.push(
         shape({
           style: `rounded=0;whiteSpace=wrap;html=1;fillColor=${colors.fill};strokeColor=${colors.stroke};`,
           value: '',
-          x: axis === 'x' ? px(opening.spanMin) : px(at) - acrossPx / 2,
-          y: axis === 'x' ? py(at) - acrossPx / 2 : py(opening.spanMin),
+          x: axis === 'x' ? px(opening.spanMin) : px(barAt) - acrossPx / 2,
+          y: axis === 'x' ? py(barAt) - acrossPx / 2 : py(opening.spanMin),
           w: axis === 'x' ? alongPx : acrossPx,
           h: axis === 'x' ? acrossPx : alongPx,
         }),
@@ -561,15 +675,15 @@ export function renderPlanPage({ spec, walls }) {
   caption(
     'text;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#0050a0;fontStyle=2;',
     `PLOT ${metres(plotMaxX - plotMinX)} x ${metres(plotMaxZ - plotMinZ)}` +
-      `    |    exterior walls ${metres(WALLS.exterior)} · partitions ${metres(WALLS.partition)}` +
+      `    |    walls ${wallThicknessSummary(WALLS)}` +
       `    |    {{TOTALS}}`,
     14,
   );
 
   caption(
     'text;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fontSize=9;fontColor=#00701a;',
-    'Green = port (door or opening) · Gold = window · Blue-grey = fixture · Solid grey = partition · Hatched = stair flights · Dashed red = void (no floor)\n' +
-      'Every shape carries its matricule; a wall carries its length and a fixture its kind. Partitions, sizes, notes, widths and sill→head are on the Registers page.',
+    'Red wall = built for isolation · Blue wall = separator only · Green = port (door or opening) · Gold = window · Blue-grey = fixture · Solid grey = partition · Hatched = stair flights · Dashed red = void (no floor)\n' +
+      'Every shape carries its matricule; a wall carries its length and a fixture its kind. Red covers the insulated span only, which is often part of a wall rather than all of it. Sizes, notes and sill→head are on the Registers page.',
     26,
   );
 
@@ -795,6 +909,147 @@ function fixturesByRoom(fixtures, rooms) {
 }
 
 /**
+ * Merge overlapping or touching ranges into the shortest list covering the same
+ * ground.
+ *
+ * Three room faces that meet end to end along one wall — the kitchen, laundry
+ * and main sanitair north walls against the corridor — become one 7.80 m span,
+ * not three abutting rectangles with seams drawn across them.
+ *
+ * @param {ReadonlyArray<ReadonlyArray<number>>} ranges `[min, max]` pairs, in any order.
+ * @returns {Array<Array<number>>} Disjoint `[min, max]` pairs, ascending.
+ */
+function mergeRanges(ranges) {
+  const sorted = [...ranges].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const merged = [];
+  for (const [min, max] of sorted) {
+    const last = merged[merged.length - 1];
+    if (last && min <= last[1] + 1e-6) last[1] = Math.max(last[1], max);
+    else merged.push([min, max]);
+  }
+  return merged;
+}
+
+/**
+ * Which way a wall's solid lies from the face `at` records.
+ *
+ * @param {Record<string, unknown>} wall A derived wall.
+ * @returns {number} `+1`, `-1`, or `0` when the side is not one we recognise.
+ */
+function outwardOf(wall) {
+  return SIDE_GEOMETRY[String(wall.side)]?.outward ?? 0;
+}
+
+/**
+ * One face of a wall as the stretches it is actually built from.
+ *
+ * `walls.mjs` tiles every face with `contacts`, each carrying its own span, its
+ * own depth and the `reason` that depth is what it is. A face can change depth
+ * partway along — the kitchen's west face is 0.30 where it wraps the guest room
+ * and 0.15 where it only divides that room's bathroom — so each contact becomes
+ * its own stretch, with its own centreline derived from its own depth.
+ *
+ * `hard` is `reason === 'isolation'` OR the face being named in
+ * `INSULATED_WALLS`. Both halves are needed: `reason` explains why a stretch has
+ * its depth, so an exterior wall reads 'exterior' however much the owner wants it
+ * insulated, and the named list is the only record that he does. Conversely
+ * `reason` is the only thing that carries isolation onto the far face of an
+ * interior wall, and onto part of a face rather than all of it.
+ *
+ * A wall with no `contacts` falls back to one stretch covering the whole face, so
+ * an older derivation still draws.
+ *
+ * @param {Record<string, unknown>} wall A derived wall.
+ * @param {Set<string>} insulatedNames Matricules the owner named for isolation.
+ * @returns {Array<{spanMin: number, spanMax: number, thickness: number, at: number,
+ *   hard: boolean}>} The stretches to draw, in the order `contacts` lists them.
+ */
+function wallStretches(wall, insulatedNames) {
+  const outward = outwardOf(wall);
+  const isNamed = insulatedNames.has(wall.matricule);
+  const contacts =
+    Array.isArray(wall.contacts) && wall.contacts.length > 0
+      ? wall.contacts
+      : [{ spanMin: wall.spanMin, spanMax: wall.spanMax, thickness: wall.thickness }];
+
+  return contacts.map((contact) => {
+    const thickness = numberOr(contact.thickness, numberOr(wall.thickness, 0));
+    return {
+      spanMin: contact.spanMin,
+      spanMax: contact.spanMax,
+      thickness,
+      at: wall.at + outward * (thickness / 2),
+      hard: contact.reason === 'isolation' || isNamed,
+    };
+  });
+}
+
+/**
+ * The contact an opening sits in, found by its midpoint.
+ *
+ * An opening never straddles a change of depth — a door cannot be half 0.30 and
+ * half 0.15 — so the midpoint settles it.
+ *
+ * @param {Record<string, unknown>} wall The wall the opening belongs to.
+ * @param {{spanMin: number, width: number}} opening A derived opening.
+ * @returns {Record<string, unknown> | null} Its contact, or null if none matches.
+ */
+function contactFor(wall, opening) {
+  const mid = opening.spanMin + opening.width / 2;
+  return (
+    (wall.contacts ?? []).find(
+      (contact) => mid >= contact.spanMin - 1e-9 && mid <= contact.spanMax + 1e-9,
+    ) ?? null
+  );
+}
+
+/**
+ * The parts of `ranges` that `cut` does not cover.
+ *
+ * This is what makes a partly-insulated wall read honestly: the named spans are
+ * the red runs, and everything else the wall covers comes back from here as the
+ * blue ones. `cut` must be sorted and disjoint — pass it through
+ * {@link mergeRanges} first.
+ *
+ * @param {ReadonlyArray<ReadonlyArray<number>>} ranges Disjoint `[min, max]` pairs, ascending.
+ * @param {ReadonlyArray<ReadonlyArray<number>>} cut Disjoint `[min, max]` pairs, ascending.
+ * @returns {Array<Array<number>>} What is left of `ranges`, ascending.
+ */
+function subtractRanges(ranges, cut) {
+  const out = [];
+  for (const [min, max] of ranges) {
+    let start = min;
+    for (const [cutMin, cutMax] of cut) {
+      if (cutMax <= start + 1e-9) continue;
+      if (cutMin >= max - 1e-9) break;
+      if (cutMin > start + 1e-9) out.push([start, Math.min(cutMin, max)]);
+      start = Math.max(start, cutMax);
+      if (start >= max - 1e-9) break;
+    }
+    if (start < max - 1e-9) out.push([start, max]);
+  }
+  return out;
+}
+
+/**
+ * The spec's wall thicknesses, written out for the caption.
+ *
+ * Built from whatever numeric entries `WALLS` actually has rather than naming
+ * `exterior` and `partition`, so the caption cannot quote a thickness the spec
+ * has stopped having — which is exactly what happens when isolation starts being
+ * expressed as width.
+ *
+ * @param {Record<string, unknown>} thicknesses The spec's `WALLS`.
+ * @returns {string} One `name thickness` pair per numeric entry, joined by `·`.
+ */
+function wallThicknessSummary(thicknesses) {
+  return Object.entries(thicknesses ?? {})
+    .filter(([, value]) => typeof value === 'number' && Number.isFinite(value))
+    .map(([name, value]) => `${name} ${metres(value)}`)
+    .join(' · ');
+}
+
+/**
  * The pieces of the stair, in the order the spec lists them — travel order.
  *
  * Anything on `STAIRS` that is a rectangle and is not the `bay` is a piece. The
@@ -913,6 +1168,47 @@ function placeRoomLabel(label, rect, obstacles) {
   // the caller lifts the matricule out of the shape and places it in whatever
   // gap the room has left.
   return centred;
+}
+
+/**
+ * Place a room's matricule when it cannot stay inside its own shape.
+ *
+ * Tried in order of how much is given up: the room's own floor at the chosen
+ * size, then the same floor at each smaller size, then — only if the room has no
+ * free floor at all — a spot within {@link LOOSE_REACH} of it. The guest sanitair
+ * reached that last case the round its fifth fixture went in: with a basin, two
+ * screens, a shower and a sit-bath in 1.60 × 1.50 there is no gap left, and a
+ * name drawn across the bath is worse than one just outside the door.
+ *
+ * @param {{fontSize: number, lines: string[]}} label The chosen room label.
+ * @param {{x0: number, y0: number, x1: number, y1: number}} rect The room rect, px.
+ * @param {ReadonlyArray<{x0: number, y0: number, x1: number, y1: number}>} obstacles Boxes to avoid.
+ * @returns {{box: {x0: number, y0: number, x1: number, y1: number}, fontSize: number} | null}
+ *   Where to draw it and at what size, or null if even that fails.
+ */
+function placeLooseMatricule(label, rect, obstacles) {
+  const wording = label.lines[0];
+  const sizes = ROOM_FONTS.filter((size) => size <= label.fontSize);
+  const reachable = {
+    x0: rect.x0 - LOOSE_REACH,
+    y0: rect.y0 - LOOSE_REACH,
+    x1: rect.x1 + LOOSE_REACH,
+    y1: rect.y1 + LOOSE_REACH,
+  };
+
+  for (const bounds of [rect, reachable]) {
+    for (const fontSize of sizes) {
+      const size = {
+        x0: 0,
+        y0: 0,
+        x1: wording.length * fontSize * CHAR_W_PROSE,
+        y1: fontSize * 1.45,
+      };
+      const box = findFreeBoxInRect(size, bounds, obstacles);
+      if (box) return { box, fontSize };
+    }
+  }
+  return null;
 }
 
 /**
@@ -1095,17 +1391,24 @@ function nearestFreeStart(blockers, wanted, w) {
  *
  * `at` is *not* the centreline. `walls.mjs` emits the clear face on the room's
  * side, with the solid lying outward of it: the master bedroom's south wall is
- * `at` 3.70 where the room's rect ends at z 3.70, and being 0.20 thick it fills
- * 3.70→3.90. Drawing on `at` directly would put every opening bar half a wall
- * thickness off its wall and — worse — would file the two faces of one physical
- * wall in two bands 0.20 m apart, so their labels would silently overlap instead
- * of being packed together. The outward direction therefore comes from `side`,
+ * `at` 3.70 where the room's rect ends at z 3.70, and it fills outward from
+ * there by its own thickness. Drawing on `at` directly would put every opening
+ * bar half a wall thickness off its wall and — worse — would file the two faces
+ * of one physical wall in two bands a thickness apart, so their labels would
+ * silently overlap instead of being packed together. The outward direction
+ * therefore comes from `side`,
  * and the centreline is `at + outward · thickness/2`.
  *
  * Both side vocabularies are accepted: the compass names `walls.mjs` uses, and
  * the `minX`/`maxZ` spelling of `RectSide` in the domain model. A wall whose
  * `side` is neither is taken to carry a centreline in `at` already, which is the
  * harmless reading if the contract ever changes under us.
+ *
+ * `wall.thickness` is the *thickest* contact, so the lane this returns sits on
+ * the centreline of the widest part of the wall. That is deliberate for a label:
+ * one wall gets one label, and taking the same value from both faces is what
+ * keeps the two in a single packing lane. Geometry must not use it — the wall
+ * bands and the opening bars take their depth per contact instead.
  *
  * @param {Record<string, unknown>} wall A derived wall.
  * @param {number} fallbackThickness Thickness to assume when the wall omits one.

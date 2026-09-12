@@ -34,7 +34,14 @@ export const PLOT = Object.freeze([0, 22.5, 0, 10]);
  * envelope even though it stands inside the plot. That is what the 0.30 gaps
  * drawn along x 1.30/1.60 and z 8.40/8.70 already are.
  */
-export const WALLS = Object.freeze({ exterior: 0.3, partition: 0.2, voidFacing: 0.3 });
+export const WALLS = Object.freeze({
+  exterior: 0.3,
+  /** A wall on the owner's isolation list: built wide for sound and heat. */
+  insulated: 0.3,
+  /** Everything else inside: a separator, built as thin as it usefully can be. */
+  partition: 0.15,
+  voidFacing: 0.3,
+});
 
 /** Vertical sizes, in metres. Side B is now a normal exterior wall, so no side is a parapet. */
 export const HEIGHTS = Object.freeze({ floorToFloor: 3.0, wall: 2.7, door: 2.1, railing: 1.1 });
@@ -56,18 +63,18 @@ export const HEIGHTS = Object.freeze({ floorToFloor: 3.0, wall: 2.7, door: 2.1, 
  * the corridor; the west one is half a storey down.
  */
 export const STAIRS = Object.freeze({
-  bay: Object.freeze([1.6, 5.6, 3.9, 5.9]),
+  bay: Object.freeze([1.6, 5.6, 4.0, 6.0]),
   riserCount: 18,
   going: 0.25,
   flightWidth: 1.0,
   /** Arrival landing, at this floor's level, continuous with the corridor. */
-  landingEast: Object.freeze([4.6, 5.6, 3.9, 5.9]),
+  landingEast: Object.freeze([4.6, 5.6, 4.0, 6.0]),
   /** Flight A descends west along the north strip, 9 risers. */
-  flightA: Object.freeze([2.6, 4.6, 3.9, 4.9]),
+  flightA: Object.freeze([2.6, 4.6, 4.0, 5.0]),
   /** The turn, half a storey down, spanning both strips. */
-  halfLanding: Object.freeze([1.6, 2.6, 3.9, 5.9]),
+  halfLanding: Object.freeze([1.6, 2.6, 4.0, 6.0]),
   /** Flight B descends east along the south strip, 9 risers, to the floor below. */
-  flightB: Object.freeze([2.6, 4.6, 4.9, 5.9]),
+  flightB: Object.freeze([2.6, 4.6, 5.0, 6.0]),
 });
 
 /**
@@ -86,19 +93,19 @@ export const ROOMS = Object.freeze([
   { n: 2, id: 'masterBedroom', name: 'Master bedroom', type: 'BED', kind: 'room',
     rects: [[1.6, 6.6, 0.3, 3.7]], note: 'no window (owner); balcony door centred on the wall' },
   { n: 3, id: 'livingRoom', name: 'Living room', type: 'LIV', kind: 'room',
-    rects: [[6.8, 11.8, 0.3, 3.7]] },
+    rects: [[6.9, 11.9, 0.3, 3.85]] },
   { n: 4, id: 'bedroomMaleKids', name: 'Bedroom — male kids', type: 'BED', kind: 'room',
-    rects: [[12.0, 17.0, 0.3, 3.7]] },
+    rects: [[12.05, 17.05, 0.3, 3.85]] },
   { n: 5, id: 'bedroomFemaleKids', name: 'Bedroom — female kids', type: 'BED', kind: 'room',
-    rects: [[17.2, 22.2, 0.3, 3.7]] },
+    rects: [[17.2, 22.2, 0.3, 3.85]] },
   { n: 6, id: 'stairs', name: 'Stairwell', type: 'STR', kind: 'stairwell',
-    rects: [[1.6, 5.6, 3.9, 5.9]], note: 'a landing at each end, flights A and B between them' },
+    rects: [[1.6, 5.6, 4.0, 6.0]], note: 'a landing at each end, flights A and B between them' },
   // The second rect runs east to x 11.80, the living room's east wall, so the
   // television wall opposite the living room is one unbroken run. Stopping it at
   // the old x 9.80 split the viewing area in two, with the kitchen wall poking
   // into the middle of it (owner).
   { n: 7, id: 'corridor', name: 'Corridor', type: 'COR', kind: 'circulation',
-    rects: [[5.6, 20.2, 3.9, 5.4], [5.6, 11.8, 5.4, 5.9]],
+    rects: [[5.6, 20.2, 4.0, 5.5], [5.6, 11.9, 5.5, 6.0]],
     note: 'the second rect is the stair hall and the television wall; it serves the guest room' },
   // Starts at z 6.90, not 6.10: the owner gave the 0.80 m strip above it to the
   // guest room, which now reaches the side-A balcony. This room is entered from
@@ -108,7 +115,7 @@ export const ROOMS = Object.freeze([
   // The strip is only 0.80 m to walk through, so the 0.20 partition comes out of
   // this room rather than out of it.
   { n: 8, id: 'controlCenter', name: 'Control center', type: 'CTR', kind: 'room',
-    rects: [[1.6, 3.8, 7.1, 9.7]], note: 'entered from the guest-room strip above it' },
+    rects: [[1.6, 3.8, 7.4, 9.7]], note: 'entered from the guest-room strip above it' },
   // The north strip now runs the full width from the side-A balcony at x 1.60 to
   // x 9.80, passing over the control center (owner). That strip is what gives the
   // balcony its second door and what the control center opens onto, so it is
@@ -117,21 +124,21 @@ export const ROOMS = Object.freeze([
   // wall is one thickness: 0.30 for its whole length, because further south it
   // passes the weather-exposed balcony.
   { n: 9, id: 'guestRoom', name: 'Guest room', type: 'GST', kind: 'room',
-    rects: [[1.6, 9.8, 6.1, 6.9], [4.1, 8.0, 6.9, 8.6]],
+    rects: [[1.6, 9.7, 6.3, 7.1], [4.1, 7.95, 7.1, 8.6]],
     note: 'north strip reaches the side-A balcony; guest sanitair carved out of the SE corner' },
   { n: 10, id: 'guestSanitair', name: 'Guest sanitair', type: 'BTH', kind: 'room',
-    rects: [[8.2, 9.8, 7.1, 8.6]] },
+    rects: [[8.25, 9.85, 7.4, 8.6]] },
   // No longer a rectangle: the corridor's television run now reaches x 11.80, so
   // the kitchen steps back to z 6.10 west of x 12.00 and keeps its full depth
   // east of it (owner: "the kitchen shape is not square, make it fit").
   { n: 11, id: 'kitchen', name: 'Kitchen', type: 'KIT', kind: 'room',
-    rects: [[10.0, 12.0, 6.1, 8.6], [12.0, 14.0, 5.6, 8.6]] },
+    rects: [[10.0, 12.2, 6.3, 8.6], [12.2, 14.1, 5.8, 8.6]] },
   { n: 12, id: 'laundry', name: 'Laundry', type: 'LND', kind: 'room',
-    rects: [[14.2, 17.4, 5.6, 8.6]], note: '1 door + 2 big windows on side B (owner)' },
+    rects: [[14.25, 17.55, 5.8, 8.6]], note: '1 door + 2 big windows on side B (owner)' },
   { n: 13, id: 'mainSanitair', name: 'Main sanitair', type: 'BTH', kind: 'room',
-    rects: [[17.6, 20.2, 5.6, 8.6]] },
+    rects: [[17.7, 20.35, 5.8, 8.6]] },
   { n: 14, id: 'utilityRoom', name: 'Utility room', type: 'UTL', kind: 'room',
-    rects: [[20.4, 22.2, 3.9, 9.7]] },
+    rects: [[20.5, 22.2, 4.15, 9.7]] },
   // Flush with the guest room above it at x 4.10, so the control center's east
   // wall is one straight 0.30 wall for its whole length.
   { n: 15, id: 'ccBalcony', name: 'Control-center balcony', type: 'BAL', kind: 'openAir',
@@ -149,11 +156,11 @@ export const ROOMS = Object.freeze([
   // wall, so 0.80 leaves about 0.65 to work in. The 0.20 saved goes to the
   // kitchen, laundry and main sanitair, which are now 3.00 deep.
   { n: 16, id: 'balconySlabB', name: 'Side-B balcony slab', type: 'BAL', kind: 'openAir',
-    rects: [[11.6, 15.3, 8.9, 9.7]] },
+    rects: [[11.65, 15.35, 8.9, 9.7]] },
   { n: 17, id: 'voidWest', name: 'Void (west)', type: 'VOID', kind: 'void',
-    rects: [[4.9, 11.6, 8.9, 9.7]], note: 'drying line and service risers; plumber access' },
+    rects: [[4.9, 11.65, 8.9, 9.7]], note: 'drying line and service risers; plumber access' },
   { n: 18, id: 'voidEast', name: 'Void (east)', type: 'VOID', kind: 'void',
-    rects: [[15.3, 20.2, 8.9, 9.7]], note: 'drying line and service risers; plumber access' },
+    rects: [[15.35, 20.3, 8.9, 9.7]], note: 'drying line and service risers; plumber access' },
 ]);
 
 /** Wall thicknesses that deviate from the kind-based default. */
@@ -188,16 +195,17 @@ export const PORTS = Object.freeze([
   { kind: 'door', between: ['corridor', 'kitchen'], along: 'x', spanMin: 12.7, width: 0.9 },
   { kind: 'door', between: ['corridor', 'mainSanitair'], along: 'x', spanMin: 18.6, width: 0.9,
     why: 'Moved east to clear the laundry door, which the owner wanted back beside the corridor wall; at x 17.90 the two leaves swung into the same floor.' },
-  { kind: 'door', between: ['balconyA', 'guestRoom'], along: 'z', spanMin: 6.15, width: 0.7,
+  { kind: 'door', between: ['balconyA', 'guestRoom'], along: 'z', spanMin: 6.35, width: 0.7,
     why: 'The owner moved the control-center door onto this wall: the balcony\'s second way in, after the master bedroom. 0.70 wide because the strip it opens into is only 0.80 deep.' },
   { kind: 'door', between: ['controlCenter', 'guestRoom'], along: 'x', spanMin: 1.7, width: 0.9,
     why: 'The old east-wall door, moved to the north wall: the guest-room strip above is now the only side the control center can be entered from.' },
   { kind: 'door', between: ['controlCenter', 'ccBalcony'], along: 'z', spanMin: 8.95, width: 0.7,
     why: '0.70, not 0.90: the balcony is only 0.80 deep now that the side-B strip is 0.80.' },
-  { kind: 'door', between: ['guestRoom', 'guestSanitair'], along: 'z', spanMin: 7.15, width: 0.7,
-    why: '0.70, not 0.90: the room is 1.50 deep and the bath takes 0.70 of it, so no 0.90 leaf can swing anywhere in it without hitting the bath.' },
+  { kind: 'door', between: ['guestRoom', 'guestSanitair'], along: 'z', spanMin: 7.45, width: 0.7,
+    swing: 'slide',
+    why: 'Sliding, and 0.70 not 0.90. The room is 1.35 deep with a 0.65 wet block and its screen, leaving 0.60 of free depth against the 0.70 a swinging leaf needs — the widest inward leaf that would clear is 0.55, too narrow for a bathroom. A sliding leaf needs no floor to open into.' },
   { kind: 'door', between: ['kitchen', 'balconySlabB'], along: 'x', spanMin: 12.7, width: 0.9 },
-  { kind: 'door', between: ['laundry', 'mainSanitair'], along: 'z', spanMin: 5.7, width: 0.9,
+  { kind: 'door', between: ['laundry', 'mainSanitair'], along: 'z', spanMin: 5.9, width: 0.9,
     why: 'Close to the corridor wall (owner); the main sanitair\'s corridor door moved east instead, so the two leaves no longer share floor.' },
   { kind: 'door', between: ['laundry', 'balconySlabB'], along: 'x', spanMin: 14.3, width: 0.9,
     why: 'Swapped with the window (owner): the door takes the west end of the wall, the glazing the east.' },
@@ -215,7 +223,7 @@ export const PORTS = Object.freeze([
 export const WINDOWS = Object.freeze([
   { kind: 'light', between: ['controlCenter', 'balconyA'], along: 'z', spanMin: 7.5, width: 0.9,
     sill: 0.9, head: 2.1 },
-  { kind: 'pass', between: ['guestRoom', 'kitchen'], along: 'z', spanMin: 6.2, width: 0.6,
+  { kind: 'pass', between: ['guestRoom', 'kitchen'], along: 'z', spanMin: 6.4, width: 0.6,
     sill: 1.0, head: 1.8, why: 'Pass food and ready coffee to the guests (owner).' },
   { kind: 'air', between: ['guestSanitair', 'voidWest'], along: 'x', spanMin: 8.65, width: 0.7,
     sill: 1.9, head: 2.3 },
@@ -254,20 +262,101 @@ export const WINDOWS = Object.freeze([
 export const FIXTURES = Object.freeze([
   // Main sanitair: the owner pushed the bath and the shower together to fill the
   // south half, wall to wall, and put the basin back in the open north half.
-  { kind: 'sink', room: 'mainSanitair', rect: [17.6, 18.3, 6.65, 7.1] },
-  { kind: 'bath', room: 'mainSanitair', rect: [17.6, 19.0, 7.2, 8.6] },
-  { kind: 'shower', room: 'mainSanitair', rect: [19.1, 20.2, 7.2, 8.6] },
+  // East of x 18.60: at the west end the basin stood 0.10 inside the swing of the
+  // laundry door, which opens along that wall.
+  { kind: 'sink', room: 'mainSanitair', rect: [18.6, 19.3, 6.7, 7.15] },
+  { kind: 'bath', room: 'mainSanitair', rect: [17.7, 19.1, 7.2, 8.6] },
+  { kind: 'shower', room: 'mainSanitair', rect: [19.25, 20.35, 7.2, 8.6] },
   // Guest sanitair: a small shower for a guest's quick wash, beside a sit-bath
   // (owner). Both stand behind a T-shaped screen, open at each end: you step
   // round the west end into the shower and the east end into the bath. Only the
   // basin is in the open, which is what the owner asked for.
-  { kind: 'sink', room: 'guestSanitair', rect: [9.1, 9.7, 7.15, 7.6] },
-  { kind: 'partition', room: 'guestSanitair', rect: [8.5, 9.5, 7.85, 7.95] },
-  { kind: 'partition', room: 'guestSanitair', rect: [8.85, 8.95, 7.95, 8.6] },
-  { kind: 'shower', room: 'guestSanitair', rect: [8.2, 8.85, 7.95, 8.6] },
-  { kind: 'bath', room: 'guestSanitair', rect: [8.95, 9.8, 7.95, 8.6] },
+  { kind: 'sink', room: 'guestSanitair', rect: [9.15, 9.75, 7.45, 7.9] },
+  { kind: 'partition', room: 'guestSanitair', rect: [8.55, 9.55, 7.9, 8.0] },
+  { kind: 'partition', room: 'guestSanitair', rect: [8.9, 9.0, 8.0, 8.6] },
+  { kind: 'shower', room: 'guestSanitair', rect: [8.25, 8.9, 8.0, 8.6] },
+  { kind: 'bath', room: 'guestSanitair', rect: [9.0, 9.85, 8.0, 8.6] },
   // The television wall, facing the living room opening across the corridor.
   { kind: 'tv', room: 'corridor', rect: [7.5, 11.0, 5.82, 5.9] },
+]);
+
+/**
+ * The walls built for real sound and heat isolation, named by the owner off the
+ * wall register. Every other wall is a separator: it divides two spaces and
+ * nothing more, and does not have to be built heavy.
+ *
+ * Isolation is a property of the physical wall, not of one room's face, so a
+ * named face also insulates whatever backs onto it. That is why the length the
+ * owner quoted is kept beside each matricule: three of these — the kitchen,
+ * laundry and main sanitair north walls, 2.00 + 3.20 + 2.60 — back onto one
+ * 8.40 m corridor wall, so the corridor's face is insulated over 7.80 of its
+ * length and plain for the rest. Anything that reads this must union the spans
+ * rather than flag whole walls, or it will insulate 0.60 m of corridor that the
+ * owner did not ask for.
+ *
+ * The quoted lengths are also a tripwire: they are checked against the derived
+ * walls, so if the numbering ever shifts under the owner's list, the check fails
+ * instead of silently insulating a different wall.
+ *
+ * Isolation does not change a wall's thickness. Building a wall heavy is a
+ * question of how it is made, and moving thicknesses here would ripple through
+ * every dimension chain on the floor.
+ */
+export const INSULATED_WALLS = Object.freeze([
+  // The master bedroom, all four sides (owner).
+  { matricule: 'F1-R02-BED-W1', length: 5.0 },
+  { matricule: 'F1-R02-BED-W2', length: 3.4 },
+  { matricule: 'F1-R02-BED-W3', length: 5.0 },
+  { matricule: 'F1-R02-BED-W4', length: 3.4 },
+  // The whole side-C envelope (owner): blocked, so it is a heat boundary.
+  { matricule: 'F1-R01-BAL-W1', length: 1.0 },
+  { matricule: 'F1-R03-LIV-W1', length: 5.0 },
+  { matricule: 'F1-R04-BED-W1', length: 5.0 },
+  { matricule: 'F1-R05-BED-W1', length: 5.0 },
+  // The female kids' bedroom is the corner room: side C, side D and the utility
+  // wall (owner). The utility side is already named below as F1-R14-UTL-W1.
+  { matricule: 'F1-R05-BED-W2', length: 3.55 },
+  // The corridor's north wall runs thick for its whole length, not just past the
+  // master bedroom (owner). Isolating only the master would have made that wall
+  // 0.30 for one metre and 0.15 for the other thirteen, stepping the corridor
+  // edge and throwing the stairs bay out of line with it. The other three rooms
+  // gain isolation from the corridor as a consequence.
+  // The living room and both kids' bedrooms keep a plain wall to the corridor
+  // (owner), so only the master bedroom's 1.00 m stretch of that wall is hard.
+  // All three are 3.55 deep rather than 3.40, which is what lets the corridor's
+  // north face still run straight at z 4.00: the 0.15 each thin wall frees goes
+  // into the room instead of stepping the corridor. The female bedroom's wall to
+  // the utility room stays hard, carried by F1-R14-UTL-W1 below.
+  // Named one by one off the register (owner), with his own quoted lengths.
+  { matricule: 'F1-R14-UTL-W1', length: 1.7 },
+  { matricule: 'F1-R07-COR-W2', length: 1.5 },
+  { matricule: 'F1-R13-BTH-W1', length: 2.65 },
+  { matricule: 'F1-R12-LND-W1', length: 3.3 },
+  { matricule: 'F1-R11-KIT-W1', length: 1.9 },
+  { matricule: 'F1-R07-COR-W4', length: 0.5 },
+  { matricule: 'F1-R11-KIT-W5', length: 2.2 },
+  { matricule: 'F1-R07-COR-W5', length: 6.3 },
+  { matricule: 'F1-R09-GST-W1', length: 8.1 },
+  { matricule: 'F1-R06-STR-W3', length: 4.0 },
+  // The side-A balcony spine, named face by face rather than as one 9.40 run.
+  // Naming the spine itself insulated everything behind it, including the
+  // control center, and the owner wants that stretch plain: it is a technical
+  // room and does not need the sound isolation the bedrooms do. Note the wall
+  // there stays 0.30 all the same, because it faces an open balcony and the
+  // weather rule outranks the isolation list — it is wide for warmth, not quiet.
+  { matricule: 'F1-R06-STR-W4', length: 2.0 },
+  // The guest room, wrapped on every side that is its own boundary (owner).
+  // Deliberately NOT its two walls to the guest sanitair: that room is inside
+  // the wrap, so isolating against it would be isolating the suite from itself.
+  { matricule: 'F1-R09-GST-W2', length: 0.8 },
+  { matricule: 'F1-R09-GST-W5', length: 3.85 },
+  // The guest bathroom is now isolated FROM the guest room too (owner), which
+  // reverses last round's reading that it sat inside the wrap.
+  { matricule: 'F1-R09-GST-W3', length: 1.75 },
+  { matricule: 'F1-R09-GST-W4', length: 1.5 },
+  { matricule: 'F1-R09-GST-W6', length: 1.5 },
+  { matricule: 'F1-R09-GST-W7', length: 2.5 },
+  { matricule: 'F1-R09-GST-W8', length: 0.8 },
 ]);
 
 /** The side labels of the drawing. Side B is no longer open air. */

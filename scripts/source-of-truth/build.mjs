@@ -79,8 +79,7 @@ function totalsLine(totals) {
   return (
     `PLOT ${totals.plot.toFixed(2)} m²  |  FLOOR ${totals.floor.toFixed(2)} m²  |  ` +
     `STAIRWELL ${totals.stairwell.toFixed(2)} m² (only the east landing is floor at this level)  |  ` +
-    `VOID ${totals.void.toFixed(2)} m²  |  WALLS ${totals.walls.toFixed(2)} m²  |  ` +
-    `exterior 0.30 · partitions 0.20`
+    `VOID ${totals.void.toFixed(2)} m²  |  WALLS ${totals.walls.toFixed(2)} m²`
   );
 }
 

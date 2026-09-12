@@ -409,7 +409,142 @@ function buildRoomsTable(spec, walls) {
 }
 
 /**
- * WALLS: the owner's wall register — every derived wall, room by room.
+ * Tolerance for comparing plan coordinates, in metres.
+ *
+ * The spec is encoded on the centimetre grid, so anything under half a millimetre
+ * is floating-point noise from the derivation rather than a gap in a wall.
+ */
+const COORD_EPSILON = 5e-4;
+
+/**
+ * Whether two walls are the two faces of one physical wall.
+ *
+ * Isolation belongs to the wall, not to one room's face, so the register has to
+ * know which rows are the same piece of building seen from either side. Two faces
+ * qualify when they run along the same axis, stand no further apart than the
+ * solid between them, and actually overlap along their run — a wall on the same
+ * line but further down the floor is a different wall.
+ *
+ * @param {object} a - A derived wall.
+ * @param {object} b - Another derived wall.
+ * @returns {boolean} True when they are opposite faces of one wall.
+ */
+function areOppositeFaces(a, b) {
+  if (a === b || a.axis !== b.axis) return false;
+  const solid = Math.max(a.thickness ?? 0, b.thickness ?? 0);
+  if (Math.abs(a.at - b.at) > solid + COORD_EPSILON) return false;
+  return Math.min(a.spanMax, b.spanMax) - Math.max(a.spanMin, b.spanMin) > COORD_EPSILON;
+}
+
+/**
+ * Length covered by a set of intervals, counting an overlap once.
+ *
+ * Three rooms backing onto one corridor wall contribute three intervals, and the
+ * corridor is insulated over their union — not over their sum, which would claim
+ * more heavy wall than exists, and not over the whole run, which would insulate
+ * the 0.60 m of corridor the owner deliberately left plain.
+ *
+ * @param {ReadonlyArray<readonly [number, number]>} intervals - `[from, to]` pairs.
+ * @returns {number} Total covered length, metres.
+ */
+function unionLength(intervals) {
+  const sorted = [...intervals].sort((p, q) => p[0] - q[0]);
+  let total = 0;
+  let from = null;
+  let to = null;
+  for (const [start, end] of sorted) {
+    if (to === null || start > to + COORD_EPSILON) {
+      if (to !== null) total += to - from;
+      from = start;
+      to = end;
+    } else if (end > to) {
+      to = end;
+    }
+  }
+  return to === null ? total : total + (to - from);
+}
+
+/**
+ * How much of each wall is built for isolation.
+ *
+ * `INSULATED_WALLS` names faces, and naming a face insulates the wall behind it,
+ * so each wall collects its own run when it is named plus the overlapping run of
+ * every named face that backs onto it. The result is per wall and in metres,
+ * because the backing is usually partial: the owner named three room walls of
+ * 2.00, 3.20 and 2.60 that meet one 8.40 m corridor face, and the corridor is
+ * heavy for 7.80 of its length, not for all of it and not for three separate
+ * walls' worth.
+ *
+ * The quoted length in the spec is a tripwire checked by the verifier, so it is
+ * not re-derived here; what this needs from an entry is only which face it names.
+ *
+ * @param {object} spec - The plan-v2 namespace.
+ * @param {readonly object[]} walls - The derived walls.
+ * @returns {Map<string, { insulated: number, named: boolean, full: boolean }>}
+ */
+function buildInsulationIndex(spec, walls) {
+  const named = new Set((spec.INSULATED_WALLS ?? []).map((entry) => entry.matricule));
+  const index = new Map();
+  for (const wall of walls) {
+    /** @type {Array<[number, number]>} */
+    const intervals = [];
+    if (named.has(wall.matricule)) intervals.push([wall.spanMin, wall.spanMax]);
+    for (const other of walls) {
+      if (!named.has(other.matricule) || !areOppositeFaces(wall, other)) continue;
+      intervals.push([
+        Math.max(wall.spanMin, other.spanMin),
+        Math.min(wall.spanMax, other.spanMax),
+      ]);
+    }
+    const insulated = unionLength(intervals);
+    index.set(wall.matricule, {
+      insulated,
+      named: named.has(wall.matricule),
+      full: insulated > COORD_EPSILON && insulated >= (wall.length ?? 0) - COORD_EPSILON,
+    });
+  }
+  return index;
+}
+
+/**
+ * State one wall's isolation, in a cell that cannot be read as anything else.
+ *
+ * A bare yes/no would be false on several rows, so a partial wall says so in
+ * words and in both numbers — `part 7.80 of 8.40` — and a whole one names its
+ * length too, so that no cell means "heavy" without saying how much. A wall with
+ * no isolation is blank rather than `no`: the register is a list of what is
+ * built, and an empty cell reads as "nothing special here" at a glance.
+ *
+ * @param {object} wall - The derived wall.
+ * @param {{ insulated: number, full: boolean } | undefined} entry - Its index row.
+ * @returns {string} `'full 5.00'`, `'part 7.80 of 8.40'`, or an empty cell.
+ */
+function describeIsolation(wall, entry) {
+  if (!entry || entry.insulated <= COORD_EPSILON) return '';
+  if (entry.full) return `full ${metres(wall.length)}`;
+  return `part ${metres(entry.insulated)} of ${metres(wall.length)}`;
+}
+
+/**
+ * State an insulated total against the length it is measured out of.
+ *
+ * The share is what the owner asked to see — how much of the floor is being built
+ * heavy — and it is given beside both numbers rather than alone, so a room that
+ * is 100% insulated over 3.40 m is never confused with the floor's whole budget.
+ *
+ * @param {number} insulated - Insulated length, metres.
+ * @param {number} total - Total wall length it is part of, metres.
+ * @returns {string} e.g. `'7.80 of 8.40 heavy (93%)'`, or an empty cell.
+ */
+function describeIsolationTotal(insulated, total) {
+  if (insulated <= COORD_EPSILON) return '';
+  const share = total > COORD_EPSILON ? Math.round((insulated / total) * 100) : 0;
+  return `${metres(insulated)} of ${metres(total)} heavy (${share}%)`;
+}
+
+/**
+ * WALLS: the owner's wall register — every derived wall, room by room, and how
+ * much of each one is built heavy.
  *
  * Nothing is filtered, not even a zero-thickness join: the register answers "what
  * did the derivation make of my plan", and a wall missing from it cannot be
@@ -423,11 +558,14 @@ function buildRoomsTable(spec, walls) {
  */
 function buildWallsTable(spec, walls) {
   const names = buildNameIndex(spec);
+  const insulation = buildInsulationIndex(spec, walls);
   const ordered = [...walls].sort((a, b) => a.roomN - b.roomN || a.wallN - b.wallN);
   /** @type {Row[]} */
   const rows = [];
   let runningLength = 0;
+  let runningInsulated = 0;
   let groupLength = 0;
+  let groupInsulated = 0;
   let groupCount = 0;
   let groupRoom = null;
 
@@ -442,11 +580,13 @@ function buildWallsTable(spec, walls) {
         '',
         `${groupCount} wall${groupCount === 1 ? '' : 's'}`,
         metres(groupLength),
+        describeIsolationTotal(groupInsulated, groupLength),
         '',
         '',
       ],
     });
     groupLength = 0;
+    groupInsulated = 0;
     groupCount = 0;
   };
 
@@ -457,8 +597,11 @@ function buildWallsTable(spec, walls) {
       groupRoom = room;
     }
     const length = typeof wall.length === 'number' ? wall.length : 0;
+    const isolation = insulation.get(wall.matricule);
     runningLength += length;
     groupLength += length;
+    runningInsulated += isolation?.insulated ?? 0;
+    groupInsulated += isolation?.insulated ?? 0;
     groupCount += 1;
     rows.push({
       kind: 'body',
@@ -468,6 +611,7 @@ function buildWallsTable(spec, walls) {
         wall.side ?? ABSENT,
         describeRun(wall),
         metres(wall.length),
+        describeIsolation(wall, isolation),
         metres(wall.thickness),
         describeFaces(names, wall.faces),
       ],
@@ -482,6 +626,7 @@ function buildWallsTable(spec, walls) {
       '',
       `${ordered.length} wall${ordered.length === 1 ? '' : 's'}`,
       metres(runningLength),
+      describeIsolationTotal(runningInsulated, runningLength),
       '',
       '',
     ],
@@ -495,6 +640,7 @@ function buildWallsTable(spec, walls) {
       { head: 'SIDE', align: 'left' },
       { head: 'RUNS', align: 'left' },
       { head: 'LENGTH m', align: 'right' },
+      { head: 'ISOLATION', align: 'left' },
       { head: 'THICK m', align: 'right' },
       { head: 'FACES', align: 'left' },
     ],

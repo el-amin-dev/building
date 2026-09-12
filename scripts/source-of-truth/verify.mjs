@@ -27,10 +27,13 @@ import {
   PORTS,
   WINDOWS,
   FIXTURES,
+  INSULATED_WALLS,
 } from './plan-v2.mjs';
 import { deriveWalls, wallsByRoom } from './walls.mjs';
 
-const SPEC = { FLOOR_NUMBER, PLOT, WALLS, HEIGHTS, STAIRS, ROOMS, JOIN_OVERRIDES, PORTS, WINDOWS, FIXTURES };
+const SPEC = {
+  FLOOR_NUMBER, PLOT, WALLS, HEIGHTS, STAIRS, ROOMS, JOIN_OVERRIDES, PORTS, WINDOWS, FIXTURES, INSULATED_WALLS,
+};
 
 const EPS = 1e-6;
 const cm = (v) => Math.round(v * 100) / 100;
@@ -84,6 +87,104 @@ const onGrid = (v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6;
 
 const walls = deriveWalls(SPEC);
 const byRoom = wallsByRoom(walls);
+
+/**
+ * Physical walls: which faces back onto which, and where the owner's isolation
+ * actually lands along them.
+ *
+ * WHY at module scope: check 8 (is each stretch built the thickness the rules
+ * ask for?) and check 10 (the isolation register) are asking the same question —
+ * what is built along this stretch — from two directions. Two copies of that
+ * answer would drift the first time the layout moved, and the layout moves every
+ * round.
+ */
+const OPPOSITE_SIDE = Object.freeze({ north: 'south', south: 'north', east: 'west', west: 'east' });
+
+/**
+ * The two faces of one physical wall: same axis, opposite sides, the second on
+ * the outward side of the first and no further than one exterior wall away,
+ * spans overlapping. Isolation and thickness are properties of the built wall,
+ * so what is true of one face is true of whatever backs onto it.
+ */
+const facesEachOther = (a, b) => {
+  if (a.axis !== b.axis || b.side !== OPPOSITE_SIDE[a.side]) return false;
+  const gap =
+    a.side === 'north'
+      ? a.at - b.at
+      : a.side === 'south'
+        ? b.at - a.at
+        : a.side === 'east'
+          ? b.at - a.at
+          : a.at - b.at;
+  if (gap < -EPS || gap > WALLS.exterior + EPS) return false;
+  return Math.min(a.spanMax, b.spanMax) - Math.max(a.spanMin, b.spanMin) > EPS;
+};
+
+const mergeSpans = (spans) => {
+  const out = [];
+  for (const [lo, hi] of [...spans].sort((p, q) => p[0] - q[0])) {
+    const last = out[out.length - 1];
+    if (last && lo <= last[1] + EPS) last[1] = Math.max(last[1], hi);
+    else out.push([lo, hi]);
+  }
+  return out;
+};
+
+/** Wall matricule -> the merged spans of that face that are built for isolation. */
+const INSULATED_SPANS = (() => {
+  const byMatricule = new Map(walls.map((w) => [w.matricule, w]));
+  const spans = new Map(walls.map((w) => [w.matricule, []]));
+  for (const entry of INSULATED_WALLS) {
+    const wall = byMatricule.get(entry.matricule);
+    if (!wall) continue;
+    spans.get(wall.matricule).push([wall.spanMin, wall.spanMax]);
+    for (const other of walls) {
+      if (other.matricule === wall.matricule || !facesEachOther(wall, other)) continue;
+      const lo = Math.max(wall.spanMin, other.spanMin);
+      const hi = Math.min(wall.spanMax, other.spanMax);
+      if (hi - lo > EPS) spans.get(other.matricule).push([cm(lo), cm(hi)]);
+    }
+  }
+  return new Map([...spans].map(([key, list]) => [key, mergeSpans(list)]));
+})();
+
+/** Is this stretch of that face built heavy? `partly` means the boundary cuts through it. */
+const insulationAt = (wall, span) => {
+  const list = INSULATED_SPANS.get(wall.matricule) ?? [];
+  if (list.some((s) => span[0] >= s[0] - EPS && span[1] <= s[1] + EPS)) return 'whole';
+  if (list.some((s) => Math.min(s[1], span[1]) - Math.max(s[0], span[0]) > EPS)) return 'partly';
+  return 'none';
+};
+
+/**
+ * Every stretch of a wall face that looks at one particular neighbour, measured
+ * off the rects rather than read off the derived wall: the point of this check is
+ * to catch the derivation being wrong, so it must not ask the derivation what
+ * the answer is.
+ */
+const contactsOf = (wall) => {
+  const out = [];
+  for (const other of ROOMS) {
+    if (other.n === wall.roomN) continue;
+    for (const [minX, maxX, minZ, maxZ] of other.rects) {
+      const gap =
+        wall.side === 'north'
+          ? wall.at - maxZ
+          : wall.side === 'south'
+            ? minZ - wall.at
+            : wall.side === 'east'
+              ? minX - wall.at
+              : wall.at - maxX;
+      if (gap < -EPS || gap > WALLS.exterior + EPS) continue;
+      const theirSpan = wall.axis === 'x' ? [minX, maxX] : [minZ, maxZ];
+      const lo = Math.max(theirSpan[0], wall.spanMin);
+      const hi = Math.min(theirSpan[1], wall.spanMax);
+      if (hi - lo <= EPS) continue;
+      out.push({ room: other, gap: cm(gap), span: [cm(lo), cm(hi)] });
+    }
+  }
+  return out.sort((a, b) => a.span[0] - b.span[0]);
+};
 
 console.log(`floor plan v2 — self-check (floor ${FLOOR_NUMBER}, plot ${n(PLOT[1])} × ${n(PLOT[3])})`);
 console.log(
@@ -602,32 +703,161 @@ check('7. Stair fit: four pieces tiling the bay, two flights between two landing
 
 /* ──────── 8. derived thickness against the gap actually drawn ──────── */
 
-check('8. Derived wall thickness matches the gap left between the rooms');
+check('8. Wall thickness, per contact: every stretch built what the rules ask');
 {
-  // Beyond the seven checks asked for, and the reason it is here: thickness is
-  // derived from a rule (envelope → JOIN_OVERRIDES → partition) while the gap
-  // is drawn in the rects. When they disagree the renderers build a 0.20 wall
-  // into a 0.30 void and leave a sliver, so the disagreement has to be loud.
-  const mismatches = [];
+  /**
+   * WHY per contact and not per wall: a nominal wall used to have one thickness
+   * for its whole length, and it does not any more. Isolation is now width — a
+   * named wall is built 0.30, a plain separator 0.15 — so one face can be heavy
+   * where it faces weather or an isolated room and thin where it faces an
+   * ordinary one, with the rooms behind it at different depths as a result. The
+   * control center's east face is 0.15 to the guest room and 0.30 to its own
+   * balcony; the utility's west face is 0.30, 0.15 and 0.20 along its length.
+   * Both are right. Comparing one derived number to one measured gap called them
+   * both wrong, which is the check being coarse, not the floor being broken.
+   */
+  const roomById = new Map(ROOMS.map((r) => [r.id, r]));
+  const exposed = (kind) => kind === 'openAir' || kind === 'void';
+
+  /**
+   * Precedence, highest first: a join override states a gap the geometry would
+   * not predict; then weather exposure, which the brief fixes at 0.30 whatever
+   * is behind it; then the owner's isolation list, which is now a width; then a
+   * plain separator. Every value is read from the spec — none is written here —
+   * so the day the owner changes a width, this check moves with him.
+   */
+  const ruleFor = (wall, contact) => {
+    const override = JOIN_OVERRIDES.find(
+      (o) => o.between.includes(wall.roomId) && o.between.includes(contact.room.id),
+    );
+    if (override) return { t: override.thickness, why: 'join override' };
+    if (exposed(contact.room.kind) || exposed(roomById.get(wall.roomId)?.kind)) {
+      return { t: WALLS.voidFacing, why: 'weather-exposed' };
+    }
+    if (insulationAt(wall, contact.span) === 'whole') {
+      return { t: WALLS.insulated ?? WALLS.exterior, why: 'isolation (owner)' };
+    }
+    return { t: WALLS.partition, why: 'plain separator' };
+  };
+
+  const disagreements = new Map();
+  const varying = [];
+  const built = new Map();
+  let contactCount = 0;
+
   for (const w of walls) {
-    if (w.exterior || w.measuredGap === null) continue;
-    if (Math.abs(w.measuredGap - w.thickness) > EPS) mismatches.push(w);
+    if (w.exterior) continue;
+    const contacts = contactsOf(w);
+    if (contacts.length === 0) continue;
+    contactCount += contacts.length;
+
+    for (const contact of contacts) {
+      const rule = ruleFor(w, contact);
+      const run = cm(contact.span[1] - contact.span[0]);
+      built.set(m(contact.gap), cm((built.get(m(contact.gap)) ?? 0) + run));
+
+      if (insulationAt(w, contact.span) === 'partly') {
+        notes.push(
+          `${w.matricule} ${m(contact.span[0])}–${m(contact.span[1])} (facing ${contact.room.id}): the isolation boundary cuts through this contact, so the stretch is part heavy and part plain`,
+        );
+      }
+      if (Math.abs(contact.gap - rule.t) <= EPS) continue;
+      // Grouped by the disagreement itself: nineteen stretches all off by the
+      // same constant is one fact about the spec, not nineteen faults.
+      const key = `${rule.why}|${m(rule.t)}|${m(contact.gap)}`;
+      if (!disagreements.has(key)) disagreements.set(key, []);
+      disagreements.get(key).push(
+        `${w.matricule} ${m(contact.span[0])}–${m(contact.span[1])} → ${contact.room.id}`,
+      );
+    }
+
+    const distinct = [...new Set(contacts.map((c) => m(c.gap)))];
+    if (distinct.length > 1) varying.push({ wall: w, contacts });
   }
-  const grouped = new Map();
-  for (const w of mismatches) {
-    const key = `${m(w.thickness)}→${m(w.measuredGap)}`;
-    if (!grouped.has(key)) grouped.set(key, []);
-    grouped.get(key).push(w);
+
+  for (const [key, where] of disagreements) {
+    const [why, expected, actual] = key.split('|');
+    fail(
+      `${where.length} contact stretch(es) as a ${why} should be ${expected} but the rects leave ${actual}: ` +
+        `${where.slice(0, 6).join('; ')}${where.length > 6 ? `; …and ${where.length - 6} more` : ''}`,
+    );
   }
-  for (const [key, group] of grouped) {
-    const [derived, gap] = key.split('→');
-    fail(`${group.length} walls derive ${derived} but the rects leave ${gap}: ${group.map((w) => `${w.matricule} (${w.roomId} ${w.side} → ${w.neighbours.join(',')})`).join('; ')}`);
+
+  /**
+   * The derived `contacts` must agree with what was just measured, and must tile
+   * every face. Both renderers are about to draw from this field, so a stretch
+   * it gets wrong is a wall drawn wrong — and it is derived independently of the
+   * measurement above, which is what makes the agreement worth something.
+   */
+  for (const w of walls) {
+    const list = w.contacts ?? [];
+    const covered = cm(list.reduce((sum, d) => sum + d.length, 0));
+    if (Math.abs(covered - w.length) > EPS) {
+      fail(`${w.matricule} contacts[] covers ${m(covered)} of a ${m(w.length)} face — the list has to tile it`);
+    }
+    for (let i = 1; i < list.length; i += 1) {
+      if (Math.abs(list[i].spanMin - list[i - 1].spanMax) > EPS) {
+        fail(`${w.matricule} contacts[] jumps from ${m(list[i - 1].spanMax)} to ${m(list[i].spanMin)} — stretches must run end to end`);
+      }
+    }
+    if (w.exterior) continue;
+    for (const contact of contactsOf(w)) {
+      const match = list.find(
+        (d) =>
+          d.neighbourId === contact.room.id &&
+          contact.span[0] >= d.spanMin - EPS &&
+          contact.span[1] <= d.spanMax + EPS,
+      );
+      if (!match) {
+        fail(`${w.matricule} contacts[] has no stretch covering ${m(contact.span[0])}–${m(contact.span[1])} facing ${contact.room.id}`);
+      } else if (Math.abs(match.thickness - contact.gap) > EPS) {
+        fail(`${w.matricule} contacts[] says ${m(match.thickness)} facing ${contact.room.id} where the rects leave ${m(contact.gap)}`);
+      }
+    }
   }
-  for (const w of walls) if (w.thicknessNote) notes.push(`${w.matricule}: ${w.thicknessNote}`);
-  line(`${walls.length - mismatches.length}/${walls.length} walls agree with the drawn gap`);
-  const kinds = new Map();
-  for (const w of walls) kinds.set(m(w.thickness), (kinds.get(m(w.thickness)) ?? 0) + 1);
-  line(`thicknesses: ${[...kinds.entries()].sort().map(([t, c]) => `${t} × ${c}`).join(', ')}`);
+
+  line(`${contactCount} contact stretches across ${walls.filter((w) => !w.exterior).length} interior faces`);
+  line(`contacts[] tiles all ${walls.length} faces and agrees with the measured gaps`);
+  // Two numbers, because one of them is a trap. The contact figure counts only
+  // stretches that look at another room, so it leaves out the whole exterior
+  // envelope — quoting it as "how much of the floor is heavy" would lose every
+  // metre of the 0.30 envelope. The all-faces figure walks `contacts`, which
+  // tiles all 80 faces, so it is the one to quote; both count every FACE, which
+  // means an interior wall twice, once from each side, and the envelope once.
+  const everyFace = new Map();
+  for (const w of walls) {
+    for (const c of w.contacts ?? []) {
+      everyFace.set(m(c.thickness), cm((everyFace.get(m(c.thickness)) ?? 0) + c.length));
+    }
+  }
+  const totalFace = cm(walls.reduce((sum, w) => sum + w.length, 0));
+  line(
+    `built, every face (${m(totalFace)} m of face, interior walls counted from both sides): ` +
+      `${[...everyFace.entries()].sort().map(([t, run]) => `${t} over ${m(run)} m`).join(', ')}`,
+  );
+  line(
+    `of which stretches facing another room: ${[...built.entries()].sort().map(([t, run]) => `${t} over ${m(run)} m`).join(', ')}`,
+  );
+
+  // Real information for the builder now, not an anomaly to suppress: these are
+  // the faces that change thickness partway along.
+  if (varying.length) {
+    line(`${varying.length} face(s) vary in thickness along their length:`);
+    for (const { wall, contacts } of varying) {
+      line(
+        `   ${wall.matricule.padEnd(16)} ${wall.axis} ${m(wall.spanMin)}–${m(wall.spanMax)}  ` +
+          contacts
+            .map((c) => `${m(c.gap)} over ${m(c.span[0])}–${m(c.span[1])} (${c.room.id})`)
+            .join(', '),
+      );
+      notes.push(
+        `${wall.matricule} (${wall.roomId} ${wall.side}) is not one thickness: ` +
+          contacts.map((c) => `${m(c.gap)} for ${m(c.span[1] - c.span[0])} facing ${c.room.id}`).join(', '),
+      );
+    }
+  } else {
+    line('no face varies in thickness along its length');
+  }
 }
 
 /* ───────────────────────────── 9. fixtures ───────────────────────────── */
@@ -677,9 +907,25 @@ check('9. Fixtures: inside their room, clear of each other and of every door swi
    * owner asked for by name.
    */
   const swings = [];
+  const exempt = new Map();
+  const undirected = new Map();
   for (const w of walls) {
     for (const op of w.openings) {
       if (op.kind !== 'door') continue;
+      // A leaf that does not swing inward needs no floor to open into. `swing`
+      // absent means an inward swing, which is how every port behaved before the
+      // field existed, so the default stays conservative: tested on BOTH faces,
+      // because nothing says which room an inward leaf opens into.
+      if (op.swing === 'slide') {
+        exempt.set(op.matricule, 'sliding leaf, needs no floor to open into');
+        continue;
+      }
+      if (op.swing && op.swing !== 'in') {
+        // 'out' of WHICH room? `between` is a pair, not a direction, so an
+        // outward leaf is still tested inward on both faces — the conservative
+        // reading — until the field names the room it opens into.
+        undirected.set(op.matricule, op.swing);
+      }
       const from = op.spanMin;
       const to = cm(op.spanMin + op.width);
       const deep = op.width;
@@ -724,6 +970,92 @@ check('9. Fixtures: inside their room, clear of each other and of every door swi
     }
   }
   line(`${FIXTURES.length} fixtures, ${swings.length} door faces checked for swing`);
+  // Named out loud so an exemption is never silent.
+  line(
+    exempt.size
+      ? `exempt from the swing test: ${[...exempt].map(([mat, why]) => `${mat} (${why})`).join('; ')}`
+      : 'no door is exempt from the swing test',
+  );
+  if (undirected.size) {
+    line(
+      `swing given but not directional, so still tested inward on both faces: ${[...undirected].map(([mat, s]) => `${mat} (swing '${s}')`).join('; ')}`,
+    );
+  }
+}
+
+/* ────────────────────── 10. insulated walls ────────────────────── */
+
+check("10. Insulated walls: the owner's list, and the physical walls it actually builds");
+{
+  // The backing geometry and the isolation spans are derived once at module
+  // scope and shared with check 8, so the register and the thickness check can
+  // never disagree about what is built along a stretch.
+  const byMatricule = new Map(walls.map((w) => [w.matricule, w]));
+  const listed = [];
+  const seenMatricules = new Set();
+  for (const [i, entry] of INSULATED_WALLS.entries()) {
+    if (seenMatricules.has(entry.matricule)) {
+      fail(`INSULATED_WALLS[${i}] lists ${entry.matricule} twice`);
+      continue;
+    }
+    seenMatricules.add(entry.matricule);
+    const wall = byMatricule.get(entry.matricule);
+    if (!wall) {
+      fail(`INSULATED_WALLS[${i}] ${entry.matricule} is not a derived wall — the list points at a wall that does not exist`);
+      continue;
+    }
+    // The tripwire the owner built into his own list: he quoted a length beside
+    // every matricule, so a renumbering or a re-split that silently slides the
+    // list onto a different wall shows up here as a length that stopped matching.
+    if (Math.abs(wall.length - entry.length) > EPS) {
+      fail(
+        `INSULATED_WALLS[${i}] ${entry.matricule} is quoted ${m(entry.length)} but derives ${m(wall.length)} ` +
+          `(${wall.roomId} ${wall.side}, ${m(wall.spanMin)}–${m(wall.spanMax)}) — the numbering has moved under the list`,
+      );
+    }
+    if (Math.abs(wall.thickness) < EPS) {
+      fail(`INSULATED_WALLS[${i}] ${entry.matricule} is a zero-thickness join (${wall.roomId} → ${wall.faces}) — there is no wall there to insulate`);
+    }
+    listed.push(wall);
+  }
+
+  const register = [];
+  for (const w of walls) {
+    const spans = INSULATED_SPANS.get(w.matricule) ?? [];
+    if (spans.length === 0) continue;
+    const insulated = cm(spans.reduce((sum, [lo, hi]) => sum + (hi - lo), 0));
+    register.push({ wall: w, spans, insulated, partial: insulated < w.length - EPS });
+  }
+
+  const totalWall = cm(walls.reduce((sum, w) => sum + w.length, 0));
+  const totalInsulated = cm(register.reduce((sum, r) => sum + r.insulated, 0));
+  const partials = register.filter((r) => r.partial);
+
+  line(`${INSULATED_WALLS.length} faces named, ${listed.length} resolved; ${register.length} faces carry isolation once the backing is followed`);
+  for (const r of register) {
+    line(
+      `${r.wall.matricule.padEnd(16)} ${m(r.wall.length).padStart(5)} long  ${m(r.insulated).padStart(5)} insulated  ` +
+        `${r.spans.map(([lo, hi]) => `${m(lo)}–${m(hi)}`).join(', ')}` +
+        `${r.partial ? `  ← partial, plain for ${m(r.wall.length - r.insulated)}` : ''}`,
+    );
+  }
+
+  // Deliberately not a failure: a wall heavy over part of its run is the owner's
+  // list doing exactly what he asked, not an error. It is a buildability
+  // question, so it is said out loud here and repeated in the notes rather than
+  // rounded up to whole walls.
+  for (const r of partials) {
+    notes.push(
+      `${r.wall.matricule} (${r.wall.roomId} ${r.wall.side}, backs onto ${r.wall.faces}) is insulated ` +
+        `${m(r.insulated)} of ${m(r.wall.length)} — built heavy for part of its run and plain for ${m(r.wall.length - r.insulated)}`,
+    );
+  }
+  line(
+    partials.length
+      ? `partially insulated: ${partials.map((r) => `${r.wall.matricule} ${m(r.insulated)}/${m(r.wall.length)}`).join(', ')}`
+      : 'no partially insulated wall',
+  );
+  line(`insulated ${m(totalInsulated)} m of ${m(totalWall)} m of wall face (every face counted, both sides of each wall)`);
 }
 
 /* ───────────────────────────── report ───────────────────────────── */
@@ -749,7 +1081,7 @@ if (notes.length) {
 console.log('');
 if (failures.length === 0) {
   console.log(
-    `PASS — 9 checks, ${walls.length} walls, ${PORTS.length + WINDOWS.length} openings, ${FIXTURES.length} fixtures, everything closes.`,
+    `PASS — 10 checks, ${walls.length} walls, ${PORTS.length + WINDOWS.length} openings, ${FIXTURES.length} fixtures, everything closes.`,
   );
   process.exit(0);
 }
