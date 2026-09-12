@@ -663,7 +663,73 @@ function describeRect(rect) {
 }
 
 /**
- * FIXTURES: what stands in the rooms — the sanitair fittings and the television.
+ * Fixture kinds that are a screen wall inside a room rather than a fitting.
+ *
+ * Conservative on purpose: a kind that is not listed here is reported as a
+ * fitting, so a structural kind added to the spec later shows up as a fitting
+ * until it is named here. That is the safe direction to be wrong in — a screen
+ * miscounted as a basin is a visible oddity in a six-row table, whereas a basin
+ * miscounted as a screen would quietly understate what the owner asked for.
+ */
+const SCREEN_WALL_KINDS = Object.freeze(['partition']);
+
+/** Role of a fixture that divides space rather than being used. */
+const ROLE_SCREEN = 'screen wall';
+
+/** Role of an ordinary fitting: something installed to be used. */
+const ROLE_FITTING = 'fitting';
+
+/**
+ * Whether a fixture is a screen wall or a fitting.
+ *
+ * The owner reads this register to check the fittings they asked for, and a
+ * T-shaped screen is not one: it is a piece of wall inside a room, held in
+ * `FIXTURES` because that is where its rectangle lives, not because it is a
+ * basin. Saying so in its own column is what keeps the table honest.
+ *
+ * The distinction is deliberately presentational, and touches neither the
+ * ordering nor the number. Both are shared with the plan page, which sorts every
+ * fixture of a room together (`fixturesByRoom`, `render-plan.mjs`), so pulling
+ * the screens out into their own block here would renumber the fittings and make
+ * the two pages disagree about what `F1-R10-BTH-X3` names. The consequence is
+ * that the two rects of one screen can be numbered apart, interleaved with the
+ * fittings they enclose; this column is precisely what stops that reading as a
+ * mistake.
+ *
+ * @param {unknown} kind - A fixture's `kind`.
+ * @returns {string} {@link ROLE_SCREEN} or {@link ROLE_FITTING}.
+ */
+function fixtureRole(kind) {
+  return SCREEN_WALL_KINDS.includes(kind) ? ROLE_SCREEN : ROLE_FITTING;
+}
+
+/**
+ * Count the fixture rows for the table's title.
+ *
+ * The title is the line a reader trusts to say what the table contains, so it is
+ * counted from the rendered rows rather than written down: while every row is a
+ * fitting it says so, and as soon as the spec holds something that is not one it
+ * reports the split instead of quietly calling a screen wall a fitting.
+ *
+ * The rows are searched for the role text rather than indexed by column number,
+ * so inserting a column cannot silently turn this count into nonsense; no other
+ * column can hold that text.
+ *
+ * @param {Row[]} rows - The fixture rows, already built.
+ * @returns {string} e.g. `'9 entries: 7 fittings and 2 screen walls'`.
+ */
+function summariseFixtures(rows) {
+  const screens = rows.filter((row) => row.cells.includes(ROLE_SCREEN)).length;
+  const fittings = rows.length - screens;
+  const plural = (count, noun) => `${count} ${noun}${count === 1 ? '' : 's'}`;
+  if (screens === 0) return plural(rows.length, 'fitting');
+  const entries = `${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}`;
+  return `${entries}: ${plural(fittings, 'fitting')} and ${plural(screens, 'screen wall')}`;
+}
+
+/**
+ * FIXTURES: what stands in the rooms — the fittings, the television, and the
+ * screen walls that divide a room without reaching the ceiling.
  *
  * Numbered per room with the tag `X`, in {@link byPosition} order, on the room
  * matricule the other tables already use: `F1-R13-BTH-X1`. The room part is taken
@@ -713,6 +779,7 @@ function buildFixturesTable(spec, walls) {
           `${prefix}-X${index + 1}`,
           spaceName(names, roomId),
           fixture.kind ?? ABSENT,
+          fixtureRole(fixture.kind),
           describeRect(fixture.rect),
           hasRect ? `${metres(maxX - minX)} × ${metres(maxZ - minZ)}` : ABSENT,
           hasRect ? metres((maxX - minX) * (maxZ - minZ)) : ABSENT,
@@ -722,11 +789,12 @@ function buildFixturesTable(spec, walls) {
   }
 
   return {
-    title: `FIXTURES — ${rows.length} fittings, by kind: ${kinds.join(' · ')}`,
+    title: `FIXTURES — ${summariseFixtures(rows)}, by kind: ${kinds.join(' · ')}`,
     columns: [
       { head: 'MATRICULE', align: 'left' },
       { head: 'ROOM', align: 'left' },
       { head: 'KIND', align: 'left' },
+      { head: 'ROLE', align: 'left' },
       { head: 'OCCUPIES', align: 'left' },
       { head: 'SIZE m', align: 'left' },
       { head: 'AREA m²', align: 'right' },

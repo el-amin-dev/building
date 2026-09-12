@@ -149,11 +149,11 @@ export const ROOMS = Object.freeze([
   // wall, so 0.80 leaves about 0.65 to work in. The 0.20 saved goes to the
   // kitchen, laundry and main sanitair, which are now 3.00 deep.
   { n: 16, id: 'balconySlabB', name: 'Side-B balcony slab', type: 'BAL', kind: 'openAir',
-    rects: [[12.6, 17.4, 8.9, 9.7]] },
+    rects: [[11.6, 15.3, 8.9, 9.7]] },
   { n: 17, id: 'voidWest', name: 'Void (west)', type: 'VOID', kind: 'void',
-    rects: [[4.9, 12.6, 8.9, 9.7]], note: 'drying line and service risers; plumber access' },
+    rects: [[4.9, 11.6, 8.9, 9.7]], note: 'drying line and service risers; plumber access' },
   { n: 18, id: 'voidEast', name: 'Void (east)', type: 'VOID', kind: 'void',
-    rects: [[17.4, 20.2, 8.9, 9.7]], note: 'drying line and service risers; plumber access' },
+    rects: [[15.3, 20.2, 8.9, 9.7]], note: 'drying line and service risers; plumber access' },
 ]);
 
 /** Wall thicknesses that deviate from the kind-based default. */
@@ -219,15 +219,16 @@ export const WINDOWS = Object.freeze([
     sill: 1.0, head: 1.8, why: 'Pass food and ready coffee to the guests (owner).' },
   { kind: 'air', between: ['guestSanitair', 'voidWest'], along: 'x', spanMin: 8.65, width: 0.7,
     sill: 1.9, head: 2.3 },
-  { kind: 'light', between: ['kitchen', 'voidWest'], along: 'x', spanMin: 10.35, width: 1.8,
-    sill: 0.9, head: 2.1, why: 'Hand level, for light over the sink (owner).' },
+  { kind: 'light', between: ['kitchen', 'voidWest'], along: 'x', spanMin: 10.1, width: 1.4,
+    sill: 0.9, head: 2.1,
+    why: 'Hand level, for light over the sink (owner). 1.40, not the 1.80 first drawn: once the balcony slab moved west to x 11.60, a 1.80 opening straddled the boundary and faced the void at one end and the balcony at the other.' },
   // The owner asked for the laundry to be "completely open light" on side B: a
   // door and two big windows. The 3.20 m wall cannot give them width — it already
   // carries 0.90 of door — so they are given height instead: a 0.60 sill and a
   // 2.30 head make each one 1.70 m tall rather than the usual 1.20.
-  { kind: 'light', between: ['laundry', 'balconySlabB'], along: 'x', spanMin: 15.3, width: 2.0,
+  { kind: 'light', between: ['laundry', 'voidEast'], along: 'x', spanMin: 15.4, width: 1.9,
     sill: 0.6, head: 2.3,
-    why: 'The two 0.90 windows merged into one 2.00 opening (owner). 2.00 x 1.70 of glass is why the balcony slab now runs east to x 17.40 — a window should look at one thing, and at the old 16.30 edge half of it faced the void instead.' },
+    why: 'The two 0.90 windows merged into one opening (owner). It faces the void along its whole length now that the owner moved the balcony west to end at the laundry door — which is why the slab no longer has to stretch east to carry it.' },
   { kind: 'air', between: ['mainSanitair', 'voidEast'], along: 'x', spanMin: 18.0, width: 0.7,
     sill: 1.9, head: 2.3 },
   { kind: 'air', between: ['mainSanitair', 'voidEast'], along: 'x', spanMin: 19.3, width: 0.7,
@@ -241,21 +242,30 @@ export const WINDOWS = Object.freeze([
  * has to fit in it rather than by its area alone. Matricule tag `X`, since `W`,
  * `P` and `G` are taken by walls, ports and glazing.
  *
+ * `partition` is a fixture rather than a wall on purpose: it is a screen inside
+ * one room, not a boundary between two, so it must not enter the wall derivation
+ * — which works from the room rectangles and would have to split a room in half
+ * to express it.
+ *
  * The television is here for the same reason the corridor was widened: it hangs
  * on the stair-hall wall facing the living room across the corridor, and that run
  * had to reach x 11.80 so the viewing area is not cut in two.
  */
 export const FIXTURES = Object.freeze([
-  // Main sanitair: sink, bath and shower (owner). The bath takes the south wall
-  // under the two air windows; the shower fills the corner beside it.
-  { kind: 'sink', room: 'mainSanitair', rect: [19.5, 20.2, 6.7, 7.15] },
-  { kind: 'bath', room: 'mainSanitair', rect: [17.7, 19.4, 7.9, 8.6] },
-  { kind: 'shower', room: 'mainSanitair', rect: [19.5, 20.1, 7.7, 8.6] },
-  // Guest sanitair: sink and bath (owner). At 1.60 × 1.50 the room only takes a
-  // bath across its full width, which leaves 0.80 of free depth — hence the 0.70
-  // door, the only leaf that can swing clear of the bath.
-  { kind: 'sink', room: 'guestSanitair', rect: [9.2, 9.8, 7.1, 7.55] },
-  { kind: 'bath', room: 'guestSanitair', rect: [8.2, 9.8, 7.9, 8.6] },
+  // Main sanitair: the owner pushed the bath and the shower together to fill the
+  // south half, wall to wall, and put the basin back in the open north half.
+  { kind: 'sink', room: 'mainSanitair', rect: [17.6, 18.3, 6.65, 7.1] },
+  { kind: 'bath', room: 'mainSanitair', rect: [17.6, 19.0, 7.2, 8.6] },
+  { kind: 'shower', room: 'mainSanitair', rect: [19.1, 20.2, 7.2, 8.6] },
+  // Guest sanitair: a small shower for a guest's quick wash, beside a sit-bath
+  // (owner). Both stand behind a T-shaped screen, open at each end: you step
+  // round the west end into the shower and the east end into the bath. Only the
+  // basin is in the open, which is what the owner asked for.
+  { kind: 'sink', room: 'guestSanitair', rect: [9.1, 9.7, 7.15, 7.6] },
+  { kind: 'partition', room: 'guestSanitair', rect: [8.5, 9.5, 7.85, 7.95] },
+  { kind: 'partition', room: 'guestSanitair', rect: [8.85, 8.95, 7.95, 8.6] },
+  { kind: 'shower', room: 'guestSanitair', rect: [8.2, 8.85, 7.95, 8.6] },
+  { kind: 'bath', room: 'guestSanitair', rect: [8.95, 9.8, 7.95, 8.6] },
   // The television wall, facing the living room opening across the corridor.
   { kind: 'tv', room: 'corridor', rect: [7.5, 11.0, 5.82, 5.9] },
 ]);

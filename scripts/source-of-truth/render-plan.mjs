@@ -25,10 +25,11 @@
  * The owner asked for *every* wall to be labelled with its matricule and its
  * length; ports and windows carry their matricule alone, and a fixture its
  * matricule and its kind, since a small rectangle does not otherwise say whether
- * it is a sink or a shower. Even so a label is usually wider than the opening it
- * names, so labels cannot simply sit inside the thing they name. What saves it
- * is that rooms are drawn as *clear* rectangles: the 12 px (partition) and 18 px
- * (exterior) gaps between them form a continuous empty lattice, which is exactly
+ * it is a sink or a shower. A screen of kind `partition` is the exception: it is
+ * drawn as fabric and carries no label. Even so a label is usually wider than
+ * the opening it names, so labels cannot simply sit inside the thing they name.
+ * What saves it is that rooms are drawn as *clear* rectangles: the 12 px and
+ * 18 px gaps between them form a continuous empty lattice, which is exactly
  * where wall, port and window labels belong. So every such label is queued into
  * a "band" — one shared line of constant centreline per wall axis — and each
  * band is then packed:
@@ -131,6 +132,22 @@ const WALL_TEXT = '#666666';
 const FIXTURE_COLORS = Object.freeze({ fill: '#cfd8dc', stroke: '#455a64', text: '#37474f' });
 
 /**
+ * A partition is drawn in the wall's own grey.
+ *
+ * `#8c8c8c` is the plot's fill: it is what shows through the gaps between the
+ * clear room rectangles, so it is already what every wall on this page looks
+ * like. Painting a screen in it makes it read as something you cannot walk
+ * through, flat and without an outline of its own, exactly like the fabric
+ * around it.
+ *
+ * A partition is a *fixture* in the data only because the wall derivation works
+ * from room rectangles and would have to split a room in two to express a
+ * screen; it never enters that path. On the page it is fabric, so drawing it in
+ * the fitting blue-grey would read as furniture you could walk round.
+ */
+const PARTITION_FILL = '#8c8c8c';
+
+/**
  * How each spelling of a wall's `side` maps to the axis the wall runs along and
  * to the direction its solid lies in, away from the room that owns it.
  *
@@ -153,6 +170,12 @@ const SIDE_GEOMETRY = Object.freeze({
 const BAND_FONT = 6;
 /** Gap left between two packed labels in the same band row, px. */
 const BAND_GAP = 3;
+/**
+ * How far from its fixture a label may sit and still count as adjacent, in
+ * rings (a ring is one label height). Within this, staying next to the shape
+ * matters more than staying inside the room.
+ */
+const ADJACENT_RINGS = 2;
 /**
  * Perpendicular offsets of a band's lanes, in label heights from the wall line,
  * tried in this order.
@@ -267,11 +290,16 @@ export function renderPlanPage({ spec, walls }) {
       // centre is inside its bath, is exactly that case. So the matricule takes
       // the first of draw.io's nine anchor positions that is clear of everything
       // placed so far — the centre first, so only a room that needs to move does.
-      const anchor = placeRoomLabel(
-        label,
-        { x0: px(minX), y0: py(minZ), x1: px(maxX), y1: py(maxZ) },
-        placedLabels,
-      );
+      const rectBox = { x0: px(minX), y0: py(minZ), x1: px(maxX), y1: py(maxZ) };
+      const anchor = placeRoomLabel(label, rectBox, placedLabels);
+      // When every anchor is blocked — the guest sanitair, five fixtures in
+      // 1.60 × 1.50 — the matricule comes out of the shape and is drawn as its
+      // own cell in whatever gap the room has left. Here that is the 15 px band
+      // between the basin and the screen, which no corner anchor can reach.
+      const loose =
+        anchor.free || label.lines.length === 0
+          ? null
+          : findFreeBoxInRect(anchor.box, rectBox, placedLabels);
       cells.push(
         shape({
           style:
@@ -279,16 +307,31 @@ export function renderPlanPage({ spec, walls }) {
             `strokeWidth=${room.kind === 'openAir' ? 2 : 1};fontSize=${label.fontSize};fontStyle=1;` +
             `verticalAlign=${anchor.vertical};align=${anchor.horizontal};` +
             `${isVoid ? 'dashed=1;fontColor=#cc0000;' : ''}`,
-          value: label.lines.join('\n'),
+          value: loose ? '' : label.lines.join('\n'),
           x: px(minX),
           y: py(minZ),
           w: wPx,
           h: hPx,
         }),
       );
+      if (loose) {
+        cells.push(
+          text({
+            style:
+              `text;html=1;align=center;verticalAlign=middle;fontSize=${label.fontSize};` +
+              `fontStyle=1;${isVoid ? 'fontColor=#cc0000;' : ''}`,
+            value: label.lines.join('\n'),
+            x: loose.x0,
+            y: loose.y0,
+            w: loose.x1 - loose.x0,
+            h: loose.y1 - loose.y0,
+          }),
+        );
+      }
       // What must stay clear is the text itself, not the whole rect: a
       // rect-sized obstacle would push every wall label out of every room.
-      if (anchor.box) placedLabels.push(anchor.box);
+      const placedBox = loose ?? anchor.box;
+      if (placedBox) placedLabels.push(placedBox);
     });
   }
 
@@ -330,10 +373,12 @@ export function renderPlanPage({ spec, walls }) {
   }
 
   // ------------------------------------------------------------- the fixtures
-  // The things standing in a room: a sink, a bath, a shower, the television. A
-  // fixture is in a room, not in a wall, so it is numbered per room — X1, X2 …
-  // in reading order, top to bottom then left to right — and placed here rather
-  // than through the band machinery, which exists to thread labels along walls.
+  // The things standing in a room: a sink, a bath, a shower, a screen, the
+  // television. A fixture is in a room, not in a wall, so it is numbered per
+  // room — X1, X2 … in reading order, top to bottom then left to right — and
+  // placed here rather than through the band machinery, which threads labels
+  // along walls. Screens are numbered with the rest, so the drawing and the
+  // Registers page agree on which X is which even though they carry no label.
   for (const [roomId, items] of fixturesByRoom(FIXTURES ?? [], ROOMS)) {
     const room = ROOMS.find((candidate) => candidate.id === roomId);
     if (!room) continue;
@@ -348,11 +393,14 @@ export function renderPlanPage({ spec, walls }) {
     items.forEach((fixture, index) => {
       const [minX, maxX, minZ, maxZ] = fixture.rect;
       const box = { x0: px(minX), y0: py(minZ), x1: px(maxX), y1: py(maxZ) };
+      const isPartition = fixture.kind === 'partition';
       cells.push(
         shape({
           style:
-            `rounded=0;whiteSpace=wrap;html=1;fillColor=${FIXTURE_COLORS.fill};` +
-            `strokeColor=${FIXTURE_COLORS.stroke};strokeWidth=1;`,
+            'rounded=0;whiteSpace=wrap;html=1;' +
+            (isPartition
+              ? `fillColor=${PARTITION_FILL};strokeColor=${PARTITION_FILL};strokeWidth=1;`
+              : `fillColor=${FIXTURE_COLORS.fill};strokeColor=${FIXTURE_COLORS.stroke};strokeWidth=1;`),
           value: '',
           x: box.x0,
           y: box.y0,
@@ -362,6 +410,15 @@ export function renderPlanPage({ spec, walls }) {
       );
       // The shape is already an obstacle: it was registered in the planning pass
       // above, before any room matricule chose where to sit.
+
+      // A screen carries no label. The guest sanitair holds five fixtures in
+      // 1.60 × 1.50 m, and what is left of its floor is one band 96 px wide and
+      // 15 px tall: a `-X2 partition` label is ~90 px long, so it could only be
+      // flung outside the room, where it would sit among three other labels and
+      // point at nothing a reader could pick out from a 0.10 m line. The screens
+      // still take their X numbers, so the drawing and the Registers page agree
+      // on which X is which, and the Registers page carries their sizes.
+      if (isPartition) return;
 
       // The kind word is carried as well as the matricule, against the
       // matricule-only rule the rest of the plan follows. A small rectangle is
@@ -511,8 +568,8 @@ export function renderPlanPage({ spec, walls }) {
 
   caption(
     'text;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fontSize=9;fontColor=#00701a;',
-    'Green = port (door or opening) · Gold = window · Blue-grey = fixture · Hatched = stair flights · Dashed red = void (no floor)\n' +
-      'Every shape carries its matricule; a wall carries its length and a fixture its kind. Sizes, notes, widths and sill→head are on the Registers page.',
+    'Green = port (door or opening) · Gold = window · Blue-grey = fixture · Solid grey = partition · Hatched = stair flights · Dashed red = void (no floor)\n' +
+      'Every shape carries its matricule; a wall carries its length and a fixture its kind. Partitions, sizes, notes, widths and sill→head are on the Registers page.',
     26,
   );
 
@@ -849,11 +906,62 @@ function placeRoomLabel(label, rect, obstacles) {
           ? rect.y0 + pad
           : rect.y1 - pad - h;
     const box = { x0, y0, x1: x0 + w, y1: y0 + h };
-    if (!centred) centred = { horizontal, vertical, box };
-    if (free(box)) return { horizontal, vertical, box };
+    if (!centred) centred = { horizontal, vertical, box, free: false };
+    if (free(box)) return { horizontal, vertical, box, free: true };
   }
-  // Every anchor is blocked: keep the centred one and let the checks report it.
+  // Every anchor is blocked. Report it rather than quietly drawing over a bath:
+  // the caller lifts the matricule out of the shape and places it in whatever
+  // gap the room has left.
   return centred;
+}
+
+/**
+ * The free spot nearest the middle of a rect that will hold a box of this size.
+ *
+ * A last resort for a room matricule when all nine anchors are blocked. Anchors
+ * can only reach the edges and the exact centre, so a room whose free floor is a
+ * band *across* its middle — the guest sanitair, where the only gap is the 15 px
+ * between the basin and the screen — has nowhere to put its name until something
+ * scans the interior properly.
+ *
+ * @param {{x0: number, y0: number, x1: number, y1: number}} size Box whose width and height to fit.
+ * @param {{x0: number, y0: number, x1: number, y1: number}} rect The rect to stay inside, px.
+ * @param {ReadonlyArray<{x0: number, y0: number, x1: number, y1: number}>} obstacles Boxes to avoid.
+ * @returns {{x0: number, y0: number, x1: number, y1: number} | null} The box, or null if the rect is full.
+ */
+function findFreeBoxInRect(size, rect, obstacles) {
+  const w = size.x1 - size.x0;
+  const h = size.y1 - size.y0;
+  const cx = (rect.x0 + rect.x1) / 2;
+  const cy = (rect.y0 + rect.y1) / 2;
+  // A 1 px grid, not a coarse one. The guest sanitair's only gap is the 15 px
+  // band between basin and screen, and the matricule is 13 px tall: a 3 px grid
+  // offered y = 535, which clipped the basin, and y = 538, which overshot the
+  // screen by 0.05 px, and so reported the room full when it was not.
+  const step = 1;
+
+  const candidates = [];
+  for (let y = rect.y0 + 2; y + h <= rect.y1 - 2; y += step) {
+    for (let x = rect.x0 + 2; x + w <= rect.x1 - 2; x += step) {
+      candidates.push({ x0: x, y0: y, x1: x + w, y1: y + h });
+    }
+  }
+  // Nearest the middle first, so the name still reads as belonging to the room.
+  const distance = (box) => Math.hypot((box.x0 + box.x1) / 2 - cx, (box.y0 + box.y1) / 2 - cy);
+  candidates.sort((a, b) => distance(a) - distance(b));
+
+  return (
+    candidates.find(
+      (box) =>
+        !obstacles.some(
+          (o) =>
+            box.x0 < o.x1 - 0.01 &&
+            o.x0 < box.x1 - 0.01 &&
+            box.y0 < o.y1 - 0.01 &&
+            o.y0 < box.y1 - 0.01,
+        ),
+    ) ?? null
+  );
 }
 
 /**
@@ -908,6 +1016,7 @@ function placeLabelBox(label, fixture, roomBoxes, obstacles) {
           y0: cy - h / 2,
           x1: cx + dx + w / 2,
           y1: cy + h / 2,
+          ring,
         });
       }
     }
@@ -930,6 +1039,16 @@ function placeLabelBox(label, fixture, roomBoxes, obstacles) {
         box.y1 <= r.y1 + 0.01,
     );
 
+  // Adjacency first, then containment — in that order, and the order is the
+  // whole point. Testing containment across every ring before adjacency meant
+  // distance always won: the main sanitair's shower stands hard against the
+  // room's east wall, where no full-width label can be contained beside it, so
+  // the search climbed six rings to find a spot that was merely *inside* and
+  // left the label 0.85 m above the thing it named. A label hanging a few px
+  // over the room's edge still points at its fixture; one that far away does not.
+  const adjacent = (box) => box.ring <= ADJACENT_RINGS;
+  for (const box of candidates) if (adjacent(box) && insideRoom(box) && free(box)) return box;
+  for (const box of candidates) if (adjacent(box) && free(box)) return box;
   for (const box of candidates) if (insideRoom(box) && free(box)) return box;
   for (const box of candidates) if (free(box)) return box;
   return null;
