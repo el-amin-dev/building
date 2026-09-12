@@ -7,15 +7,20 @@ const BASE_URL = `http://localhost:${E2E_SERVER_PORT}`;
 const CI_RETRIES = 2;
 const CI_WORKERS = 1;
 /**
- * Workers to run the suite with locally.
+ * Workers to run the suite with locally: one, the same as CI.
  *
  * Every test renders the whole floor through a software WebGL rasteriser, so each one is
- * CPU-bound rather than waiting on anything: Playwright's default (half the cores) puts
- * more of them on the machine than it has throughput for, and the heavy interactive tests
- * starve until `locator.screenshot` hits the 90 s test timeout. At two, the suite runs
- * comfortably inside that budget, and the budget itself stays untouched.
+ * CPU-bound rather than waiting on anything, and one browser alone drives this machine's load
+ * average to about 10. Measured: Playwright's default (half the cores) starves three of the
+ * heavy interactive tests until `locator.screenshot` hits the 90 s test timeout, and two
+ * workers starve the same three while taking the load average from 3 to 20. Each of them
+ * passes alone well inside its budget — the slowest in 45 s.
+ *
+ * So the suite is serial, which costs wall-clock and buys two things: a run that does not
+ * compete with itself, and a local result that predicts CI, where the worker count is the
+ * same. No test timeout is raised to hide the contention.
  */
-const LOCAL_WORKERS = 2;
+const LOCAL_WORKERS = 1;
 const WEB_SERVER_TIMEOUT_MS = 120_000;
 /**
  * Share of a frame allowed to differ from its screenshot baseline, for every comparison.
