@@ -4,7 +4,7 @@ import type { RefObject } from 'react';
 import type { Group } from 'three';
 import type { EyePose } from '../domain/eyeNavigation.ts';
 import { PERSON_SPEC } from '../domain/person.ts';
-import type { CameraRoomBox } from '../domain/thirdPersonCamera.ts';
+import type { CameraField } from '../domain/thirdPersonCamera.ts';
 import type { InteriorCameraMode } from '../domain/viewMode.ts';
 import { getMannequinParts, isPersonModelVisible } from './personModelParts.ts';
 import type { MannequinPart } from './personModelParts.ts';
@@ -31,8 +31,8 @@ const MANNEQUIN_PARTS = getMannequinParts(PERSON_SPEC.height);
 export interface PersonModelProps {
   /** The person's pose, stepped every frame by the interior camera controls. */
   readonly poseRef: RefObject<EyePose>;
-  /** The box the third-person camera stays inside. */
-  readonly roomBox: CameraRoomBox;
+  /** Where the third-person camera may go (see `createCameraField`). */
+  readonly field: CameraField;
   /** The current interior camera mode; the model only shows in third person. */
   readonly cameraMode: InteriorCameraMode;
 }
@@ -71,7 +71,7 @@ function MannequinGeometry({ part }: MannequinGeometryProps) {
  * @param props - {@link PersonModelProps}
  * @returns The mannequin group.
  */
-export function PersonModel({ poseRef, roomBox, cameraMode }: PersonModelProps) {
+export function PersonModel({ poseRef, field, cameraMode }: PersonModelProps) {
   const groupRef = useRef<Group>(null);
 
   useFrame(() => {
@@ -82,7 +82,7 @@ export function PersonModel({ poseRef, roomBox, cameraMode }: PersonModelProps) 
     const pose = poseRef.current;
     group.position.set(pose.x, FLOOR_LEVEL, pose.z);
     group.rotation.y = pose.yaw;
-    group.visible = isPersonModelVisible(cameraMode, pose, roomBox);
+    group.visible = isPersonModelVisible(cameraMode, pose, field);
   });
 
   return (

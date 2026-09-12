@@ -2,11 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { useRemoteControlStore } from '../application/remoteControlStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
-import { createRoomCentrePose } from '../domain/eyeNavigation.ts';
 import type { EyePose } from '../domain/eyeNavigation.ts';
-import type { PlanRect } from '../domain/planGeometry.ts';
-import type { CameraRoomBox } from '../domain/thirdPersonCamera.ts';
+import { ExplorerPoseReporter } from './ExplorerPoseReporter.tsx';
 import { EyeCameraControls } from './EyeCameraControls.tsx';
+import { CAMERA_FIELD, INTERIOR_START_POSE, WALK_FIELD } from './floorInstance.ts';
 import { PersonModel } from './PersonModel.tsx';
 
 /** Props of {@link InteriorExplorer}. */
@@ -16,21 +15,26 @@ export interface InteriorExplorerProps {
    * when this component mounts (see `usePressedKeys`).
    */
   readonly targetRef: RefObject<HTMLElement | null>;
-  /** Walkable rectangle for the person's position, already shrunk by the body radius. */
-  readonly bounds: PlanRect;
-  /** The box the third-person camera stays inside (see `createCameraRoomBox`). */
-  readonly roomBox: CameraRoomBox;
 }
 
 /**
- * The explorer inside the building: the person's pose, the interior camera and the person model.
+ * The explorer inside the building: the person's pose, the interior camera, the person model
+ * and the pose reporter.
  *
- * Rendered inside the canvas only while the interior view is active. It owns the pose,
- * created with `createRoomCentrePose(bounds)` once per mount, so every entry into the
- * interior view starts in the centre of the walkable bounds, looking along their longer
- * axis: the third-person camera then has its full follow distance of free floor behind the
- * person, which a corner start denied it. Switching between first and third person
+ * Rendered inside the canvas only while the interior view is active. It owns the pose, which
+ * starts at {@link INTERIOR_START_POSE} — the stairs arrival, because entry to the floor is
+ * through the stairs (ADR-006) — so every entry into the interior view begins where the
+ * viewer walked in. That pose is a frozen object shared with the exterior→interior camera
+ * transition, so the two cannot land in different places; holding it in state is what makes
+ * a remount start over rather than resume. Switching between first and third person
  * (`interiorCameraMode` in the view store) keeps the pose.
+ *
+ * The collision field and the camera field are handed down as props rather than imported by
+ * the children: the children stay unit-testable against a small synthetic field, while the
+ * live floor is derived exactly once (`floorInstance.ts`) and shared by identity.
+ *
+ * It owns `poseRef`, so it is also where `ExplorerPoseReporter` is mounted — the reporter
+ * pushes that same pose out to the HUD once per frame, after the controls have stepped it.
  *
  * It also releases every action held on the on-screen `RemoteControl` when it unmounts
  * (leaving the interior view) and whenever the camera mode changes: the pad can outlive
@@ -38,12 +42,12 @@ export interface InteriorExplorerProps {
  * spinning forever.
  *
  * @param props - {@link InteriorExplorerProps}
- * @returns The interior camera controls and the person model.
+ * @returns The interior camera controls, the person model and the pose reporter.
  */
-export function InteriorExplorer({ targetRef, bounds, roomBox }: InteriorExplorerProps) {
+export function InteriorExplorer({ targetRef }: InteriorExplorerProps) {
   const cameraMode = useViewStore((state) => state.interiorCameraMode);
   const releaseAllActions = useRemoteControlStore((state) => state.releaseAllActions);
-  const [initialPose] = useState(() => createRoomCentrePose(bounds));
+  const [initialPose] = useState(() => INTERIOR_START_POSE);
   const poseRef = useRef<EyePose>(initialPose);
 
   useEffect(
@@ -57,12 +61,13 @@ export function InteriorExplorer({ targetRef, bounds, roomBox }: InteriorExplore
     <>
       <EyeCameraControls
         targetRef={targetRef}
-        bounds={bounds}
+        field={WALK_FIELD}
         poseRef={poseRef}
         cameraMode={cameraMode}
-        roomBox={roomBox}
+        cameraField={CAMERA_FIELD}
       />
-      <PersonModel poseRef={poseRef} roomBox={roomBox} cameraMode={cameraMode} />
+      <PersonModel poseRef={poseRef} field={CAMERA_FIELD} cameraMode={cameraMode} />
+      <ExplorerPoseReporter poseRef={poseRef} />
     </>
   );
 }

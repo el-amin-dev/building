@@ -11,7 +11,7 @@
 
 import type { EyePose } from '../domain/eyeNavigation.ts';
 import { getThirdPersonCamera, shouldHidePersonModel } from '../domain/thirdPersonCamera.ts';
-import type { CameraRoomBox, ScenePoint } from '../domain/thirdPersonCamera.ts';
+import type { CameraField, ScenePoint } from '../domain/thirdPersonCamera.ts';
 import type { InteriorCameraMode } from '../domain/viewMode.ts';
 
 /** Primitive shape of a mannequin part. */
@@ -279,15 +279,13 @@ export function getMannequinPartHalfExtent(part: MannequinPart): ScenePoint {
  *
  * @param cameraMode - The current interior camera mode.
  * @param pose - The person's pose. Not mutated.
- * @param roomBox - The box the follow camera stays inside.
+ * @param field - Where the follow camera may go (see `createCameraField`).
  * @returns `true` when the mannequin should be rendered.
  */
 export function isPersonModelVisible(
   cameraMode: InteriorCameraMode,
   pose: EyePose,
-  roomBox: CameraRoomBox,
+  field: CameraField,
 ): boolean {
-  return (
-    cameraMode === 'thirdPerson' && !shouldHidePersonModel(getThirdPersonCamera(pose, roomBox))
-  );
+  return cameraMode === 'thirdPerson' && !shouldHidePersonModel(getThirdPersonCamera(pose, field));
 }

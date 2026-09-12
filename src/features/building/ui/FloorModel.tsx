@@ -1,5 +1,5 @@
-import { getBuiltFloor } from '../domain/builtFloor.ts';
 import type { PlanBox } from '../domain/planBox.ts';
+import { BUILT_FLOOR } from './floorInstance.ts';
 import {
   FLOOR_MATERIAL_KEYS,
   getCeilingLayout,
@@ -19,10 +19,13 @@ import { MergedBoxesMesh } from './MergedBoxesMesh.tsx';
  * render — or per frame — would re-merge every wall, slab and step and re-upload the buffers
  * to the GPU each time. A module-level constant gives every bucket one identity for the whole
  * life of the page, which no `useMemo` dependency can accidentally invalidate. The floor is
- * pure data of the plan and the heights, so there is nothing a render could change about it
- * (`builtFloor.ts` is explicit that the renderer calls it once here).
+ * pure data of the plan and the heights, so there is nothing a render could change about it.
+ *
+ * The floor itself is not derived here either: {@link BUILT_FLOOR} is the page's one
+ * derivation of it (`floorInstance.ts`), shared by identity with the collision field and the
+ * explorer's start pose. Calling `getBuiltFloor()` again here would bake the floor twice.
  */
-const FLOOR_LAYOUT = getFloorLayout(getBuiltFloor());
+const FLOOR_LAYOUT = getFloorLayout(BUILT_FLOOR);
 
 /** The ceilings and light panels, built once for the same reason. */
 const CEILING_LAYOUT = getCeilingLayout();
