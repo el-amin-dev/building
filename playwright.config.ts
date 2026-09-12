@@ -6,6 +6,16 @@ const isCI = Boolean(process.env.CI);
 const BASE_URL = `http://localhost:${E2E_SERVER_PORT}`;
 const CI_RETRIES = 2;
 const CI_WORKERS = 1;
+/**
+ * Workers to run the suite with locally.
+ *
+ * Every test renders the whole floor through a software WebGL rasteriser, so each one is
+ * CPU-bound rather than waiting on anything: Playwright's default (half the cores) puts
+ * more of them on the machine than it has throughput for, and the heavy interactive tests
+ * starve until `locator.screenshot` hits the 90 s test timeout. At two, the suite runs
+ * comfortably inside that budget, and the budget itself stays untouched.
+ */
+const LOCAL_WORKERS = 2;
 const WEB_SERVER_TIMEOUT_MS = 120_000;
 /**
  * Share of a frame allowed to differ from its screenshot baseline, for every comparison.
@@ -20,7 +30,7 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: isCI,
   retries: isCI ? CI_RETRIES : 0,
-  workers: isCI ? CI_WORKERS : undefined,
+  workers: isCI ? CI_WORKERS : LOCAL_WORKERS,
   reporter: isCI ? [['github'], ['html', { open: 'never' }]] : 'list',
   /** Baselines are committed next to the specs, one per project and platform. */
   snapshotPathTemplate:
