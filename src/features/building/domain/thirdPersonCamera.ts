@@ -4,21 +4,33 @@
  * The camera sits behind the person and looks at the head. Coordinates are
  * expressed in metres and angles in radians, with the conventions of
  * `eyeNavigation.ts`: `y` points up, the plan lies on `x`/`z`, yaw 0 looks
- * toward −z, increasing yaw turns left and positive pitch looks up. Behind the
- * person, on the plan, is therefore `(sin yaw, cos yaw)`.
+ * toward −z, increasing yaw turns left and positive pitch looks up. Forward on
+ * the plan is `(−sin yaw, −cos yaw)`, so behind the person — where the camera
+ * goes — is the opposite, `(sin yaw, cos yaw)`.
  *
- * The camera never leaves the room: when a wall, the floor or the ceiling is
- * closer than the follow distance, the camera is pulled in along its ray. When
- * that would bring it too close to see the body (e.g. with the person's back to
- * a wall), the camera rises toward overhead instead, looking down at the head.
- * It never goes below head height (see {@link MIN_ELEVATION_RADIANS}).
+ * The camera never passes through anything the body cannot pass through: it is
+ * pulled in to the clearance the real collision field (`collision.ts`) leaves
+ * behind the person, measured for a circle of `wallMargin` rather than of the
+ * body radius, plus a vertical range between the floor and the ceiling. When
+ * that clearance is too small to see the body (e.g. with the person's back to a
+ * wall), the camera rises toward overhead instead, looking down at the head. It
+ * never goes below head height (see {@link MIN_ELEVATION_RADIANS}).
+ *
+ * **The camera is not confined to one room, and that is deliberate.** It is
+ * stopped by blockers, not by the walls of the space the person stands in, so
+ * with an open doorway straight behind the person it follows through the doorway
+ * into the next space instead of being trapped against the plane of the wall.
+ * What it must never do is pass through masonry, and it cannot: a window leaves
+ * a sill block that is solid at body height, so the blocker list is unbroken
+ * across a window and the camera stops at it exactly as the body does.
  */
 
+import { getClearance } from './collision.ts';
+import type { PlanVector, WalkField } from './collision.ts';
 import { EYE_NAVIGATION_CONFIG } from './eyeNavigation.ts';
 import type { EyePose } from './eyeNavigation.ts';
 import { PERSON_SPEC } from './person.ts';
-import { makeRect } from './planGeometry.ts';
-import type { PlanRect } from './planGeometry.ts';
+import type { PlanPoint } from './planGeometry.ts';
 
 /** A point in scene space, metres (x, z on the plan; y up). */
 export interface ScenePoint {
@@ -30,10 +42,10 @@ export interface ScenePoint {
   readonly z: number;
 }
 
-/** The box the camera must stay inside: plan rect plus a vertical range, metres. */
-export interface CameraRoomBox {
-  /** Plan rectangle the camera stays inside. */
-  readonly plan: PlanRect;
+/** Where the follow camera may go: the same blockers the body is stopped by, plus a vertical range. */
+export interface CameraField {
+  /** The collision field of the storey; only its blockers are consulted. */
+  readonly walk: WalkField;
   /** Lowest camera height, in metres. */
   readonly minY: number;
   /** Highest camera height, in metres. */
@@ -55,7 +67,10 @@ export interface ThirdPersonCameraConfig {
    * elevation `maxElevation` and pitch +`maxPitch` (looking up) to {@link MIN_ELEVATION_RADIANS}.
    */
   readonly maxPitch: number;
-  /** Distance the camera keeps from walls, floor and ceiling, in metres. */
+  /**
+   * Distance the camera keeps from blockers, floor and ceiling, in metres. It is the radius of
+   * the camera's own body on the plan, the way `PERSON_SPEC.radius` is the person's.
+   */
   readonly wallMargin: number;
   /** Camera distance below which the person model is hidden, in metres. */
   readonly minBodyVisibleDistance: number;
@@ -69,14 +84,23 @@ const BASE_ELEVATION_DEGREES = 15;
 const MAX_ELEVATION_DEGREES = 80;
 const WALL_MARGIN_METRES = 0.15;
 /**
- * Reachable with the back flat against a wall at the walking limit (0.10 m left behind the
- * person): the camera rises to acos(0.10 / 0.5) ≈ 78.5°, under the 80° elevation limit.
+ * Reachable with the back flat against a wall face, in metres.
+ *
+ * The body stops flush against the face, its centre at `face − PERSON_SPEC.radius` (0.25 m); the
+ * camera keeps `WALL_MARGIN_METRES` (0.15 m) from that same face, so 0.10 m of clearance is left
+ * straight behind the body centre. The camera therefore rises to
+ * acos(0.10 / 0.5) ≈ 78.5°, which is under the 80° elevation limit — so the body stays visible
+ * in the tightest legal pose the collision field allows rather than being hidden.
  */
 const MIN_BODY_VISIBLE_DISTANCE_METRES = 0.5;
 
-const HALF = 0.5;
-/** Direction components smaller than this never reach a face of the box. */
+/** A ray direction component smaller than this never reaches a face of the vertical slab. */
 const DIRECTION_EPSILON = 1e-12;
+/**
+ * Cosine of the elevation below which the ray counts as vertical: it covers no plan distance, so
+ * no blocker can ever bound it and only the vertical slab does.
+ */
+const VERTICAL_RAY_COSINE = 1e-12;
 /**
  * Rounding slack, in metres, when comparing a distance with the visibility threshold: a camera
  * raised to exactly the threshold distance must not be hidden by a last-bit rounding error.
@@ -117,57 +141,43 @@ export interface ThirdPersonCamera {
 }
 
 /**
- * Camera box of a room: the clear rect shrunk by `margin` on every side, with y from `margin`
- * to `ceilingHeight - margin`. RangeError if the margin leaves no room or inputs are not finite.
+ * Camera field of a storey: its walk field, plus the vertical range between floor and ceiling.
  *
- * @param clearRect - The clear (inside) rectangle of the room, in metres.
+ * The plan is NOT narrowed here, because there is nothing to narrow: the blockers already are
+ * where the camera may not go, and the margin is applied per query by {@link getClearance} —
+ * which is what lets the camera follow through a doorway that no single room rectangle contains.
+ *
+ * @param walk - The collision field of the storey (see `getWalkField`). Captured, not copied; it
+ *   is already deeply frozen by `makeWalkField`.
  * @param ceilingHeight - Height of the ceiling above the finished floor, in metres.
- * @param margin - Distance the camera keeps from walls, floor and ceiling, in metres.
- * @returns A frozen box with a frozen plan rectangle.
- * @throws RangeError when any input is not finite, when `margin` is negative, or when
- *   `margin` is at least half the room's width, depth or ceiling height (leaving no room).
+ * @param config - Camera tuning; defaults to {@link THIRD_PERSON_CAMERA_CONFIG}. Only
+ *   `wallMargin` is read.
+ * @returns A frozen field with `minY` = `config.wallMargin` and `maxY` =
+ *   `ceilingHeight − config.wallMargin`.
+ * @throws RangeError when `ceilingHeight` is not finite, or when the margin leaves no vertical
+ *   range at all (`ceilingHeight` at most twice the margin).
  */
-export function createCameraRoomBox(
-  clearRect: PlanRect,
+export function createCameraField(
+  walk: WalkField,
   ceilingHeight: number,
-  margin: number,
-): CameraRoomBox {
-  const inputs = [
-    clearRect.minX,
-    clearRect.maxX,
-    clearRect.minZ,
-    clearRect.maxZ,
-    ceilingHeight,
-    margin,
-  ];
-  if (!inputs.every(Number.isFinite)) {
+  config: ThirdPersonCameraConfig = THIRD_PERSON_CAMERA_CONFIG,
+): CameraField {
+  const minY = config.wallMargin;
+  const maxY = ceilingHeight - config.wallMargin;
+  if (!Number.isFinite(ceilingHeight) || maxY <= minY) {
     throw new RangeError(
-      `createCameraRoomBox inputs must be finite, got rect (${inputs.slice(0, 4).map(String).join(', ')}), ceilingHeight ${String(ceilingHeight)}, margin ${String(margin)}`,
+      `ceilingHeight must be finite and leave room above the ${String(config.wallMargin)} m margin, got ${String(ceilingHeight)}`,
     );
   }
-  const maxMargin =
-    Math.min(clearRect.maxX - clearRect.minX, clearRect.maxZ - clearRect.minZ, ceilingHeight) *
-    HALF;
-  if (margin < 0 || margin >= maxMargin) {
-    throw new RangeError(`margin must be in [0, ${String(maxMargin)}), got ${String(margin)}`);
-  }
-  return Object.freeze({
-    plan: makeRect(
-      clearRect.minX + margin,
-      clearRect.maxX - margin,
-      clearRect.minZ + margin,
-      clearRect.maxZ - margin,
-    ),
-    minY: margin,
-    maxY: ceilingHeight - margin,
-  });
+  return Object.freeze({ walk, minY, maxY });
 }
 
 /**
  * Follow camera behind the person.
  *
- * - target = (pose.x, config.targetHeight, pose.z), clamped into `roomBox` first when it lies
- *   outside, so the ray always starts inside the box;
+ * - target = (pose.x, clamp(config.targetHeight, minY, maxY), pose.z). The plan is taken
+ *   verbatim: the pose is legal by construction — collision put it there — so clamping it into a
+ *   rectangle would fight the collision model rather than protect it;
  * - requested elevation e0: pitch maps piecewise-linearly so that pitch 0 gives
  *   `baseElevation`, pitch −`maxPitch` (looking down) gives `maxElevation` and pitch
  *   +`maxPitch` (looking up) gives {@link MIN_ELEVATION_RADIANS} (level with the head); the
@@ -175,57 +185,60 @@ export function createCameraRoomBox(
  *   camera down to head level, never below; looking down raises it, with no dead zone;
  * - direction(e) (unit, from target toward camera) = (sin yaw · cos e, sin e, cos yaw · cos e),
  *   i.e. backward on the plan;
- * - exit(e) = distance along that ray at which it leaves `roomBox`; axes whose direction
- *   component is about 0 are ignored;
+ * - H = the plan clearance straight behind the person, for a circle of `config.wallMargin`
+ *   (see {@link getClearance}): `Infinity` when nothing is behind, `0` when the camera's own
+ *   circle already overlaps a blocker;
+ * - exit(e) = min(H / cos e, the travel at which the ray leaves the vertical range), the
+ *   distance at which the ray meets a blocker, the floor or the ceiling. The plan term is
+ *   `Infinity` for a ray that is vertical to within {@link VERTICAL_RAY_COSINE}, which covers no
+ *   plan distance for any blocker to lie in;
  * - when min(followDistance, exit(e0)) ≥ t (`minBodyVisibleDistance`), e = e0. Otherwise the
- *   camera rises: with H the plan distance to leave the box straight behind the person and
- *   Vc = maxY − target.y, eMin = acos(min(1, H / t)) is the lowest elevation at which the
- *   plan allows distance t and eCeil = asin(min(1, Vc / t)) the highest the ceiling allows.
- *   If max(e0, eMin) ≤ min(maxElevation, eCeil), e = max(e0, eMin), the lowest elevation at
- *   which the body is visible; otherwise e = clamp(atan2(Vc, H), e0, maxElevation), the
+ *   camera rises: with Vc = maxY − target.y, eMin = acos(min(1, H / t)) is the lowest elevation
+ *   at which the plan allows distance t and eCeil = asin(min(1, Vc / t)) the highest the ceiling
+ *   allows. If max(e0, eMin) ≤ min(maxElevation, eCeil), e = max(e0, eMin), the lowest elevation
+ *   at which the body is visible; otherwise e = clamp(atan2(Vc, H), e0, maxElevation), the
  *   elevation giving the largest distance;
- * - distance = max(0, min(followDistance, exit(e))); position = target + direction(e) · distance.
- *
- * The position is finally clamped into `roomBox` to absorb floating-point rounding, which only
- * ever moves it by a negligible amount.
+ * - distance = max(0, min(followDistance, exit(e))); position = target + direction(e) · distance,
+ *   with the height clamped into [minY, maxY] to absorb floating-point rounding, which only ever
+ *   moves it by a negligible amount.
  *
  * @param pose - The person's pose. Not mutated.
- * @param roomBox - The box the camera must stay inside (see {@link createCameraRoomBox}).
+ * @param field - Where the camera may go (see {@link createCameraField}). Not mutated.
  * @param config - Camera tuning; defaults to {@link THIRD_PERSON_CAMERA_CONFIG}.
  * @returns A new camera placement, with the chosen elevation.
  */
 export function getThirdPersonCamera(
   pose: EyePose,
-  roomBox: CameraRoomBox,
+  field: CameraField,
   config: ThirdPersonCameraConfig = THIRD_PERSON_CAMERA_CONFIG,
 ): ThirdPersonCamera {
-  const { plan, minY, maxY } = roomBox;
+  const { walk, minY, maxY } = field;
   const target: ScenePoint = {
-    x: clamp(pose.x, plan.minX, plan.maxX),
+    x: pose.x,
     y: clamp(config.targetHeight, minY, maxY),
-    z: clamp(pose.z, plan.minZ, plan.maxZ),
+    z: pose.z,
   };
 
   const sinYaw = Math.sin(pose.yaw);
   const cosYaw = Math.cos(pose.yaw);
-  /** Distance along the ray at elevation `e` before it leaves the box. */
+  const planTarget: PlanPoint = { x: pose.x, z: pose.z };
+  /** Behind the person on the plan, unit: the opposite of forward `(−sin yaw, −cos yaw)`. */
+  const back: PlanVector = { x: sinYaw, z: cosYaw };
+  /** Plan clearance straight behind the person, for a circle of the camera's margin. */
+  const planRoom = getClearance(planTarget, back, walk, config.wallMargin);
+
+  /** Distance along the ray at elevation `e` before it meets a blocker, the floor or the ceiling. */
   const exitAt = (e: number): number => {
     const horizontal = Math.cos(e);
-    return Math.min(
-      getAxisExit(target.x, sinYaw * horizontal, plan.minX, plan.maxX),
-      getAxisExit(target.y, Math.sin(e), minY, maxY),
-      getAxisExit(target.z, cosYaw * horizontal, plan.minZ, plan.maxZ),
-    );
+    const planExit =
+      Math.abs(horizontal) < VERTICAL_RAY_COSINE ? Number.POSITIVE_INFINITY : planRoom / horizontal;
+    return Math.min(planExit, getAxisExit(target.y, Math.sin(e), minY, maxY));
   };
 
   const requested = getRequestedElevation(pose.pitch, config);
   const threshold = config.minBodyVisibleDistance;
   let elevation = requested;
   if (Math.min(config.followDistance, exitAt(requested)) < threshold) {
-    const planRoom = Math.min(
-      getAxisExit(target.x, sinYaw, plan.minX, plan.maxX),
-      getAxisExit(target.z, cosYaw, plan.minZ, plan.maxZ),
-    );
     const ceilingRoom = maxY - target.y;
     const lowestVisible = Math.acos(Math.min(1, planRoom / threshold));
     const highestUnderCeiling = Math.asin(Math.min(1, ceilingRoom / threshold));
@@ -244,9 +257,9 @@ export function getThirdPersonCamera(
 
   return {
     position: {
-      x: clamp(target.x + directionX * distance, plan.minX, plan.maxX),
+      x: target.x + directionX * distance,
       y: clamp(target.y + directionY * distance, minY, maxY),
-      z: clamp(target.z + directionZ * distance, plan.minZ, plan.maxZ),
+      z: target.z + directionZ * distance,
     },
     target,
     distance,
@@ -273,7 +286,7 @@ export function shouldHidePersonModel(
 }
 
 /**
- * Camera elevation asked for by the person's pitch, before any wall is taken into account.
+ * Camera elevation asked for by the person's pitch, before any blocker is taken into account.
  *
  * Piecewise-linear: pitch 0 gives `baseElevation`, −`maxPitch` gives `maxElevation` and
  * +`maxPitch` gives {@link MIN_ELEVATION_RADIANS}; clamped to [`MIN_ELEVATION_RADIANS`,
@@ -292,7 +305,10 @@ function getRequestedElevation(pitch: number, config: ThirdPersonCameraConfig): 
 }
 
 /**
- * Distance along one axis at which a ray from an inside origin leaves the slab [min, max].
+ * Distance along the vertical at which a ray from an inside origin leaves the slab [min, max].
+ *
+ * The vertical is the one axis a camera field still bounds as a slab; the plan is bounded by
+ * blockers instead (see {@link createCameraField}).
  *
  * @returns `Infinity` when the direction component is about 0 (the ray never exits on it).
  */
