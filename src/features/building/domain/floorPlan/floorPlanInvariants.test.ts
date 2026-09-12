@@ -53,7 +53,7 @@ interface SectionJoin {
 
 /** Explicit join exceptions of ADR-005 / ADR-006, plus a default void-facing join for contrast. */
 const JOIN_EXCEPTIONS: readonly (readonly [SpaceId, SpaceId, number])[] = [
-  ['stairsElevator', 'corridor', NO_WALL],
+  ['stairs', 'corridor', NO_WALL],
   ['voidWest', 'balconySlabB', NO_WALL],
   ['voidEast', 'balconySlabB', NO_WALL],
   ['voidEast', 'utilityRoom', WALL_SPEC.partition],
@@ -70,18 +70,18 @@ const JOIN_EXCEPTIONS: readonly (readonly [SpaceId, SpaceId, number])[] = [
  */
 const EXPECTED_NEIGHBOURS: Readonly<Record<SpaceId, readonly SpaceId[]>> = {
   // x 1.30 → 1.60 along the whole A side.
-  balconyA: ['masterBedroom', 'stairsElevator', 'linkCorridor', 'controlCenter', 'voidWest'],
-  masterBedroom: ['balconyA', 'livingRoom', 'stairsElevator', 'corridor'],
+  balconyA: ['masterBedroom', 'stairs', 'linkCorridor', 'controlCenter', 'voidWest'],
+  masterBedroom: ['balconyA', 'livingRoom', 'stairs', 'corridor'],
   livingRoom: ['masterBedroom', 'bedroomMaleKids', 'corridor'],
   bedroomMaleKids: ['livingRoom', 'bedroomFemaleKids', 'corridor'],
   bedroomFemaleKids: ['bedroomMaleKids', 'corridor', 'utilityRoom'],
-  stairsElevator: ['balconyA', 'masterBedroom', 'corridor', 'linkCorridor'],
+  stairs: ['balconyA', 'masterBedroom', 'corridor', 'linkCorridor'],
   corridor: [
     'masterBedroom',
     'livingRoom',
     'bedroomMaleKids',
     'bedroomFemaleKids',
-    'stairsElevator',
+    'stairs',
     'linkCorridor',
     'guestRoom',
     'kitchen',
@@ -89,7 +89,7 @@ const EXPECTED_NEIGHBOURS: Readonly<Record<SpaceId, readonly SpaceId[]>> = {
     'mainSanitair',
     'utilityRoom',
   ],
-  linkCorridor: ['balconyA', 'stairsElevator', 'corridor', 'controlCenter', 'guestRoom'],
+  linkCorridor: ['balconyA', 'stairs', 'corridor', 'controlCenter', 'guestRoom'],
   controlCenter: ['balconyA', 'linkCorridor', 'guestRoom', 'voidWest'],
   guestRoom: ['corridor', 'linkCorridor', 'controlCenter', 'guestSanitair', 'kitchen', 'voidWest'],
   guestSanitair: ['guestRoom', 'kitchen', 'voidWest'],

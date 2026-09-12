@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { FLOOR_HEIGHTS } from './heights.ts';
 
+const PRECISION_DIGITS = 9;
 const EXPECTED_FLOOR_TO_FLOOR = 3.0;
 const EXPECTED_WALL = 2.7;
 const EXPECTED_DOOR = 2.1;
 const EXPECTED_RAILING = 1.1;
+const EXPECTED_WINDOW_SILL = 0.9;
+const EXPECTED_WINDOW_HEAD = 2.1;
+/** Vertical size of a window opening: 1.20 m everywhere (owner answer, ADR-006). */
+const WINDOW_HEIGHT = 1.2;
+const FLOOR_LEVEL = 0;
 const ALTERED_WALL_HEIGHT = 9;
 
 describe('heights', () => {
@@ -14,6 +20,8 @@ describe('heights', () => {
       wall: EXPECTED_WALL,
       door: EXPECTED_DOOR,
       railing: EXPECTED_RAILING,
+      windowSill: EXPECTED_WINDOW_SILL,
+      windowHead: EXPECTED_WINDOW_HEAD,
     });
   });
 
@@ -42,5 +50,23 @@ describe('heights', () => {
 
   it('leaves a positive slab and structure allowance above the walls', () => {
     expect(FLOOR_HEIGHTS.floorToFloor - FLOOR_HEIGHTS.wall).toBeGreaterThan(0);
+  });
+
+  it('spans one window height between the sill and the head', () => {
+    expect(FLOOR_HEIGHTS.windowHead - FLOOR_HEIGHTS.windowSill).toBeCloseTo(
+      WINDOW_HEIGHT,
+      PRECISION_DIGITS,
+    );
+  });
+
+  it('puts the window head at the door height as a separate field', () => {
+    expect(FLOOR_HEIGHTS.windowHead).toBe(FLOOR_HEIGHTS.door);
+    expect(Object.hasOwn(FLOOR_HEIGHTS, 'windowHead')).toBe(true);
+  });
+
+  it('keeps the window opening between the floor and the top of the walls', () => {
+    expect(FLOOR_HEIGHTS.windowSill).toBeGreaterThan(FLOOR_LEVEL);
+    expect(FLOOR_HEIGHTS.windowSill).toBeLessThan(FLOOR_HEIGHTS.windowHead);
+    expect(FLOOR_HEIGHTS.windowHead).toBeLessThan(FLOOR_HEIGHTS.wall);
   });
 });

@@ -85,7 +85,7 @@ describe('getJoinThickness', () => {
 
   describe('on FLOOR_PLAN', () => {
     it.each([
-      ['stairsElevator', 'corridor', NO_WALL],
+      ['stairs', 'corridor', NO_WALL],
       ['voidEast', 'utilityRoom', PARTITION_THICKNESS],
       ['kitchen', 'balconySlabB', VOID_FACING_THICKNESS],
     ] as const)('joins %s and %s with %s', (idA, idB, expected) => {

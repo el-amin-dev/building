@@ -14,6 +14,12 @@ const CAMERA_MODE_SEPARATOR = '·';
  * Exterior", or in the interior view the camera mode too, e.g. "View: Interior · Third
  * person", so switching the camera mode is announced as well.
  *
+ * Below the `sm` breakpoint the panel is tighter and the camera-mode half of the status line
+ * is `sr-only`, so the status and both toggles fit on one row instead of wrapping onto two
+ * and pushing the 3D view down the screen. Only the pixels change: the status keeps its whole
+ * wording, so the announcement is the same at every width, and the "Third person" toggle next
+ * to it shows the same camera mode to sighted users through its pressed state.
+ *
  * @returns The view mode toggle.
  */
 export function ViewModeToggle() {
@@ -23,16 +29,20 @@ export function ViewModeToggle() {
   const isInterior = viewMode === 'interior';
 
   return (
-    <div className="flex items-center gap-3 rounded-lg bg-slate-900 px-4 py-2 text-white shadow-lg">
+    <div className="flex items-center gap-2 rounded-lg bg-slate-900 px-2 py-1 text-white shadow-lg sm:gap-3 sm:px-4 sm:py-2">
       <p role="status" className="text-sm">
         {CURRENT_VIEW_PREFIX} <span className="font-semibold">{getViewModeLabel(viewMode)}</span>
-        {isInterior ? ` ${CAMERA_MODE_SEPARATOR} ${getInteriorCameraModeLabel(cameraMode)}` : null}
+        {isInterior ? (
+          <span className="sr-only sm:not-sr-only">
+            {` ${CAMERA_MODE_SEPARATOR} ${getInteriorCameraModeLabel(cameraMode)}`}
+          </span>
+        ) : null}
       </p>
       <button
         type="button"
         aria-pressed={isInterior}
         onClick={toggle}
-        className="cursor-pointer rounded-md bg-white px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-slate-200 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-amber-400 aria-pressed:bg-amber-300 aria-pressed:hover:bg-amber-200"
+        className="cursor-pointer rounded-md bg-white px-2 py-1 text-sm font-medium text-slate-900 hover:bg-slate-200 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-amber-400 aria-pressed:bg-amber-300 aria-pressed:hover:bg-amber-200 sm:px-3 sm:py-1.5"
       >
         {TOGGLE_LABEL}
       </button>

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { BASE_CHAMBER_SPEC, getClearRect, getWalkableBounds } from './chamber.ts';
 import { createInitialEyePose, EYE_NAVIGATION_CONFIG } from './eyeNavigation.ts';
 import type { EyePose } from './eyeNavigation.ts';
 import { FLOOR_HEIGHTS } from './heights.ts';
 import { PERSON_SPEC } from './person.ts';
+import { insetRect, makeRect } from './planGeometry.ts';
 import type { PlanRect } from './planGeometry.ts';
 import {
   createCameraRoomBox,
@@ -36,14 +36,29 @@ const LARGE_CLEAR_RECT: PlanRect = {
 };
 const LARGE_BOX = createCameraRoomBox(LARGE_CLEAR_RECT, LARGE_CEILING, MARGIN);
 
-/** Chamber-like box: 5.00 × 3.40 m clear under a 2.70 m wall, non-symmetric on the plan. */
-const CHAMBER_BOX = createCameraRoomBox(
-  getClearRect(BASE_CHAMBER_SPEC),
-  FLOOR_HEIGHTS.wall,
-  MARGIN,
+/** Half the sides of the test room: a 5.00 × 3.40 m clear rect, non-symmetric on the plan. */
+const ROOM_HALF_WIDTH = 2.5;
+const ROOM_HALF_DEPTH = 1.7;
+/**
+ * The room every pose of this file is built in: centred on the origin, on purpose.
+ *
+ * The poses below are written around the origin — a level pose at (0, 0), "back flat
+ * against the +z wall", "back to the max corner" — so the room they mean has to be centred
+ * there. Taking a room of the real floor plan instead (`interimWalkArea.ts`, in plan
+ * coordinates) would move every one of them into a corner of that room or outside it, which
+ * changes what the cases test without failing a single assertion. `createCameraRoomBox` is
+ * pure geometry, so where the rect sits on the plan is precisely what it must not depend on.
+ */
+const ROOM_CLEAR_RECT: PlanRect = makeRect(
+  -ROOM_HALF_WIDTH,
+  ROOM_HALF_WIDTH,
+  -ROOM_HALF_DEPTH,
+  ROOM_HALF_DEPTH,
 );
-/** Where the person may stand in the chamber: 0.25 m from every wall. */
-const WALKABLE_BOUNDS = getWalkableBounds(BASE_CHAMBER_SPEC, EYE_NAVIGATION_CONFIG.bodyRadius);
+/** Camera box of that room, under a 2.70 m wall. */
+const ROOM_BOX = createCameraRoomBox(ROOM_CLEAR_RECT, FLOOR_HEIGHTS.wall, MARGIN);
+/** Where the person may stand in it: 0.25 m from every wall. */
+const WALKABLE_BOUNDS = insetRect(ROOM_CLEAR_RECT, EYE_NAVIGATION_CONFIG.bodyRadius);
 const START_POSE = createInitialEyePose(WALKABLE_BOUNDS);
 
 const LOW_CEILING = 2.2;
@@ -268,7 +283,7 @@ describe('thirdPersonCamera', () => {
       ['-π/2', YAW_FACING_PLUS_X],
       ['π', YAW_FACING_PLUS_Z],
     ])('sits behind the person at yaw %s', (_label, yaw) => {
-      const camera = getThirdPersonCamera(pose({ yaw }), CHAMBER_BOX);
+      const camera = getThirdPersonCamera(pose({ yaw }), ROOM_BOX);
       const offsetX = camera.position.x - camera.target.x;
       const offsetZ = camera.position.z - camera.target.z;
       const forward = offsetX * -Math.sin(yaw) + offsetZ * -Math.cos(yaw);
@@ -281,7 +296,7 @@ describe('thirdPersonCamera', () => {
   });
 
   describe('getThirdPersonCamera wall pull-in', () => {
-    const { plan } = CHAMBER_BOX;
+    const { plan } = ROOM_BOX;
 
     it.each([
       ['+z', pose({ z: plan.maxZ - WALL_GAP, yaw: YAW_FACING_MINUS_Z }), 'z', plan.maxZ],
@@ -289,11 +304,11 @@ describe('thirdPersonCamera', () => {
       ['+x', pose({ x: plan.maxX - WALL_GAP, yaw: YAW_FACING_MINUS_X }), 'x', plan.maxX],
       ['-x', pose({ x: plan.minX + WALL_GAP, yaw: YAW_FACING_PLUS_X }), 'x', plan.minX],
     ] as const)('stops at the %s wall behind the person', (_side, start, axis, wall) => {
-      const camera = getThirdPersonCamera(start, CHAMBER_BOX);
+      const camera = getThirdPersonCamera(start, ROOM_BOX);
 
       expect(camera.distance).toBeLessThan(FOLLOW_DISTANCE);
       expect(camera.position[axis]).toBeCloseTo(wall, PRECISION_DIGITS);
-      expectInsideBox(camera, CHAMBER_BOX);
+      expectInsideBox(camera, ROOM_BOX);
     });
   });
 
@@ -302,14 +317,14 @@ describe('thirdPersonCamera', () => {
     const ROOM_AT_WALKING_LIMIT = EYE_NAVIGATION_CONFIG.bodyRadius - MARGIN;
 
     it('shows the person from the start pose, raised just enough', () => {
-      const camera = getThirdPersonCamera(START_POSE, CHAMBER_BOX);
-      const lowestVisible = Math.acos(planRoomBehind(START_POSE, CHAMBER_BOX) / VISIBLE_DISTANCE);
+      const camera = getThirdPersonCamera(START_POSE, ROOM_BOX);
+      const lowestVisible = Math.acos(planRoomBehind(START_POSE, ROOM_BOX) / VISIBLE_DISTANCE);
 
       expect(shouldHidePersonModel(camera)).toBe(false);
       expect(camera.distance).toBeGreaterThanOrEqual(VISIBLE_DISTANCE - TOLERANCE);
       expect(camera.elevation).toBeCloseTo(lowestVisible, PRECISION_DIGITS);
       expect(elevationOf(camera)).toBeCloseTo(lowestVisible, PRECISION_DIGITS);
-      expectInsideBox(camera, CHAMBER_BOX);
+      expectInsideBox(camera, ROOM_BOX);
     });
 
     it.each([
@@ -320,9 +335,9 @@ describe('thirdPersonCamera', () => {
     ] as const)(
       'shows the person with the back flat against the %s wall, from above and behind',
       (_side, start) => {
-        const camera = getThirdPersonCamera(start, CHAMBER_BOX);
+        const camera = getThirdPersonCamera(start, ROOM_BOX);
 
-        expect(planRoomBehind(start, CHAMBER_BOX)).toBeCloseTo(
+        expect(planRoomBehind(start, ROOM_BOX)).toBeCloseTo(
           ROOM_AT_WALKING_LIMIT,
           PRECISION_DIGITS,
         );
@@ -334,7 +349,7 @@ describe('thirdPersonCamera', () => {
         );
         expect(camera.elevation).toBeLessThanOrEqual(MAX_ELEVATION);
         expect(camera.position.y).toBeGreaterThan(camera.target.y);
-        expectInsideBox(camera, CHAMBER_BOX);
+        expectInsideBox(camera, ROOM_BOX);
         expectNotInFront(camera, start.yaw);
       },
     );
@@ -386,13 +401,13 @@ describe('thirdPersonCamera', () => {
 
     it('never gets closer as the person moves away from the wall behind', () => {
       const STEP = 0.01;
-      const { plan } = CHAMBER_BOX;
+      const { plan } = ROOM_BOX;
       let previous = 0;
       for (let z = plan.maxZ; z >= WALKABLE_BOUNDS.minZ; z -= STEP) {
-        const camera = getThirdPersonCamera(pose({ z, yaw: YAW_FACING_MINUS_Z }), CHAMBER_BOX);
+        const camera = getThirdPersonCamera(pose({ z, yaw: YAW_FACING_MINUS_Z }), ROOM_BOX);
 
         expect(camera.distance).toBeGreaterThanOrEqual(previous - TOLERANCE);
-        expectInsideBox(camera, CHAMBER_BOX);
+        expectInsideBox(camera, ROOM_BOX);
         previous = camera.distance;
       }
       expect(previous).toBe(FOLLOW_DISTANCE);
@@ -427,24 +442,24 @@ describe('thirdPersonCamera', () => {
     });
 
     it('stays level with the head, inside the room, when looking fully up', () => {
-      const camera = getThirdPersonCamera(pose({ pitch: MAX_PITCH }), CHAMBER_BOX);
+      const camera = getThirdPersonCamera(pose({ pitch: MAX_PITCH }), ROOM_BOX);
 
       expect(camera.position.y).toBeCloseTo(camera.target.y, PRECISION_DIGITS);
-      expectInsideBox(camera, CHAMBER_BOX);
+      expectInsideBox(camera, ROOM_BOX);
     });
   });
 
   it('stays inside the box on both plan axes in a corner', () => {
-    const { plan } = CHAMBER_BOX;
+    const { plan } = ROOM_BOX;
     const start = pose({
       x: plan.maxX - CORNER_GAP,
       z: plan.maxZ - CORNER_GAP,
       yaw: YAW_BACK_TO_MAX_CORNER,
     });
-    const camera = getThirdPersonCamera(start, CHAMBER_BOX);
+    const camera = getThirdPersonCamera(start, ROOM_BOX);
 
     expect(camera.distance).toBeLessThan(FOLLOW_DISTANCE);
-    expectInsideBox(camera, CHAMBER_BOX);
+    expectInsideBox(camera, ROOM_BOX);
   });
 
   describe('getThirdPersonCamera pitch to elevation', () => {
@@ -489,7 +504,7 @@ describe('thirdPersonCamera', () => {
       /** Number of equal yaw steps sampled across a full turn. */
       const YAW_SAMPLES = 16;
       const FULL_TURN = Math.PI + Math.PI;
-      const boxes = [CHAMBER_BOX, LOW_CEILING_BOX];
+      const boxes = [ROOM_BOX, LOW_CEILING_BOX];
       let lowestElevation = Number.POSITIVE_INFINITY;
       let lowestHeightAboveHead = Number.POSITIVE_INFINITY;
 
@@ -537,22 +552,19 @@ describe('thirdPersonCamera', () => {
       ['back flat against the +x wall', pose({ x: WALKABLE_BOUNDS.maxX, yaw: YAW_FACING_MINUS_X })],
       ['back flat against the -x wall', pose({ x: WALKABLE_BOUNDS.minX, yaw: YAW_FACING_PLUS_X })],
       ['back to the start corner', START_POSE],
-      [
-        'a wall 0.5 m behind',
-        pose({ z: CHAMBER_BOX.plan.maxZ - WALL_GAP, yaw: YAW_FACING_MINUS_Z }),
-      ],
+      ['a wall 0.5 m behind', pose({ z: ROOM_BOX.plan.maxZ - WALL_GAP, yaw: YAW_FACING_MINUS_Z })],
     ] as const)(
       'stays at or above the head, shows the person and moves smoothly: %s',
       (_label, start) => {
         let previous: ThirdPersonCamera | undefined;
         for (let step = 0; step <= LOOK_UP_STEPS; step += 1) {
           const pitch = (step / LOOK_UP_STEPS) * MAX_PITCH;
-          const camera = getThirdPersonCamera({ ...start, pitch }, CHAMBER_BOX);
+          const camera = getThirdPersonCamera({ ...start, pitch }, ROOM_BOX);
 
           expect(camera.position.y).toBeGreaterThanOrEqual(camera.target.y - TOLERANCE);
           expect(shouldHidePersonModel(camera)).toBe(false);
           expectNotInFront(camera, start.yaw);
-          expectInsideBox(camera, CHAMBER_BOX);
+          expectInsideBox(camera, ROOM_BOX);
           if (previous) {
             const movement = Math.hypot(
               camera.position.x - previous.position.x,
@@ -568,13 +580,13 @@ describe('thirdPersonCamera', () => {
   });
 
   it('clamps a target outside the box into it before following', () => {
-    const { plan } = CHAMBER_BOX;
+    const { plan } = ROOM_BOX;
     const outside = pose({ x: plan.maxX + OUTSIDE_OFFSET, z: plan.minZ - OUTSIDE_OFFSET });
-    const camera = getThirdPersonCamera(outside, CHAMBER_BOX);
+    const camera = getThirdPersonCamera(outside, ROOM_BOX);
 
     expect(camera.target.x).toBe(plan.maxX);
     expect(camera.target.z).toBe(plan.minZ);
-    expectInsideBox(camera, CHAMBER_BOX);
+    expectInsideBox(camera, ROOM_BOX);
   });
 
   it('never mutates the input pose', () => {
@@ -590,7 +602,7 @@ describe('thirdPersonCamera', () => {
     );
     const snapshot = { ...start };
 
-    getThirdPersonCamera(start, CHAMBER_BOX);
+    getThirdPersonCamera(start, ROOM_BOX);
 
     expect(start).toEqual(snapshot);
   });
@@ -625,10 +637,10 @@ describe('thirdPersonCamera', () => {
     });
 
     it('still hides the model when there is no room at all behind the person', () => {
-      const { plan } = CHAMBER_BOX;
+      const { plan } = ROOM_BOX;
       const camera = getThirdPersonCamera(
         pose({ z: plan.maxZ, yaw: YAW_FACING_MINUS_Z }),
-        CHAMBER_BOX,
+        ROOM_BOX,
       );
 
       expect(camera.distance).toBe(0);

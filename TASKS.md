@@ -93,21 +93,25 @@
 - depends-on: Part 1
 - exit: exterior view shows the full floor generated only from domain data; all hard access rules pass as tests
 
-- [ ] `domain/walls.ts` — wall segments from space edges at spec thickness, collinear merge + tests (wall area 42.52)
-- [ ] `domain/slabs.ts` — slabs for floor spaces only, none for the void + tests
-- [ ] `domain/ports` — `Port` model and full §6 schedule (0.90 doors, 3.50 living opening, entry via the stairs (no side-A door), link door 0.80, guest–kitchen door z 6.00–6.90 (ADR-006)) with Page-2 offsets
-- [ ] Tests: every port sits on a wall shared by its two spaces and fits inside it
-- [ ] Tests: laundry has no corridor door, utility exactly one door, master not on stairs, guest + control via link corridor
-- [ ] Tests: every floor space reachable from the stairs arrival point; voids unreachable
-- [ ] Split walls around ports with lintels up to wall height + tests
-- [ ] `domain/windows.ts` — windows on A/B-facing walls only, 1.20 × 1.20, sill 0.90 + test: none on C or D
-- [ ] `ui/SpaceModel.tsx` + `ui/FloorModel.tsx` — whole floor from the model, geometry merged per material
-- [ ] Test: every vertical size comes from `FLOOR_HEIGHTS`
-- [ ] Railings on the A balcony, balcony slab and void edges; void open to sky; TV panel facing the living opening
-- [ ] Stairs + elevator as blocked placeholder volumes; named material palette per space kind; owner to confirm the walkable arrival area in front of the volumes
-- [ ] Lighting: sun from side B, sky, per-room light (hemisphere fill, material dithering, horizon fog); Leva debug controls for sun and materials
-- [ ] Exterior orbit framed on the full floor + e2e screenshot baseline
+- [x] `domain/walls.ts` — wall cells from the plan grid at spec thickness, height classification (full height vs parapet, junctions take the greater), merged into maximal boxes + tests (wall footprint 42.52)
+- [x] `domain/slabs.ts` — slabs for floor spaces only, none for the void, thickness derived as floor-to-floor − wall (0.30) + tests
+- [x] `domain/ports` — `Port` model and full §6 schedule (0.90 doors, 3.50 living opening, entry via the stairs (no side-A door), link door 0.80, guest–kitchen door z 6.00–6.90 (ADR-006)) with Page-2 offsets
+- [x] Tests: every port sits on a wall shared by its two spaces and fits inside it
+- [x] Tests: laundry has no corridor door, utility exactly one door, master not on stairs, guest + control via link corridor
+- [x] Tests: every floor space reachable from the stairs arrival point; voids unreachable
+- [x] Split walls around ports with lintels up to wall height + tests
+- [x] `domain/windows.ts` — windows on A/B-facing walls only, 1.20 × 1.20, sill 0.90, centred in the longest run left by the doors + their jambs + test: none on C or D
+- [x] `ui/FloorModel.tsx` — whole floor from the model, one merged mesh per material (`ui/floorLayout.ts` buckets the solids, `ui/mergeBoxes.ts` + `ui/MergedBoxesMesh.tsx` bake them), composed into the scene by `ui/BuildingScene.tsx`; ceilings and light panels only in the interior view
+- [x] Test: every vertical size comes from `FLOOR_HEIGHTS` — `ui/floorLayout.test.ts` rebuilds the layout with injected heights (including noisy and off-grid ones) and checks every level moves with them
+- [x] `domain/railings.ts` — railings where a walkable surface meets the void with no wall (the two balcony-slab edges); the A balcony and the other void edges are parapets from `domain/walls.ts` instead (ADR-008) + tests
+- [x] `domain/tvPanel.ts` — TV panel on the corridor's south wall, derived from the corridor rather than drawn + tests
+- [x] Render the railings, the open-to-sky void and the TV panel in the scene — the void is a hole in the slabs, and the ground sits a storey below (−3.30 m) and darkened so it reads as a shaft (ADR-008)
+- [x] `domain/stairs.ts` — dog-leg stairs with 17 real risers, no elevator, blocked flight area, walkable landing, arrival (4.65, 4.65) facing the corridor confirmed by the owner; `ui/floorMaterials.ts` named material palette per surface family and space kind (ADR-008) + tests
+- [x] Lighting: sun from side B, sky background, per-room light as emissive ceiling panels, hemisphere fill, material dithering, horizon fog (`ui/lightingSpec.ts`, `ui/SceneLighting.tsx`, `ui/floorMaterials.ts`); Leva `Sun` and `Sky` folders as view-independent factor overrides (ADR-009) — no material controls: the palette stays data, changed in code
+- [x] Exterior orbit framed on the full floor — eight box corners fitted to the frustum, 21.56 m at 16:9 with the frame 0.69 filled, fed to camera and lighting by `ui/useExteriorFraming.ts` — plus e2e screenshot baselines of the exterior frame and the interior start pose (`tests/e2e/exterior.spec.ts`; `updateSnapshots: 'none'` on CI)
 - [ ] DoD gate → PR merged
+
+> Note: the planned `ui/SpaceModel.tsx` (one component per space) was deliberately dropped. Boxes sharing a material are baked into one merged geometry instead (`ui/mergeBoxes.ts`, `ui/MergedBoxesMesh.tsx`), so the floor costs one draw call per material rather than one per space (ADR-008).
 
 ## Part 3 — Explore: navigation, accessibility, room awareness
 
@@ -119,9 +123,9 @@
 - [ ] Walkable area = slabs; void edges and blocked volumes stop movement; doorways pass only if wider than the body + tests
 - [ ] `stepEyePose` uses floor collision instead of the single-chamber clamp; third-person camera pull-in uses the same wall collision
 - [ ] `getCurrentSpace(pose)` and HUD room name in a polite live region + tests
-- [ ] Interior start pose at the stairs arrival point (position agreed with the owner alongside the Part 2 stairs volumes), facing the corridor
+- [ ] Interior start pose at the stairs arrival point (position agreed with the owner alongside the Part 2 stairs volumes), facing the corridor — replaces the interim pose Part 2 ships: the centre of the master bedroom, (4.10, 2.00) facing the balcony-A doorway (`createRoomCentrePose`, ADR-008)
 - [ ] Exterior orbit keyboard controls (rotate, tilt, zoom), scoped to the focused view + tests
-- [ ] On-screen hold-to-act move / turn / look buttons (WCAG 2.5.7) + tests
+- [x] On-screen hold-to-act move / turn / look buttons (WCAG 2.5.7) + tests — **delivered early in Part 2** (`ui/RemoteControl.tsx`, `application/remoteControlStore.ts`, `tests/e2e/remoteControl.spec.ts`, ADR-008)
 - [ ] "Go to room" menu operable by keyboard and single click + tests
 - [ ] Animated exterior ↔ interior transitions, instant under `prefers-reduced-motion`
 - [ ] SVG minimap from the model with position and heading; select a room to jump there + tests

@@ -77,7 +77,7 @@ const SPACES: readonly Space[] = Object.freeze([
   defineSpace('bedroomMaleKids', 'Bedroom — male kids', 'room', [[12.0, 17.0, 0.3, 3.7]]),
   defineSpace('bedroomFemaleKids', 'Bedroom — female kids', 'room', [[17.2, 22.2, 0.3, 3.7]]),
   // Brief §4.2: circulation; stairs continuous with the corridor.
-  defineSpace('stairsElevator', 'Stairs + elevator', 'circulation', [[1.6, 5.3, 3.9, 5.4]]),
+  defineSpace('stairs', 'Stairs', 'circulation', [[1.6, 5.3, 3.9, 5.4]]),
   defineSpace('corridor', 'Corridor', 'circulation', [[5.3, 20.2, 3.9, 5.4]]),
   defineSpace('linkCorridor', 'Link corridor', 'circulation', [[1.6, 7.0, 5.6, 6.5]]),
   // Brief §4.3: service row (B side).
@@ -108,7 +108,7 @@ const SPACES: readonly Space[] = Object.freeze([
 /** Joins whose wall thickness deviates from the kind-based default. */
 const JOIN_OVERRIDES: readonly JoinOverride[] = Object.freeze([
   defineJoinOverride(
-    'stairsElevator',
+    'stairs',
     'corridor',
     NO_WALL,
     'Stairs are continuous with the corridor, no wall (brief §4.2).',

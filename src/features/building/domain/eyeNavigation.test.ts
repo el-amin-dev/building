@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   createInitialEyePose,
+  createRoomCentrePose,
+  EYE_ACTIONS,
   EYE_KEY_BINDINGS,
   EYE_NAVIGATION_CONFIG,
+  getIntentFromActions,
   getMovementIntent,
   isEyeNavigationKey,
   stepEyePose,
 } from './eyeNavigation.ts';
-import type { EyePose, MovementIntent } from './eyeNavigation.ts';
+import type { EyeAction, EyePose, MovementIntent } from './eyeNavigation.ts';
 import type { PlanRect } from './planGeometry.ts';
 
 const HALF_EXTENT = 5;
@@ -24,7 +27,7 @@ const NEAR_EDGE = HALF_EXTENT - 0.01;
 const IDLE: MovementIntent = { move: 0, strafe: 0, turn: 0, look: 0 };
 const ORIGIN_POSE: EyePose = { x: 0, z: 0, yaw: 0, pitch: 0 };
 
-/** Walkable bounds of the base chamber: 5.00 × 3.40 m clear shrunk by 0.25 m. */
+/** Walkable bounds of a 5.00 × 3.40 m room: its clear rect shrunk by the 0.25 m body radius. */
 const BASE_WALKABLE_HALF_WIDTH = 2.25;
 const BASE_WALKABLE_HALF_DEPTH = 1.45;
 const BASE_WALKABLE_BOUNDS: PlanRect = {
@@ -50,7 +53,57 @@ function displacement(from: EyePose, to: EyePose): number {
   return Math.hypot(to.x - from.x, to.z - from.z);
 }
 
+/** An action that does not exist, as an on-screen control could send it by mistake. */
+const UNKNOWN_ACTION = 'jump' as unknown as EyeAction;
+
+/** The intent of one action alone, per action. */
+const SINGLE_ACTION_CASES = [
+  ['moveForward', { move: 1 }],
+  ['moveBackward', { move: -1 }],
+  ['strafeRight', { strafe: 1 }],
+  ['strafeLeft', { strafe: -1 }],
+  ['turnLeft', { turn: 1 }],
+  ['turnRight', { turn: -1 }],
+  ['lookUp', { look: 1 }],
+  ['lookDown', { look: -1 }],
+] as const satisfies ReadonlyArray<readonly [EyeAction, Partial<MovementIntent>]>;
+
+/** The opposite pairs, one per navigation axis. */
+const OPPOSITE_ACTION_CASES = [
+  ['moveForward', 'moveBackward'],
+  ['strafeLeft', 'strafeRight'],
+  ['turnLeft', 'turnRight'],
+  ['lookUp', 'lookDown'],
+] as const satisfies ReadonlyArray<readonly [EyeAction, EyeAction]>;
+
 describe('eyeNavigation', () => {
+  describe('EYE_ACTIONS', () => {
+    it('lists every navigation action', () => {
+      expect(EYE_ACTIONS).toEqual([
+        'moveForward',
+        'moveBackward',
+        'strafeLeft',
+        'strafeRight',
+        'turnLeft',
+        'turnRight',
+        'lookUp',
+        'lookDown',
+      ]);
+    });
+
+    it('is frozen', () => {
+      expect(Object.isFrozen(EYE_ACTIONS)).toBe(true);
+    });
+
+    it('holds no duplicate', () => {
+      expect(new Set(EYE_ACTIONS).size).toBe(EYE_ACTIONS.length);
+    });
+
+    it('covers exactly the actions the keys are bound to', () => {
+      expect(new Set(Object.values(EYE_KEY_BINDINGS))).toEqual(new Set(EYE_ACTIONS));
+    });
+  });
+
   describe('key bindings', () => {
     it('maps every physical key to its action', () => {
       expect(EYE_KEY_BINDINGS).toEqual({
@@ -115,6 +168,81 @@ describe('eyeNavigation', () => {
     });
   });
 
+  describe('getIntentFromActions', () => {
+    it.each(SINGLE_ACTION_CASES)('derives the intent of %s alone', (action, expected) => {
+      expect(getIntentFromActions([action])).toEqual(intent(expected));
+    });
+
+    it.each(OPPOSITE_ACTION_CASES)('cancels %s against %s', (first, second) => {
+      expect(getIntentFromActions([first, second])).toEqual(IDLE);
+      expect(getIntentFromActions([second, first])).toEqual(IDLE);
+    });
+
+    it('ignores unknown actions', () => {
+      expect(getIntentFromActions([UNKNOWN_ACTION, 'moveForward'])).toEqual(intent({ move: 1 }));
+    });
+
+    it.each([
+      ['an empty array', [] as readonly EyeAction[]],
+      ['an empty set', new Set<EyeAction>()],
+    ] as const)('is idle for %s', (_label, actions) => {
+      expect(getIntentFromActions(actions)).toEqual(IDLE);
+    });
+
+    it('counts a repeated action once', () => {
+      expect(getIntentFromActions(['turnLeft', 'turnLeft'])).toEqual(intent({ turn: 1 }));
+    });
+
+    it('combines actions across every axis', () => {
+      expect(getIntentFromActions(['moveForward', 'strafeRight', 'turnLeft', 'lookDown'])).toEqual({
+        move: 1,
+        strafe: 1,
+        turn: 1,
+        look: -1,
+      });
+    });
+
+    it.each(SINGLE_ACTION_CASES)('agrees with the key bound to %s', (action) => {
+      const code = Object.keys(EYE_KEY_BINDINGS).find((key) => EYE_KEY_BINDINGS[key] === action);
+      expect(code).toBeDefined();
+      expect(getIntentFromActions([action])).toEqual(getMovementIntent(new Set([code ?? ''])));
+    });
+  });
+
+  describe('getMovementIntent with actions from another input', () => {
+    it('is idle when neither input asks for anything', () => {
+      expect(getMovementIntent(new Set(), [])).toEqual(IDLE);
+    });
+
+    it('unions the held keys and the held actions', () => {
+      expect(getMovementIntent(new Set(['KeyW']), ['turnLeft'])).toEqual(
+        intent({ move: 1, turn: 1 }),
+      );
+    });
+
+    it('cancels a key against the opposite action', () => {
+      expect(getMovementIntent(new Set(['KeyW']), ['moveBackward'])).toEqual(IDLE);
+      expect(getMovementIntent(new Set(['KeyJ']), ['turnRight'])).toEqual(IDLE);
+    });
+
+    it('counts an action asked for by both inputs once', () => {
+      expect(getMovementIntent(new Set(['KeyW']), ['moveForward'])).toEqual(intent({ move: 1 }));
+    });
+
+    it('takes the actions alone when no key is held', () => {
+      expect(getMovementIntent(new Set(), ['lookUp'])).toEqual(intent({ look: 1 }));
+    });
+
+    it('ignores unknown codes and unknown actions alike', () => {
+      expect(getMovementIntent(new Set(['KeyQ', 'toString']), [UNKNOWN_ACTION])).toEqual(IDLE);
+    });
+
+    it('accepts a set of actions, as the remote control store holds them', () => {
+      const held: ReadonlySet<EyeAction> = new Set<EyeAction>(['strafeLeft']);
+      expect(getMovementIntent(new Set(['KeyW']), held)).toEqual(intent({ move: 1, strafe: -1 }));
+    });
+  });
+
   describe('createInitialEyePose', () => {
     const NON_DEGENERATE_CASES = [
       ['the base walkable bounds', BASE_WALKABLE_BOUNDS],
@@ -160,6 +288,89 @@ describe('eyeNavigation', () => {
     it('returns a fresh object on each call', () => {
       const first = createInitialEyePose(BASE_WALKABLE_BOUNDS);
       const second = createInitialEyePose(BASE_WALKABLE_BOUNDS);
+      expect(second).not.toBe(first);
+      expect(second).toEqual(first);
+    });
+  });
+
+  describe('createRoomCentrePose', () => {
+    /** Bounds wider than deep, so their longer axis is x. */
+    const TOWARD_MINUS_X_CASES = [
+      ['the base walkable bounds', BASE_WALKABLE_BOUNDS],
+      ['off-centre bounds', OFFSET_BOUNDS],
+      ['bounds with zero depth', SHALLOW_BOUNDS],
+    ] as const;
+    /** Deeper than wide: 2.00 m across, 6.00 m along z. */
+    const DEEP_BOUNDS: PlanRect = { minX: 2, maxX: 4, minZ: -1, maxZ: 5 };
+    /** As wide as it is deep: no longer axis to prefer. */
+    const SQUARE_BOUNDS: PlanRect = { minX: 0, maxX: 3, minZ: 1, maxZ: 4 };
+    const TOWARD_MINUS_Z_CASES = [
+      ['deeper bounds', DEEP_BOUNDS],
+      ['square bounds', SQUARE_BOUNDS],
+      ['bounds with zero width', THIN_BOUNDS],
+      ['degenerate bounds', DEGENERATE_BOUNDS],
+    ] as const;
+    const ALL_CASES = [...TOWARD_MINUS_X_CASES, ...TOWARD_MINUS_Z_CASES] as const;
+    const QUARTER_TURN = Math.PI / 2;
+
+    it.each(ALL_CASES)('stands level in the centre of %s', (_label, bounds) => {
+      const start = createRoomCentrePose(bounds);
+
+      expect(start.x).toBeCloseTo((bounds.minX + bounds.maxX) / 2);
+      expect(start.z).toBeCloseTo((bounds.minZ + bounds.maxZ) / 2);
+      expect(start.pitch).toBe(0);
+      expect(start.yaw).toBeGreaterThan(-Math.PI);
+      expect(start.yaw).toBeLessThanOrEqual(Math.PI);
+    });
+
+    it.each(ALL_CASES)('stays inside %s, so no clamping is needed', (_label, bounds) => {
+      const start = createRoomCentrePose(bounds);
+
+      expect(start.x).toBeGreaterThanOrEqual(bounds.minX);
+      expect(start.x).toBeLessThanOrEqual(bounds.maxX);
+      expect(start.z).toBeGreaterThanOrEqual(bounds.minZ);
+      expect(start.z).toBeLessThanOrEqual(bounds.maxZ);
+    });
+
+    // The forward vector is asserted, not assumed: it is the module's (−sin yaw, −cos yaw).
+    it.each(TOWARD_MINUS_X_CASES)('looks toward -x from %s, wider than deep', (_label, bounds) => {
+      const { yaw } = createRoomCentrePose(bounds);
+
+      expect(yaw).toBeCloseTo(QUARTER_TURN);
+      expect(-Math.sin(yaw)).toBeCloseTo(-1);
+      expect(-Math.cos(yaw)).toBeCloseTo(0);
+    });
+
+    it.each(TOWARD_MINUS_Z_CASES)('looks toward -z from %s', (_label, bounds) => {
+      const { yaw } = createRoomCentrePose(bounds);
+
+      expect(yaw).toBe(0);
+      expect(-Math.sin(yaw)).toBeCloseTo(0);
+      expect(-Math.cos(yaw)).toBeCloseTo(-1);
+    });
+
+    it('walks along the longer axis when it steps forward from the centre', () => {
+      const start = createRoomCentrePose(BASE_WALKABLE_BOUNDS);
+
+      const next = stepEyePose(start, intent({ move: 1 }), STEP, BASE_WALKABLE_BOUNDS);
+
+      expect(next.x).toBeCloseTo(start.x - EYE_NAVIGATION_CONFIG.walkSpeed * STEP);
+      expect(next.z).toBeCloseTo(start.z);
+    });
+
+    it('leaves the corner pose of createInitialEyePose untouched', () => {
+      const centre = createRoomCentrePose(BASE_WALKABLE_BOUNDS);
+      const corner = createInitialEyePose(BASE_WALKABLE_BOUNDS);
+
+      expect(corner.x).toBe(BASE_WALKABLE_BOUNDS.maxX);
+      expect(corner.z).toBe(BASE_WALKABLE_BOUNDS.maxZ);
+      expect(centre).not.toEqual(corner);
+    });
+
+    it('returns a fresh object on each call', () => {
+      const first = createRoomCentrePose(BASE_WALKABLE_BOUNDS);
+      const second = createRoomCentrePose(BASE_WALKABLE_BOUNDS);
+
       expect(second).not.toBe(first);
       expect(second).toEqual(first);
     });

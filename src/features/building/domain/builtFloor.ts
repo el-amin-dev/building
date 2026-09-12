@@ -1,0 +1,118 @@
+/**
+ * The whole floor, built once: one entry point the renderer can consume.
+ *
+ * Part 2 models the floor module by module — the plan (ADR-005), the ports
+ * (ADR-006), the windows, the walls, the slabs, the railings, the stairs and the
+ * television panel. Each of those is a pure function of the plan and the vertical
+ * sizes, and each is independent of the others except for one ordering: the wall
+ * generator needs the holes before it can leave them out, so the ports and the
+ * windows must be resolved first and handed to it.
+ *
+ * This module is that single composition and nothing more. No geometry rule lives
+ * here: every coordinate of a {@link BuiltFloor} is produced by the module that
+ * owns it, so a rule changes in one place and this file never moves. What it does
+ * add is the order and the one-off validation:
+ *
+ * 1. the port schedule is validated against the plan (`validatePorts`), so an
+ *    unusable door is rejected here rather than silently missing a hole later;
+ * 2. the windows are derived from the plan and the validated schedule, which is
+ *    what keeps them clear of the doors (`windows.ts`, ADR-006);
+ * 3. {@link BuiltFloor.openings} lists the port openings first, in schedule
+ *    order, then the window openings, in window order;
+ * 4. the walls are cut from that list, so every door and every window really
+ *    holes its wall and keeps a threshold or a sill below and a lintel above
+ *    (brief §2, §8).
+ *
+ * Every vertical level of the result comes from the `heights` argument alone
+ * (`heights.ts`, ADR-006) and every plan coordinate from the `plan` argument, so
+ * injecting other sizes moves the whole floor together. Nothing is memoised: the
+ * renderer calls this once at module level, and a cache keyed on three object
+ * arguments would be a correctness risk for no gain.
+ *
+ * Pure geometry, in metres, with the plan conventions of `floorPlan/types.ts`: no
+ * React, no three, nothing mutated.
+ */
+
+import { FLOOR_PLAN } from './floorPlan/index.ts';
+import type { FloorPlan } from './floorPlan/index.ts';
+import { FLOOR_HEIGHTS } from './heights.ts';
+import type { FloorHeights } from './heights.ts';
+import type { PlanBox } from './planBox.ts';
+import { PORT_SCHEDULE, getPortOpening, validatePorts } from './ports/index.ts';
+import type { Port } from './ports/index.ts';
+import { getRailings } from './railings.ts';
+import type { Railing } from './railings.ts';
+import { getSlabs } from './slabs.ts';
+import type { FloorSlab } from './slabs.ts';
+import { getStairsLayout } from './stairs.ts';
+import type { StairsLayout } from './stairs.ts';
+import { getTvPanel } from './tvPanel.ts';
+import { getWallPieces } from './walls.ts';
+import { getWindows } from './windows.ts';
+import type { FloorWindow } from './windows.ts';
+
+/** Every solid of one storey, as the renderer needs it. */
+export interface BuiltFloor {
+  /** The solid wall blocks, with every opening punched out (`walls.ts`, brief §2). */
+  readonly walls: readonly PlanBox[];
+  /** The slab under every space that has a floor (`slabs.ts`, brief §8). */
+  readonly slabs: readonly FloorSlab[];
+  /** The guard railings closing the fall edges of the side-B strip (`railings.ts`). */
+  readonly railings: readonly Railing[];
+  /** The windows of the floor, each with the hole it cuts (`windows.ts`, ADR-006). */
+  readonly windows: readonly FloorWindow[];
+  /** The dog-leg stairs: flights, half-landing, landing and arrival (`stairs.ts`, brief §4.2). */
+  readonly stairs: StairsLayout;
+  /** The television panel of the lounge (`tvPanel.ts`, brief §4.1). */
+  readonly tvPanel: PlanBox;
+  /**
+   * Every hole fed to the wall generator: the port openings in schedule order,
+   * then the window openings in window order. Doors run from the finished floor
+   * to `heights.door`, windows from `heights.windowSill` to `heights.windowHead`.
+   */
+  readonly openings: readonly PlanBox[];
+}
+
+/**
+ * Builds the whole floor from a plan, a port schedule and a set of vertical
+ * sizes.
+ *
+ * The schedule is validated against the plan before anything is derived from it,
+ * then the windows, then the openings, then the walls that those openings hole;
+ * the slabs, the railings, the stairs and the television panel depend on the plan
+ * and the heights alone and are read straight from their modules.
+ *
+ * @param plan - The floor plan to build; defaults to `FLOOR_PLAN`. Not mutated.
+ * @param ports - The port schedule of that plan; defaults to `PORT_SCHEDULE`.
+ *   Not mutated.
+ * @param heights - Vertical sizes of the floor, in metres; defaults to
+ *   `FLOOR_HEIGHTS`. Every level of the result comes from this argument.
+ * @returns A frozen {@link BuiltFloor} whose arrays and members are frozen by the
+ *   modules that build them.
+ * @throws RangeError from the module that rejects the input: `validatePorts` for
+ *   a port that does not sit in exactly one wall contact with a wall to cut,
+ *   `getWallPieces` for a wall junction of unknown height, `getSlabs` for heights
+ *   that leave no slab thickness, `getStairsLayout` for a stairs bay that cannot
+ *   hold the flights, `getTvPanel` for a corridor that cannot host the panel.
+ */
+export function getBuiltFloor(
+  plan: FloorPlan = FLOOR_PLAN,
+  ports: readonly Port[] = PORT_SCHEDULE,
+  heights: FloorHeights = FLOOR_HEIGHTS,
+): BuiltFloor {
+  const validated = validatePorts(plan, ports);
+  const windows = getWindows(plan, validated, heights);
+  const openings: readonly PlanBox[] = Object.freeze([
+    ...validated.map((port) => getPortOpening(plan, port, heights)),
+    ...windows.map((window) => window.opening),
+  ]);
+  return Object.freeze({
+    walls: getWallPieces(plan, openings, heights),
+    slabs: getSlabs(plan, heights),
+    railings: getRailings(plan, heights),
+    windows,
+    stairs: getStairsLayout(plan, heights),
+    tvPanel: getTvPanel(plan, heights),
+    openings,
+  });
+}
