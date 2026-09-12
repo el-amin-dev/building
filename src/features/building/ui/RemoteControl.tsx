@@ -20,6 +20,9 @@ const WINDOW_POINTER_CANCEL_EVENT = 'pointercancel';
  * release what that pointer was holding. The ledger is what makes that possible: the button
  * writes its action down on `pointerdown` and takes it back out on release, and the
  * window-level net looks the lifted pointer up instead of releasing everything.
+ *
+ * The ledger — never the element an event landed on — is the authority on what a pointer
+ * holds, and several entries may name the same action (two fingers on one button).
  */
 type HeldPointers = Map<number, EyeAction>;
 
@@ -87,6 +90,43 @@ function capturePointer(button: HTMLButtonElement, pointerId: number): void {
   button.setPointerCapture(pointerId);
 }
 
+/**
+ * Tells whether any pointer left in the ledger holds `action`.
+ *
+ * @param held - The pad's ledger of pressing pointers.
+ * @param action - The action to look for.
+ * @returns `true` while at least one entry names it.
+ */
+function isActionStillHeld(held: HeldPointers, action: EyeAction): boolean {
+  for (const heldAction of held.values()) {
+    if (heldAction === action) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Takes one pointer out of the ledger and reports the action that is now free, if any.
+ *
+ * Two fingers may press the same button, and the store holds a set of actions rather than a
+ * count, so the action is freed by the last finger, not the first: while another entry still
+ * names it, nothing is released and the button stays pressed.
+ *
+ * @param held - The pad's ledger of pressing pointers.
+ * @param pointerId - `PointerEvent.pointerId` of the pointer whose hold is ending.
+ * @returns The action to release, or `undefined` when the pointer held nothing or another
+ *   pointer still holds what it was holding.
+ */
+function takePointerHold(held: HeldPointers, pointerId: number): EyeAction | undefined {
+  const action = held.get(pointerId);
+  if (action === undefined) {
+    return undefined;
+  }
+  held.delete(pointerId);
+  return isActionStillHeld(held, action) ? undefined : action;
+}
+
 /** Moves focus back to the 3D view region, so the navigation keys keep working. */
 function focusInteriorRegion(): void {
   document.getElementById(INTERIOR_REGION_ID)?.focus();
@@ -124,9 +164,24 @@ function RemoteButton({ action, label, glyph, heldPointers }: RemoteButtonProps)
     capturePointer(event.currentTarget, event.pointerId);
   };
 
+  /**
+   * Ends this button's hold for the lifting pointer: `pointerup`, `pointercancel` or a lost
+   * capture.
+   *
+   * The ledger decides whose hold this is, not the element the event landed on. Where pointer
+   * capture is unavailable or lost (jsdom, older WebViews, an element removed mid-gesture) a
+   * finger that slid off the button it pressed lifts over a neighbour, and that neighbour must
+   * leave the pointer completely alone — its ledger entry included — or the window-level net
+   * would find nothing to release and the first button would stay held forever.
+   */
   const handlePointerRelease = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    heldPointers.current.delete(event.pointerId);
-    releaseAction(action);
+    if (heldPointers.current.get(event.pointerId) !== action) {
+      return;
+    }
+    const freedAction = takePointerHold(heldPointers.current, event.pointerId);
+    if (freedAction !== undefined) {
+      releaseAction(freedAction);
+    }
     focusInteriorRegion();
   };
 
@@ -144,7 +199,18 @@ function RemoteButton({ action, label, glyph, heldPointers }: RemoteButtonProps)
     releaseAction(action);
   };
 
+  /**
+   * Ends a hold whose end this button would otherwise never see: focus leaves while a key is
+   * down, so no `keyup` will arrive here.
+   *
+   * A pointer hold is not bound to focus, though — a finger may still be pressing this very
+   * button, and handing focus back to the 3D view blurs it — so an action the ledger still
+   * holds is left to its own release route.
+   */
   const handleBlur = () => {
+    if (isActionStillHeld(heldPointers.current, action)) {
+      return;
+    }
     releaseAction(action);
   };
 
@@ -183,8 +249,11 @@ function RemoteButton({ action, label, glyph, heldPointers }: RemoteButtonProps)
  *
  * The window-level pointer net releases only what the lifted pointer itself was holding,
  * looked up in {@link HeldPointers}: walking while turning is two fingers on two buttons,
- * and lifting one of them may not stop the other. `blur`, a view change and unmounting are
- * the genuine "everything stops" cases, so those do release every action at once.
+ * and lifting one of them may not stop the other. Every per-button release is checked against
+ * the ledger the same way, so a pointer the ledger attributes to another button is left to
+ * that button and to the window net; and an action two pointers hold at once ends with the
+ * last of them. `blur`, a view change and unmounting are the genuine "everything stops"
+ * cases, so those do release every action at once.
  *
  * Below the `sm` breakpoint the pad takes itself out of the HUD stack (`fixed`) and anchors to
  * the bottom of the screen, full width and centred: within thumb reach, and no longer stacked
@@ -216,14 +285,15 @@ export function RemoteControl() {
       return undefined;
     }
 
-    /** Releases the action of the pointer that is lifting, and nothing else. */
+    /**
+     * Releases the action of the pointer that is lifting, and nothing else — and only once no
+     * other pointer still holds that same action.
+     */
     const releasePointer = (event: PointerEvent) => {
-      const action = held.get(event.pointerId);
-      if (action === undefined) {
-        return;
+      const freedAction = takePointerHold(held, event.pointerId);
+      if (freedAction !== undefined) {
+        releaseAction(freedAction);
       }
-      held.delete(event.pointerId);
-      releaseAction(action);
     };
 
     window.addEventListener(WINDOW_BLUR_EVENT, releaseAll);

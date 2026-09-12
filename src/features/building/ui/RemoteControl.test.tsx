@@ -40,6 +40,34 @@ function activeActions(): ReadonlySet<EyeAction> {
   return useRemoteControlStore.getState().activeActions;
 }
 
+/** Every press and release the pad asked the store for, in order. */
+interface ActionLog {
+  readonly pressed: EyeAction[];
+  readonly released: EyeAction[];
+}
+
+/**
+ * Starts logging the store calls the pad makes, to tell one release from two and a real
+ * release from a no-op on an action that was never held. Call before rendering.
+ *
+ * @returns The log, filled in as the pad presses and releases.
+ */
+function recordActionCalls(): ActionLog {
+  const log: ActionLog = { pressed: [], released: [] };
+  const { pressAction, releaseAction } = useRemoteControlStore.getState();
+  useRemoteControlStore.setState({
+    pressAction: (action) => {
+      log.pressed.push(action);
+      pressAction(action);
+    },
+    releaseAction: (action) => {
+      log.released.push(action);
+      releaseAction(action);
+    },
+  });
+  return log;
+}
+
 function getButton(name: string): HTMLElement {
   return screen.getByRole('button', { name });
 }
@@ -260,6 +288,109 @@ describe('RemoteControl', () => {
 
     expect(activeActions().size).toBe(0);
     expect(turnLeft).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('releases what the pointer really holds when the finger slides onto another button', () => {
+    toggleView();
+    const log = recordActionCalls();
+    render(<RemoteControl />);
+
+    // Without pointer capture (jsdom, older WebViews), a finger that slid off "Turn left"
+    // lifts over its neighbour, whose own release must not swallow the pointer.
+    fireEvent.pointerDown(getButton('Turn left'), { pointerId: FIRST_POINTER_ID });
+    fireEvent.pointerUp(getButton('Move forward'), { pointerId: FIRST_POINTER_ID });
+
+    expect(log.pressed).toEqual(['turnLeft']);
+    expect(log.released).toEqual(['turnLeft']);
+    expect(activeActions().size).toBe(0);
+    expect(getButton('Turn left')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('leaves a pointer another button holds in the ledger', () => {
+    toggleView();
+    render(<RemoteControl />);
+    const turnLeft = getButton('Turn left');
+
+    fireEvent.pointerDown(turnLeft, { pointerId: FIRST_POINTER_ID });
+    // A capture lost on a button this pointer never pressed: not that button's hold to end.
+    fireEvent.lostPointerCapture(getButton('Move forward'), { pointerId: FIRST_POINTER_ID });
+
+    expect(activeActions()).toEqual(new Set(['turnLeft']));
+    expect(turnLeft).toHaveAttribute('aria-pressed', 'true');
+
+    // The entry survived, so the pointer's own release still ends the turn.
+    fireEvent.pointerUp(document.body, { pointerId: FIRST_POINTER_ID });
+
+    expect(activeActions().size).toBe(0);
+    expect(turnLeft).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('keeps a button held while a second finger is still pressing it', () => {
+    toggleView();
+    render(<RemoteControl />);
+    const forward = getButton('Move forward');
+
+    fireEvent.pointerDown(forward, { pointerId: FIRST_POINTER_ID });
+    fireEvent.pointerDown(forward, { pointerId: SECOND_POINTER_ID });
+
+    fireEvent.pointerUp(forward, { pointerId: FIRST_POINTER_ID });
+    expect(activeActions()).toEqual(new Set(['moveForward']));
+    expect(forward).toHaveAttribute('aria-pressed', 'true');
+
+    fireEvent.pointerUp(forward, { pointerId: SECOND_POINTER_ID });
+    expect(activeActions().size).toBe(0);
+    expect(forward).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('keeps a finger hold when focus leaves the button', () => {
+    toggleView();
+    renderWithRegion();
+    const forward = getButton('Move forward');
+    act(() => {
+      forward.focus();
+    });
+
+    // Handing focus back to the 3D view blurs the button while the finger is still down.
+    fireEvent.pointerDown(forward, { pointerId: FIRST_POINTER_ID });
+    fireEvent.blur(forward);
+
+    expect(activeActions()).toEqual(new Set(['moveForward']));
+    expect(forward).toHaveAttribute('aria-pressed', 'true');
+
+    fireEvent.pointerUp(forward, { pointerId: FIRST_POINTER_ID });
+    expect(activeActions().size).toBe(0);
+  });
+
+  it('clears the whole ledger when the view leaves the interior with two fingers down', () => {
+    toggleView();
+    render(<RemoteControl />);
+    const forward = getButton('Move forward');
+    fireEvent.pointerDown(forward, { pointerId: FIRST_POINTER_ID });
+    fireEvent.pointerDown(forward, { pointerId: SECOND_POINTER_ID });
+    expect(activeActions().size).toBe(1);
+
+    toggleView();
+    expect(activeActions().size).toBe(0);
+
+    // Back inside, the forgotten pointers release nothing: the ledger was emptied too.
+    toggleView();
+    fireEvent.pointerDown(getButton('Turn left'), { pointerId: SECOND_POINTER_ID });
+    fireEvent.pointerUp(document.body, { pointerId: FIRST_POINTER_ID });
+
+    expect(activeActions()).toEqual(new Set(['turnLeft']));
+  });
+
+  it('releases a doubly held action when it unmounts', () => {
+    toggleView();
+    const { unmount } = render(<RemoteControl />);
+    const forward = getButton('Move forward');
+    fireEvent.pointerDown(forward, { pointerId: FIRST_POINTER_ID });
+    fireEvent.pointerDown(forward, { pointerId: SECOND_POINTER_ID });
+    expect(activeActions().size).toBe(1);
+
+    unmount();
+
+    expect(activeActions().size).toBe(0);
   });
 
   it('releases every held action when it unmounts', () => {
