@@ -1,6 +1,6 @@
 import { OrbitControls } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
-import { useLayoutEffect, useRef } from 'react';
+import { useCallback, useLayoutEffect, useRef } from 'react';
 import type { EulerOrder } from 'three';
 import { useExteriorFraming } from './useExteriorFraming.ts';
 
@@ -22,31 +22,41 @@ const ORBIT_MAX_POLAR_ANGLE = Math.PI * HALF - ORBIT_GROUND_CLEARANCE_RADIANS;
  * side B. This component therefore holds no size of its own: a change to the plot or to the
  * heights moves the camera with it.
  *
- * On mount it resets the default camera to the start position looking at the orbit target,
- * so returning from the interior view never starts orbiting from inside a room. That reset
- * is deliberately mount-only: a later resize re-derives the zoom limits and the pivot, but
- * must not throw away the view the user has orbited to. The polar angle stops just above
- * the ground.
+ * It puts the default camera at the start position looking at the orbit target, so
+ * returning from the interior view never starts orbiting from inside a room, and it does so
+ * again whenever the framing changes — a resize, a rotation — for as long as the user has
+ * not orbited. Otherwise the zoom limits would re-derive from the new framing while the
+ * camera stayed where the old one put it, and the controls would snap it into range on the
+ * next frame. The moment the user grabs the controls (`onStart`) that stops for good: from
+ * then on the camera is theirs, and a resize only moves the limits and the pivot. The polar
+ * angle stops just above the ground.
  *
  * @returns The orbit controls, registered as the default controls.
  */
 export function ExteriorCameraControls() {
   const getState = useThree((state) => state.get);
   const { target, position, minDistance, maxDistance } = useExteriorFraming();
-  /** The framing of the first render: where the camera is put when the view opens. */
-  const startPose = useRef({ position, target });
+  /** Set by the first orbit the user starts; the camera is never moved again after that. */
+  const hasOrbited = useRef(false);
 
   useLayoutEffect(() => {
-    const { position: start, target: lookAt } = startPose.current;
+    if (hasOrbited.current) {
+      return;
+    }
     const { camera } = getState();
     camera.rotation.order = EXTERIOR_EULER_ORDER;
-    camera.position.set(start.x, start.y, start.z);
-    camera.lookAt(lookAt.x, lookAt.y, lookAt.z);
-  }, [getState]);
+    camera.position.set(position.x, position.y, position.z);
+    camera.lookAt(target.x, target.y, target.z);
+  }, [getState, position, target]);
+
+  const handleOrbitStart = useCallback(() => {
+    hasOrbited.current = true;
+  }, []);
 
   return (
     <OrbitControls
       makeDefault
+      onStart={handleOrbitStart}
       target={[target.x, target.y, target.z]}
       minDistance={minDistance}
       maxDistance={maxDistance}

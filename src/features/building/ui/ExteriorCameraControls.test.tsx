@@ -22,6 +22,7 @@ interface CapturedOrbitProps {
   readonly minDistance?: number;
   readonly maxDistance?: number;
   readonly maxPolarAngle?: number;
+  readonly onStart?: () => void;
 }
 
 /** The part of the three.js store this component reads. */
@@ -67,6 +68,8 @@ const EXTERIOR_EULER_ORDER = 'XYZ';
 const WIDESCREEN: CanvasSize = { width: 1920, height: 1080 };
 /** A phone canvas, narrower than it is tall: 400 × 800 CSS pixels. */
 const PHONE: CanvasSize = { width: 400, height: 800 };
+/** Somewhere the user could have orbited to: not a framing of any canvas size. */
+const ORBITED_POSITION: readonly [number, number, number] = [12, 7, -9];
 
 /** Orbit pivot the framing must produce: the centre of the plot at half the wall height. */
 const EXPECTED_TARGET: readonly [number, number, number] = [
@@ -105,6 +108,44 @@ function getOrbitProps(): CapturedOrbitProps {
   return scene.orbitProps;
 }
 
+/** A mounted canvas: its camera, and a way to change the size the controls see. */
+interface MountedCanvas {
+  /** The default camera the controls move. */
+  readonly camera: PerspectiveCamera;
+  /** Resizes the canvas and re-renders, as a resize of the viewport does. */
+  readonly reframeTo: (size: CanvasSize) => void;
+}
+
+/**
+ * Mounts the controls in a canvas of the given size, with the app's camera settings.
+ *
+ * @param size - The canvas size `useThree` reports.
+ * @returns The camera and a way to resize the canvas under the mounted controls.
+ */
+function mountAt(size: CanvasSize): MountedCanvas {
+  scene.width = size.width;
+  scene.height = size.height;
+  const camera = new PerspectiveCamera(
+    CAMERA_FOV_DEGREES,
+    size.width / size.height,
+    CAMERA_NEAR,
+    CAMERA_FAR,
+  );
+  scene.camera = camera;
+  const { rerender } = render(<ExteriorCameraControls />);
+
+  return {
+    camera,
+    reframeTo: (next: CanvasSize) => {
+      scene.width = next.width;
+      scene.height = next.height;
+      camera.aspect = next.width / next.height;
+      camera.updateProjectionMatrix();
+      rerender(<ExteriorCameraControls />);
+    },
+  };
+}
+
 /**
  * Renders the controls in a canvas of the given size, with the app's camera settings.
  *
@@ -112,16 +153,21 @@ function getOrbitProps(): CapturedOrbitProps {
  * @returns The camera the controls were given.
  */
 function renderAt(size: CanvasSize): PerspectiveCamera {
-  scene.width = size.width;
-  scene.height = size.height;
-  scene.camera = new PerspectiveCamera(
-    CAMERA_FOV_DEGREES,
-    size.width / size.height,
-    CAMERA_NEAR,
-    CAMERA_FAR,
-  );
-  render(<ExteriorCameraControls />);
-  return getCamera();
+  return mountAt(size).camera;
+}
+
+/**
+ * Tells the controls the user has started orbiting, as drei's `onStart` does.
+ *
+ * @throws Error when the controls report no start of an orbit, which is the whole point:
+ *   without it the component cannot know the camera has become the user's.
+ */
+function startOrbiting(): void {
+  const { onStart } = getOrbitProps();
+  if (onStart === undefined) {
+    throw new Error('the orbit controls were given no onStart handler');
+  }
+  onStart();
 }
 
 /**
@@ -236,5 +282,39 @@ describe('ExteriorCameraControls', () => {
     expect(camera.position.y).toBeGreaterThan(widescreen.position.y);
     expectLookingAt(camera, EXPECTED_TARGET);
     expectWholeFloorVisible(camera);
+  });
+
+  it('re-frames the camera when the canvas changes before any orbit', () => {
+    const phone = framingFor(PHONE);
+    const { camera, reframeTo } = mountAt(WIDESCREEN);
+
+    // The viewport changes shape before the user has touched the controls: the zoom limits
+    // move with it, so the camera has to move with them or be snapped into range.
+    reframeTo(PHONE);
+
+    const props = getOrbitProps();
+    expect(props.minDistance).toBe(phone.minDistance);
+    expect(props.maxDistance).toBe(phone.maxDistance);
+    expect(camera.position.x).toBeCloseTo(phone.position.x);
+    expect(camera.position.y).toBeCloseTo(phone.position.y);
+    expect(camera.position.z).toBeCloseTo(phone.position.z);
+    expectLookingAt(camera, EXPECTED_TARGET);
+    expectWholeFloorVisible(camera);
+  });
+
+  it('leaves an orbited camera where the user left it when the canvas changes', () => {
+    const phone = framingFor(PHONE);
+    const { camera, reframeTo } = mountAt(WIDESCREEN);
+
+    startOrbiting();
+    camera.position.set(...ORBITED_POSITION);
+    reframeTo(PHONE);
+
+    const props = getOrbitProps();
+    expect(camera.position.toArray()).toEqual([...ORBITED_POSITION]);
+    // The limits and the pivot still follow the new framing; only the view is left alone.
+    expect(props.minDistance).toBe(phone.minDistance);
+    expect(props.maxDistance).toBe(phone.maxDistance);
+    expect(props.target).toEqual(EXPECTED_TARGET);
   });
 });

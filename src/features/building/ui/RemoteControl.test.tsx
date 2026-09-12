@@ -15,6 +15,8 @@ const SPACE_KEY = ' ';
 const ENTER_KEY = 'Enter';
 const FIRST_POINTER_ID = 1;
 const SECOND_POINTER_ID = 2;
+/** A pointer id the pad never saw go down, e.g. a click somewhere else in the page. */
+const UNKNOWN_POINTER_ID = 7;
 
 /** The accessible name of every button, in the pad's reading order. */
 const BUTTON_NAMES: ReadonlyArray<readonly [EyeAction, string]> = [
@@ -195,16 +197,69 @@ describe('RemoteControl', () => {
     expect(activeActions().size).toBe(0);
   });
 
-  it('releases every held action when a pointer goes up outside the pad', () => {
+  it('releases only the lifted pointer when a second finger holds another button', () => {
     toggleView();
     render(<RemoteControl />);
+    const forward = getButton('Move forward');
+    const turnLeft = getButton('Turn left');
 
-    fireEvent.pointerDown(getButton('Move forward'), { pointerId: FIRST_POINTER_ID });
-    fireEvent.pointerDown(getButton('Turn left'), { pointerId: SECOND_POINTER_ID });
+    // Walking while turning: one finger on each button, as a walk around a corner is done.
+    fireEvent.pointerDown(forward, { pointerId: FIRST_POINTER_ID });
+    fireEvent.pointerDown(turnLeft, { pointerId: SECOND_POINTER_ID });
+    expect(activeActions()).toEqual(new Set(['moveForward', 'turnLeft']));
 
     fireEvent.pointerUp(document.body, { pointerId: FIRST_POINTER_ID });
 
+    expect(activeActions()).toEqual(new Set(['turnLeft']));
+    expect(forward).toHaveAttribute('aria-pressed', 'false');
+    expect(turnLeft).toHaveAttribute('aria-pressed', 'true');
+
+    fireEvent.pointerUp(document.body, { pointerId: SECOND_POINTER_ID });
+
     expect(activeActions().size).toBe(0);
+    expect(turnLeft).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('releases only the cancelled pointer when the browser takes it over', () => {
+    toggleView();
+    render(<RemoteControl />);
+    const forward = getButton('Move forward');
+    const turnRight = getButton('Turn right');
+
+    fireEvent.pointerDown(forward, { pointerId: FIRST_POINTER_ID });
+    fireEvent.pointerDown(turnRight, { pointerId: SECOND_POINTER_ID });
+
+    fireEvent.pointerCancel(document.body, { pointerId: SECOND_POINTER_ID });
+
+    expect(activeActions()).toEqual(new Set(['moveForward']));
+    expect(forward).toHaveAttribute('aria-pressed', 'true');
+    expect(turnRight).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('releases nothing when a pointer the pad never held goes up', () => {
+    toggleView();
+    render(<RemoteControl />);
+    const turnLeft = getButton('Turn left');
+
+    fireEvent.pointerDown(turnLeft, { pointerId: FIRST_POINTER_ID });
+    fireEvent.pointerUp(document.body, { pointerId: UNKNOWN_POINTER_ID });
+
+    expect(activeActions()).toEqual(new Set(['turnLeft']));
+    expect(turnLeft).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('releases the held action when its own pointer goes up outside the pad', () => {
+    toggleView();
+    render(<RemoteControl />);
+    const turnLeft = getButton('Turn left');
+
+    // No pointer capture in jsdom, so the release lands on the body: the window net has to
+    // catch it, or the turn would spin the camera forever.
+    fireEvent.pointerDown(turnLeft, { pointerId: FIRST_POINTER_ID });
+    fireEvent.pointerUp(document.body, { pointerId: FIRST_POINTER_ID });
+
+    expect(activeActions().size).toBe(0);
+    expect(turnLeft).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('releases every held action when it unmounts', () => {

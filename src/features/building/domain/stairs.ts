@@ -162,7 +162,7 @@ function getStairsBay(plan: FloorPlan): StairsBay {
   const depth = toPlanLength(bay.maxZ - bay.minZ);
   if (STAIR_FLIGHT_WIDTH * FLIGHTS_ACROSS_BAY > depth + LENGTH_TOLERANCE) {
     throw new RangeError(
-      `flight width ${String(STAIR_FLIGHT_WIDTH)} exceeds half the depth ${String(depth)} of the "${STAIRS_SPACE_ID}" bay`,
+      `flight width ${String(STAIR_FLIGHT_WIDTH)} exceeds half the depth ${String(toPlanLength(depth / FLIGHTS_ACROSS_BAY))} of the "${STAIRS_SPACE_ID}" bay`,
     );
   }
   if (

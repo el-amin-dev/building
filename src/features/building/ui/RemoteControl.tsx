@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import type { KeyboardEvent, PointerEvent } from 'react';
+import { useEffect, useRef } from 'react';
+import type { KeyboardEvent, PointerEvent as ReactPointerEvent, RefObject } from 'react';
 import { useRemoteControlStore } from '../application/remoteControlStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
 import type { EyeAction } from '../domain/eyeNavigation.ts';
@@ -11,6 +11,17 @@ const GROUP_LABEL = 'Remote control';
 const ACTIVATION_KEYS: readonly string[] = Object.freeze([' ', 'Enter']);
 const WINDOW_BLUR_EVENT = 'blur';
 const WINDOW_POINTER_UP_EVENT = 'pointerup';
+const WINDOW_POINTER_CANCEL_EVENT = 'pointercancel';
+
+/**
+ * Which action every pressing pointer holds, keyed by its `PointerEvent.pointerId`.
+ *
+ * Two fingers is the natural way to walk and turn at once, so a pointer going up may only
+ * release what that pointer was holding. The ledger is what makes that possible: the button
+ * writes its action down on `pointerdown` and takes it back out on release, and the
+ * window-level net looks the lifted pointer up instead of releasing everything.
+ */
+type HeldPointers = Map<number, EyeAction>;
 
 /** One button of the pad: the action it holds, its accessible name and its glyph. */
 interface RemoteButtonSpec {
@@ -81,6 +92,12 @@ function focusInteriorRegion(): void {
   document.getElementById(INTERIOR_REGION_ID)?.focus();
 }
 
+/** What one button needs: its own spec and the pad's ledger of pressing pointers. */
+interface RemoteButtonProps extends RemoteButtonSpec {
+  /** {@link HeldPointers}, written on press and cleared on release. */
+  readonly heldPointers: RefObject<HeldPointers>;
+}
+
 /**
  * One hold-to-act button of the remote control.
  *
@@ -93,20 +110,22 @@ function focusInteriorRegion(): void {
  * precedent, so the keys keep working; a keyboard hold leaves focus on the button, where
  * the user put it.
  *
- * @param props - {@link RemoteButtonSpec}
+ * @param props - {@link RemoteButtonProps}
  * @returns The button.
  */
-function RemoteButton({ action, label, glyph }: RemoteButtonSpec) {
+function RemoteButton({ action, label, glyph, heldPointers }: RemoteButtonProps) {
   const isHeld = useRemoteControlStore((state) => state.activeActions.has(action));
   const pressAction = useRemoteControlStore((state) => state.pressAction);
   const releaseAction = useRemoteControlStore((state) => state.releaseAction);
 
-  const handlePointerDown = (event: PointerEvent<HTMLButtonElement>) => {
+  const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    heldPointers.current.set(event.pointerId, action);
     pressAction(action);
     capturePointer(event.currentTarget, event.pointerId);
   };
 
-  const handlePointerRelease = () => {
+  const handlePointerRelease = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    heldPointers.current.delete(event.pointerId);
     releaseAction(action);
     focusInteriorRegion();
   };
@@ -158,9 +177,14 @@ function RemoteButton({ action, label, glyph }: RemoteButtonSpec) {
  * Rendered only in the interior view, where navigation applies.
  *
  * A held action must never stick: a stuck turn would spin the camera forever. Four nets
- * catch it — the button's own release routes, a window `pointerup` (the pointer went up
- * outside the pad), a window `blur` (Alt/Cmd-Tab away), and the effect cleanup, which also
- * covers leaving the interior view and unmounting.
+ * catch it — the button's own release routes, a window `pointerup` / `pointercancel` (the
+ * pointer went up or was taken over outside the pad), a window `blur` (Alt/Cmd-Tab away),
+ * and the effect cleanup, which also covers leaving the interior view and unmounting.
+ *
+ * The window-level pointer net releases only what the lifted pointer itself was holding,
+ * looked up in {@link HeldPointers}: walking while turning is two fingers on two buttons,
+ * and lifting one of them may not stop the other. `blur`, a view change and unmounting are
+ * the genuine "everything stops" cases, so those do release every action at once.
  *
  * Below the `sm` breakpoint the pad takes itself out of the HUD stack (`fixed`) and anchors to
  * the bottom of the screen, full width and centred: within thumb reach, and no longer stacked
@@ -174,27 +198,45 @@ function RemoteButton({ action, label, glyph }: RemoteButtonSpec) {
  */
 export function RemoteControl() {
   const isInterior = useViewStore((state) => state.viewMode === 'interior');
+  const releaseAction = useRemoteControlStore((state) => state.releaseAction);
   const releaseAllActions = useRemoteControlStore((state) => state.releaseAllActions);
+  /** Which action each pressing pointer holds; see {@link HeldPointers}. */
+  const heldPointers = useRef<HeldPointers>(new Map());
 
   useEffect(() => {
-    if (!isInterior) {
+    const held = heldPointers.current;
+
+    const releaseAll = () => {
+      held.clear();
       releaseAllActions();
+    };
+
+    if (!isInterior) {
+      releaseAll();
       return undefined;
     }
 
-    const releaseAll = () => {
-      releaseAllActions();
+    /** Releases the action of the pointer that is lifting, and nothing else. */
+    const releasePointer = (event: PointerEvent) => {
+      const action = held.get(event.pointerId);
+      if (action === undefined) {
+        return;
+      }
+      held.delete(event.pointerId);
+      releaseAction(action);
     };
 
     window.addEventListener(WINDOW_BLUR_EVENT, releaseAll);
-    window.addEventListener(WINDOW_POINTER_UP_EVENT, releaseAll);
+    window.addEventListener(WINDOW_POINTER_UP_EVENT, releasePointer);
+    window.addEventListener(WINDOW_POINTER_CANCEL_EVENT, releasePointer);
 
     return () => {
       window.removeEventListener(WINDOW_BLUR_EVENT, releaseAll);
-      window.removeEventListener(WINDOW_POINTER_UP_EVENT, releaseAll);
+      window.removeEventListener(WINDOW_POINTER_UP_EVENT, releasePointer);
+      window.removeEventListener(WINDOW_POINTER_CANCEL_EVENT, releasePointer);
       releaseAll();
     };
-  }, [isInterior, releaseAllActions]);
+  }, [isInterior, releaseAction, releaseAllActions]);
 
   if (!isInterior) {
     return null;
@@ -210,10 +252,10 @@ export function RemoteControl() {
         <span aria-hidden="true" className="text-xs font-medium">
           {MOVE_CAPTION}
         </span>
-        <RemoteButton {...MOVE_FORWARD} />
+        <RemoteButton {...MOVE_FORWARD} heldPointers={heldPointers} />
         <div className="flex gap-1">
           {MOVE_ROW.map((spec) => (
-            <RemoteButton key={spec.action} {...spec} />
+            <RemoteButton key={spec.action} {...spec} heldPointers={heldPointers} />
           ))}
         </div>
       </div>
@@ -223,7 +265,7 @@ export function RemoteControl() {
         </span>
         <div className="flex gap-1">
           {TURN_BUTTONS.map((spec) => (
-            <RemoteButton key={spec.action} {...spec} />
+            <RemoteButton key={spec.action} {...spec} heldPointers={heldPointers} />
           ))}
         </div>
       </div>
@@ -233,7 +275,7 @@ export function RemoteControl() {
         </span>
         <div className="flex gap-1">
           {LOOK_BUTTONS.map((spec) => (
-            <RemoteButton key={spec.action} {...spec} />
+            <RemoteButton key={spec.action} {...spec} heldPointers={heldPointers} />
           ))}
         </div>
       </div>
