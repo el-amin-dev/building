@@ -9,9 +9,14 @@
  *
  * On the plan, the forward unit vector is `(−sin yaw, −cos yaw)` and the right
  * unit vector is `(cos yaw, −sin yaw)` on `(x, z)`.
+ *
+ * Where the body may go is not this module's business: a step is handed to
+ * `collision.ts`, which stops it at whatever it runs into anywhere on the floor.
  */
 
-import type { PlanRect } from './planGeometry.ts';
+import { moveBody } from './collision.ts';
+import type { PlanVector, WalkField } from './collision.ts';
+import { PERSON_SPEC } from './person.ts';
 
 /**
  * Every navigation command of the eye, in HUD reading order: move, strafe, turn, look.
@@ -74,6 +79,11 @@ export type Axis = -1 | 0 | 1;
  * What the viewer is currently asking for, one signed value per axis.
  *
  * Opposite keys held together cancel each other out to `0`.
+ *
+ * The values are signs and nothing else: they say which way, never how fast.
+ * That is what lets one intent come from held keys, from held on-screen
+ * controls, or from an automated route follower, with the speed staying the
+ * navigation's own ({@link EyeNavigationConfig}).
  */
 export interface MovementIntent {
   /** `+1` walks forward, `−1` walks backward. */
@@ -152,71 +162,33 @@ export interface EyePose {
   readonly pitch: number;
 }
 
-/**
- * Creates the pose the viewer starts from: in the (maxX, maxZ) corner of the
- * walkable area, looking level toward the opposite (minX, minZ) corner.
- *
- * Starting in a corner facing the opposite corner puts two walls, the corner
- * between them, the floor and the ceiling in view on entry, instead of a blank
- * wall filling the view as it does from the centre facing a wall.
- *
- * @param bounds - The walkable rectangle for the eye position, already shrunk
- *   by the body radius (see {@link stepEyePose}).
- * @returns A new pose at (bounds.maxX, bounds.maxZ) with zero pitch and a yaw
- *   within (−π, π] whose forward vector points at (bounds.minX, bounds.minZ);
- *   yaw is `0` when the bounds have zero width and zero depth.
- */
-export function createInitialEyePose(bounds: PlanRect): EyePose {
-  const width = bounds.maxX - bounds.minX;
-  const depth = bounds.maxZ - bounds.minZ;
-  const yaw = width === 0 && depth === 0 ? 0 : wrapAngle(Math.atan2(width, depth));
-  return { x: bounds.maxX, z: bounds.maxZ, yaw, pitch: 0 };
-}
-
-/** Yaw whose forward vector is (0, −1): looking toward −z, the reference direction. */
-const YAW_TOWARD_MINUS_Z = 0;
-/** Yaw whose forward vector is (−1, 0): looking toward −x, since `−sin(π/2) = −1`. */
-const YAW_TOWARD_MINUS_X = Math.PI / 2;
-/** Factor giving the midpoint between the two faces of a rectangle. */
-const HALF = 0.5;
+/** The pitch of a level gaze: straight ahead, neither up nor down. */
+const LEVEL_PITCH = 0;
 
 /**
- * Creates the pose the viewer starts a one-room walk from: in the centre of the
- * walkable area, looking level along its longer axis toward the decreasing
- * coordinate (−x when the area is wider than deep, −z otherwise).
+ * Raises a plan arrival pose to an eye pose: the same point and heading, looking level.
  *
- * The third-person camera (ADR-007) follows from `followDistance` behind the
- * person and rises toward overhead when a wall leaves no room behind, so
- * entering at a corner shows a close-up of the head instead of the person.
- * From the centre, the longest free run in the room is the one straight behind a
- * person facing along the longer axis, so the camera keeps very nearly its whole
- * follow distance and the body stays visible. Facing along the longer axis is
- * also the best first-person framing the centre offers: the far wall is as far
- * away as the room allows, both side walls recede, and in the room this pose was
- * chosen for — the master bedroom, the interim walk area — the sightline runs
- * straight through the balcony-A doorway in its −x wall (`portSchedule.ts`
- * places that 0.90 m door at z 1.85–2.75, around the room's z centre of 2.00).
+ * Entry to the floor is through the stairs (ADR-006), and the stair bay knows
+ * where a person lands and which way they face without knowing anything about a
+ * camera. This is the one step between the two: it adds the level gaze and
+ * nothing else, so the arrival point is not nudged, re-centred, or clamped.
  *
- * {@link createInitialEyePose} keeps the corner pose of ADR-004, chosen when the
- * interior had a first-person camera only; this is the pose a follow camera can
- * live with.
+ * The parameter is typed structurally rather than imported, so that navigation
+ * does not depend on the stair bay: `StairsArrival` (`stairs.ts`) is assignable
+ * to it, and so is any other plan pose a future entrance produces.
  *
- * @param bounds - The walkable rectangle for the eye position, already shrunk by
- *   the body radius (see {@link stepEyePose}), so its centre is a legal place to
- *   stand and no clamping is needed.
- * @returns A new pose at the centre of `bounds` with zero pitch, and a yaw of
- *   `π/2` when the bounds are strictly wider than deep, `0` otherwise (so a
- *   square or degenerate rectangle looks toward −z).
+ * @param arrival - Where the person lands and the heading they land with, in
+ *   metres and radians. Not mutated.
+ * @returns A new pose at the arrival point, with `pitch` level and the arrival
+ *   yaw wrapped into (−π, π] so the {@link EyePose} invariant holds. A yaw
+ *   already in that range is returned unchanged.
  */
-export function createRoomCentrePose(bounds: PlanRect): EyePose {
-  const width = bounds.maxX - bounds.minX;
-  const depth = bounds.maxZ - bounds.minZ;
-  return {
-    x: (bounds.minX + bounds.maxX) * HALF,
-    z: (bounds.minZ + bounds.maxZ) * HALF,
-    yaw: width > depth ? YAW_TOWARD_MINUS_X : YAW_TOWARD_MINUS_Z,
-    pitch: 0,
-  };
+export function createArrivalPose(arrival: {
+  readonly x: number;
+  readonly z: number;
+  readonly yaw: number;
+}): EyePose {
+  return { x: arrival.x, z: arrival.z, yaw: wrapAngle(arrival.yaw), pitch: LEVEL_PITCH };
 }
 
 /** Tuning of the eye navigation. */
@@ -231,7 +203,11 @@ export interface EyeNavigationConfig {
   readonly maxPitch: number;
   /** Longest time step simulated at once, in seconds, to absorb frame hitches. */
   readonly maxStepSeconds: number;
-  /** Radius of the viewer's body on the plan, in metres, kept clear of walls. */
+  /**
+   * Radius of the viewer's body on the plan, in metres, kept clear of every wall,
+   * hole and railing. It is a size of the person, so the default is
+   * `PERSON_SPEC.radius` rather than a number of its own.
+   */
   readonly bodyRadius: number;
 }
 
@@ -244,7 +220,6 @@ const TURN_SPEED_DEGREES_PER_SECOND = 90;
 const LOOK_SPEED_DEGREES_PER_SECOND = 60;
 const MAX_PITCH_DEGREES = 80;
 const MAX_STEP_SECONDS = 0.1;
-const BODY_RADIUS_METRES = 0.25;
 
 /** Default tuning of the eye navigation. Frozen. */
 export const EYE_NAVIGATION_CONFIG: EyeNavigationConfig = Object.freeze({
@@ -253,44 +228,75 @@ export const EYE_NAVIGATION_CONFIG: EyeNavigationConfig = Object.freeze({
   lookSpeed: LOOK_SPEED_DEGREES_PER_SECOND * RADIANS_PER_DEGREE,
   maxPitch: MAX_PITCH_DEGREES * RADIANS_PER_DEGREE,
   maxStepSeconds: MAX_STEP_SECONDS,
-  bodyRadius: BODY_RADIUS_METRES,
+  bodyRadius: PERSON_SPEC.radius,
 });
+
+/** The result of one step: the new pose, plus what the body was allowed to do. */
+export interface EyeStep {
+  /** The pose after the step. */
+  readonly pose: EyePose;
+  /** The plan step that was asked for, in metres. */
+  readonly requested: PlanVector;
+  /** The plan step that was taken, in metres: shorter than `requested` when blocked. */
+  readonly applied: PlanVector;
+  /** Whether a blocker shortened the step. Turning and looking are never blocked. */
+  readonly blocked: boolean;
+}
 
 /**
  * Advances the eye pose by one time step.
  *
  * The step is applied in this order:
- * 1. the time step is sanitised (`NaN` or negative becomes `0`) and capped at
+ * 1. the time step is sanitised (`NaN` or non-positive becomes `0`) and capped at
  *    `config.maxStepSeconds`;
  * 2. yaw changes by the turn intent, then wraps into (−π, π];
  * 3. pitch changes by the look intent, then clamps to ±`config.maxPitch`;
- * 4. the plan position moves along the forward/right vectors of the new yaw,
+ * 4. the plan step is measured along the forward/right vectors of the new yaw,
  *    with diagonal movement normalised so it is no faster than straight;
- * 5. the position is clamped inside `bounds`.
+ * 5. that step is resolved against `field` by `moveBody`, which stops the body at
+ *    walls, holes and railings wherever they stand on the floor, and slides it
+ *    along a face it has stopped against.
+ *
+ * Four of those details are a contract an automated caller relies on rather than
+ * incidental behaviour, and must be preserved:
+ *
+ * - **the intent stays signed.** Every component is one of −1, 0, +1
+ *   ({@link Axis}) and never gains a magnitude channel, so a route follower
+ *   steers by naming the same signs a held key produces and the speed stays this
+ *   module's;
+ * - **the time step is sanitised and capped**, exactly as step 1 says, so a
+ *   follower measuring progress off the pose runs on the same clock;
+ * - **yaw is applied before the translation**, so a step that turns and walks at
+ *   once walks along the heading it ends the step with;
+ * - **the diagonal `move` + `strafe` combination stays normalised**, so a
+ *   corrected step that walks and strafes at once is never faster than a
+ *   straight one.
+ *
+ * When the move is fully blocked the returned `x` and `z` are the ones passed in,
+ * unchanged: a blocked frame has to look like a blocked frame, because stuck
+ * detection reads progress from the pose.
  *
  * @param pose - The current pose. Not mutated.
- * @param intent - The signed intent along each navigation axis.
+ * @param intent - The signed intent along each navigation axis. Source-agnostic:
+ *   held keys, held on-screen pad buttons, or an automated route follower.
  * @param dtSeconds - Elapsed time since the previous step, in seconds.
- * @param bounds - The walkable rectangle for the eye position. The caller must
- *   already have shrunk it by `config.bodyRadius` so the body stays off walls.
+ * @param field - The collision field of the storey being walked. Built once
+ *   outside the frame loop (`collision.ts`); only its blockers are consulted.
  * @param config - Navigation tuning; defaults to {@link EYE_NAVIGATION_CONFIG}.
- * @returns A new pose.
+ * @returns A new {@link EyeStep}: the new pose, plus `moveBody`'s `requested`,
+ *   `applied` and `blocked` passed straight through.
  */
 export function stepEyePose(
   pose: EyePose,
   intent: MovementIntent,
   dtSeconds: number,
-  bounds: PlanRect,
+  field: WalkField,
   config: EyeNavigationConfig = EYE_NAVIGATION_CONFIG,
-): EyePose {
+): EyeStep {
   const dt = clampStep(dtSeconds, config.maxStepSeconds);
 
   const yaw = wrapAngle(pose.yaw + intent.turn * config.turnSpeed * dt);
-  const pitch = clamp(
-    pose.pitch + intent.look * config.lookSpeed * dt,
-    -config.maxPitch,
-    config.maxPitch,
-  );
+  const pitch = clampPitch(pose.pitch + intent.look * config.lookSpeed * dt, config.maxPitch);
 
   const sinYaw = Math.sin(yaw);
   const cosYaw = Math.cos(yaw);
@@ -299,11 +305,18 @@ export function stepEyePose(
   const length = Math.hypot(vectorX, vectorZ);
   const scale = (length > 1 ? 1 / length : 1) * config.walkSpeed * dt;
 
+  const move = moveBody(
+    { x: pose.x, z: pose.z },
+    { x: vectorX * scale, z: vectorZ * scale },
+    field,
+    config.bodyRadius,
+  );
+
   return {
-    x: clamp(pose.x + vectorX * scale, bounds.minX, bounds.maxX),
-    z: clamp(pose.z + vectorZ * scale, bounds.minZ, bounds.maxZ),
-    yaw,
-    pitch,
+    pose: { x: move.point.x, z: move.point.z, yaw, pitch },
+    requested: move.requested,
+    applied: move.applied,
+    blocked: move.blocked,
   };
 }
 
@@ -315,16 +328,41 @@ function toAxis(positive: boolean, negative: boolean): Axis {
   return positive ? 1 : -1;
 }
 
-/** Sanitises a time step: `NaN` or non-positive gives `0`, capped at `maxStep`. */
-function clampStep(dtSeconds: number, maxStep: number): number {
+/**
+ * Sanitises a frame time into the time step the navigation will simulate.
+ *
+ * Exported because it is a rule, not a detail: anything that drives
+ * {@link stepEyePose} and also keeps its own clock — a route follower timing how
+ * long the body has failed to make progress — must measure the same seconds this
+ * does, or the two disagree about how much of a long frame happened.
+ *
+ * @param dtSeconds - Elapsed time since the previous step, in seconds. May be
+ *   `NaN`, negative or absurdly large; all three are handled.
+ * @param maxStep - Longest step to simulate at once, in seconds, typically
+ *   `EYE_NAVIGATION_CONFIG.maxStepSeconds`.
+ * @returns `0` for `NaN` or a non-positive input, otherwise `dtSeconds` capped
+ *   at `maxStep`.
+ */
+export function clampStep(dtSeconds: number, maxStep: number): number {
   if (!(dtSeconds > 0)) {
     return 0;
   }
   return Math.min(dtSeconds, maxStep);
 }
 
-/** Wraps an angle, in radians, into (−π, π]. */
-function wrapAngle(angle: number): number {
+/**
+ * Wraps an angle, in radians, into (−π, π].
+ *
+ * The half-open range is the one {@link EyePose} yaw is declared in, and the one
+ * shortest-turn arithmetic needs: a difference of two wrapped angles, wrapped
+ * again, is the signed shortest way round. Exported so that anything steering a
+ * yaw toward a target wraps it exactly as the navigation does.
+ *
+ * @param angle - The angle to wrap, in radians.
+ * @returns The equivalent angle within (−π, π]; an angle already in that range
+ *   is returned unchanged, and exactly π stays π.
+ */
+export function wrapAngle(angle: number): number {
   if (angle > -Math.PI && angle <= Math.PI) {
     return angle;
   }
@@ -332,7 +370,7 @@ function wrapAngle(angle: number): number {
   return Math.PI - offset;
 }
 
-/** Restricts a value to the inclusive range [min, max]. */
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
+/** Restricts a pitch, in radians, to the symmetric range [−`limit`, `limit`]. */
+function clampPitch(pitch: number, limit: number): number {
+  return Math.min(Math.max(pitch, -limit), limit);
 }
