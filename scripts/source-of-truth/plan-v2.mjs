@@ -115,7 +115,7 @@ export const ROOMS = Object.freeze([
   // The strip is only 0.80 m to walk through, so the 0.20 partition comes out of
   // this room rather than out of it.
   { n: 8, id: 'controlCenter', name: 'Control center', type: 'CTR', kind: 'room',
-    rects: [[1.6, 3.8, 7.4, 9.7]], note: 'entered from the guest-room strip above it' },
+    rects: [[1.6, 3.8, 7.2, 9.7]], note: 'entered from the guest-room strip above it' },
   // The north strip now runs the full width from the side-A balcony at x 1.60 to
   // x 9.80, passing over the control center (owner). That strip is what gives the
   // balcony its second door and what the control center opens onto, so it is
@@ -124,10 +124,11 @@ export const ROOMS = Object.freeze([
   // wall is one thickness: 0.30 for its whole length, because further south it
   // passes the weather-exposed balcony.
   { n: 9, id: 'guestRoom', name: 'Guest room', type: 'GST', kind: 'room',
-    rects: [[1.6, 9.7, 6.3, 7.1], [4.1, 7.95, 7.1, 8.6]],
+    rects: [[1.6, 9.7, 6.3, 7.05], [4.1, 6.9, 7.05, 8.6]],
     note: 'north strip reaches the side-A balcony; guest sanitair carved out of the SE corner' },
   { n: 10, id: 'guestSanitair', name: 'Guest sanitair', type: 'BTH', kind: 'room',
-    rects: [[8.25, 9.85, 7.4, 8.6]] },
+    rects: [[7.05, 9.85, 7.2, 7.75]],
+    note: 'the open part: sink, and the sliding doors into the bath and shower cubicles' },
   // No longer a rectangle: the corridor's television run now reaches x 11.80, so
   // the kitchen steps back to z 6.10 west of x 12.00 and keeps its full depth
   // east of it (owner: "the kitchen shape is not square, make it fit").
@@ -136,7 +137,8 @@ export const ROOMS = Object.freeze([
   { n: 12, id: 'laundry', name: 'Laundry', type: 'LND', kind: 'room',
     rects: [[14.25, 17.55, 5.8, 8.6]], note: '1 door + 2 big windows on side B (owner)' },
   { n: 13, id: 'mainSanitair', name: 'Main sanitair', type: 'BTH', kind: 'room',
-    rects: [[17.7, 20.35, 5.8, 8.6]] },
+    rects: [[17.7, 20.35, 5.8, 7.3]],
+    note: 'the open part: sink, and the doors into the bath and shower cubicles' },
   { n: 14, id: 'utilityRoom', name: 'Utility room', type: 'UTL', kind: 'room',
     rects: [[20.5, 22.2, 4.15, 9.7]] },
   // Flush with the guest room above it at x 4.10, so the control center's east
@@ -161,6 +163,20 @@ export const ROOMS = Object.freeze([
     rects: [[4.9, 11.65, 8.9, 9.7]], note: 'drying line and service risers; plumber access' },
   { n: 18, id: 'voidEast', name: 'Void (east)', type: 'VOID', kind: 'void',
     rects: [[15.35, 20.3, 8.9, 9.7]], note: 'drying line and service risers; plumber access' },
+  // A bathroom is an open part with the basin, and a walled bath and a walled
+  // shower each with its own door (owner). The bath and the shower are therefore
+  // rooms, not fittings: that is what gives them walls, matricules and ports like
+  // everything else on the floor. Both bathrooms are the same arrangement and
+  // differ only in size — the family one has the room to be generous, the guest
+  // one is a helper and is cut to the narrowest that still takes a real bath.
+  { n: 19, id: 'guestBathCubicle', name: 'Guest bath', type: 'BAT', kind: 'room',
+    rects: [[7.05, 8.7, 7.9, 8.6]], note: 'holds a 1.50 bath across its width' },
+  { n: 20, id: 'guestShowerCubicle', name: 'Guest shower', type: 'SHW', kind: 'room',
+    rects: [[8.85, 9.85, 7.9, 8.6]] },
+  { n: 21, id: 'mainBathCubicle', name: 'Family bath', type: 'BAT', kind: 'room',
+    rects: [[17.7, 19.35, 7.45, 8.6]] },
+  { n: 22, id: 'mainShowerCubicle', name: 'Family shower', type: 'SHW', kind: 'room',
+    rects: [[19.5, 20.35, 7.45, 8.6]] },
 ]);
 
 /** Wall thicknesses that deviate from the kind-based default. */
@@ -195,13 +211,26 @@ export const PORTS = Object.freeze([
   { kind: 'door', between: ['corridor', 'kitchen'], along: 'x', spanMin: 12.7, width: 0.9 },
   { kind: 'door', between: ['corridor', 'mainSanitair'], along: 'x', spanMin: 18.6, width: 0.9,
     why: 'Moved east to clear the laundry door, which the owner wanted back beside the corridor wall; at x 17.90 the two leaves swung into the same floor.' },
-  { kind: 'door', between: ['balconyA', 'guestRoom'], along: 'z', spanMin: 6.35, width: 0.7,
+  { kind: 'door', between: ['balconyA', 'guestRoom'], along: 'z', spanMin: 6.35, width: 0.65,
     why: 'The owner moved the control-center door onto this wall: the balcony\'s second way in, after the master bedroom. 0.70 wide because the strip it opens into is only 0.80 deep.' },
   { kind: 'door', between: ['controlCenter', 'guestRoom'], along: 'x', spanMin: 1.7, width: 0.9,
     why: 'The old east-wall door, moved to the north wall: the guest-room strip above is now the only side the control center can be entered from.' },
   { kind: 'door', between: ['controlCenter', 'ccBalcony'], along: 'z', spanMin: 8.95, width: 0.7,
     why: '0.70, not 0.90: the balcony is only 0.80 deep now that the side-B strip is 0.80.' },
-  { kind: 'door', between: ['guestRoom', 'guestSanitair'], along: 'z', spanMin: 7.45, width: 0.7,
+  // All three guest-bathroom leaves slide: the open part is 0.55 deep, so nothing
+  // can swing into it. That is the price of keeping the guest room's tunnel to
+  // the kitchen, which needs the walking strip to run past this room to reach it.
+  { kind: 'door', between: ['guestSanitair', 'guestBathCubicle'], along: 'x', spanMin: 7.55, width: 0.6,
+    swing: 'slide' },
+  { kind: 'door', between: ['guestSanitair', 'guestShowerCubicle'], along: 'x', spanMin: 9.0, width: 0.6,
+    swing: 'slide' },
+  // The family cubicles slide too: 1.15 deep with a bath or tray in them leaves
+  // less floor than a leaf needs to swing through.
+  { kind: 'door', between: ['mainSanitair', 'mainBathCubicle'], along: 'x', spanMin: 18.1, width: 0.7,
+    swing: 'slide' },
+  { kind: 'door', between: ['mainSanitair', 'mainShowerCubicle'], along: 'x', spanMin: 19.6, width: 0.65,
+    swing: 'slide' },
+  { kind: 'door', between: ['guestRoom', 'guestSanitair'], along: 'x', spanMin: 7.4, width: 0.7,
     swing: 'slide',
     why: 'Sliding, and 0.70 not 0.90. The room is 1.35 deep with a 0.65 wet block and its screen, leaving 0.60 of free depth against the 0.70 a swinging leaf needs — the widest inward leaf that would clear is 0.55, too narrow for a bathroom. A sliding leaf needs no floor to open into.' },
   { kind: 'door', between: ['kitchen', 'balconySlabB'], along: 'x', spanMin: 12.7, width: 0.9 },
@@ -223,9 +252,12 @@ export const PORTS = Object.freeze([
 export const WINDOWS = Object.freeze([
   { kind: 'light', between: ['controlCenter', 'balconyA'], along: 'z', spanMin: 7.5, width: 0.9,
     sill: 0.9, head: 2.1 },
-  { kind: 'pass', between: ['guestRoom', 'kitchen'], along: 'z', spanMin: 6.4, width: 0.6,
-    sill: 1.0, head: 1.8, why: 'Pass food and ready coffee to the guests (owner).' },
-  { kind: 'air', between: ['guestSanitair', 'voidWest'], along: 'x', spanMin: 8.65, width: 0.7,
+  { kind: 'pass', between: ['guestRoom', 'kitchen'], along: 'z', spanMin: 6.35, width: 0.65,
+    sill: 1.0, head: 1.8,
+    why: 'Pass food and ready coffee through to the guests (owner) — a short tunnel through the 0.30 wall. Keeping it is why the bathroom sits below the walking strip rather than taking the suite\'s east end: the strip has to reach the kitchen.' },
+  { kind: 'air', between: ['guestBathCubicle', 'voidWest'], along: 'x', spanMin: 7.55, width: 0.6,
+    sill: 1.9, head: 2.3 },
+  { kind: 'air', between: ['guestShowerCubicle', 'voidWest'], along: 'x', spanMin: 9.0, width: 0.6,
     sill: 1.9, head: 2.3 },
   { kind: 'light', between: ['kitchen', 'voidWest'], along: 'x', spanMin: 10.1, width: 1.4,
     sill: 0.9, head: 2.1,
@@ -237,9 +269,9 @@ export const WINDOWS = Object.freeze([
   { kind: 'light', between: ['laundry', 'voidEast'], along: 'x', spanMin: 15.4, width: 1.9,
     sill: 0.6, head: 2.3,
     why: 'The two 0.90 windows merged into one opening (owner). It faces the void along its whole length now that the owner moved the balcony west to end at the laundry door — which is why the slab no longer has to stretch east to carry it.' },
-  { kind: 'air', between: ['mainSanitair', 'voidEast'], along: 'x', spanMin: 18.0, width: 0.7,
+  { kind: 'air', between: ['mainBathCubicle', 'voidEast'], along: 'x', spanMin: 18.1, width: 0.7,
     sill: 1.9, head: 2.3 },
-  { kind: 'air', between: ['mainSanitair', 'voidEast'], along: 'x', spanMin: 19.3, width: 0.7,
+  { kind: 'air', between: ['mainShowerCubicle', 'voidEast'], along: 'x', spanMin: 19.6, width: 0.6,
     sill: 1.9, head: 2.3 },
   { kind: 'light', between: ['utilityRoom', 'voidEast'], along: 'z', spanMin: 8.95, width: 0.7,
     sill: 0.9, head: 2.1, why: 'The only utility face that sees daylight.' },
@@ -260,22 +292,22 @@ export const WINDOWS = Object.freeze([
  * had to reach x 11.80 so the viewing area is not cut in two.
  */
 export const FIXTURES = Object.freeze([
-  // Main sanitair: the owner pushed the bath and the shower together to fill the
-  // south half, wall to wall, and put the basin back in the open north half.
-  // East of x 18.60: at the west end the basin stood 0.10 inside the swing of the
-  // laundry door, which opens along that wall.
-  { kind: 'sink', room: 'mainSanitair', rect: [18.6, 19.3, 6.7, 7.15] },
-  { kind: 'bath', room: 'mainSanitair', rect: [17.7, 19.1, 7.2, 8.6] },
-  { kind: 'shower', room: 'mainSanitair', rect: [19.25, 20.35, 7.2, 8.6] },
-  // Guest sanitair: a small shower for a guest's quick wash, beside a sit-bath
-  // (owner). Both stand behind a T-shaped screen, open at each end: you step
-  // round the west end into the shower and the east end into the bath. Only the
-  // basin is in the open, which is what the owner asked for.
-  { kind: 'sink', room: 'guestSanitair', rect: [9.15, 9.75, 7.45, 7.9] },
-  { kind: 'partition', room: 'guestSanitair', rect: [8.55, 9.55, 7.9, 8.0] },
-  { kind: 'partition', room: 'guestSanitair', rect: [8.9, 9.0, 8.0, 8.6] },
-  { kind: 'shower', room: 'guestSanitair', rect: [8.25, 8.9, 8.0, 8.6] },
-  { kind: 'bath', room: 'guestSanitair', rect: [9.0, 9.85, 8.0, 8.6] },
+  // A basin stands in the open part of each bathroom; the bath and the shower
+  // stand inside their own cubicle rooms. They belong here even though the
+  // cubicles are rooms: they are still objects occupying floor, and without them
+  // the model holds no sanitary ware at all — the drawing could not show a bath,
+  // and the door-swing check would pass every cubicle vacuously because there
+  // would be nothing inside it to hit.
+  { kind: 'sink', room: 'mainSanitair', rect: [19.6, 20.3, 6.0, 6.45] },
+  { kind: 'bath', room: 'mainBathCubicle', rect: [17.75, 19.25, 7.85, 8.55] },
+  { kind: 'shower', room: 'mainShowerCubicle', rect: [19.55, 20.3, 7.8, 8.55] },
+  // The guest suite: a small shower for a quick wash, a short bath beside it and
+  // the basin in the open, which is what the owner asked for. Everything here is
+  // cut to the minimum that still works — the suite gives the bathroom only
+  // 1.40 m of depth once the walking strip to the kitchen has taken its share.
+  { kind: 'sink', room: 'guestSanitair', rect: [8.95, 9.65, 7.25, 7.7] },
+  { kind: 'bath', room: 'guestBathCubicle', rect: [7.1, 8.65, 7.95, 8.55] },
+  { kind: 'shower', room: 'guestShowerCubicle', rect: [8.95, 9.8, 7.95, 8.55] },
   // The television wall, facing the living room opening across the corridor.
   { kind: 'tv', room: 'corridor', rect: [7.5, 11.0, 5.82, 5.9] },
 ]);
@@ -348,15 +380,16 @@ export const INSULATED_WALLS = Object.freeze([
   // The guest room, wrapped on every side that is its own boundary (owner).
   // Deliberately NOT its two walls to the guest sanitair: that room is inside
   // the wrap, so isolating against it would be isolating the suite from itself.
-  { matricule: 'F1-R09-GST-W2', length: 0.8 },
-  { matricule: 'F1-R09-GST-W5', length: 3.85 },
-  // The guest bathroom is now isolated FROM the guest room too (owner), which
-  // reverses last round's reading that it sat inside the wrap.
-  { matricule: 'F1-R09-GST-W3', length: 1.75 },
-  { matricule: 'F1-R09-GST-W4', length: 1.5 },
-  { matricule: 'F1-R09-GST-W6', length: 1.5 },
-  { matricule: 'F1-R09-GST-W7', length: 2.5 },
-  { matricule: 'F1-R09-GST-W8', length: 0.8 },
+  // All six faces of the guest room's new outline. It has six walls rather than
+  // the earlier eight because the bathroom took the suite's east end, and every
+  // one of these is the room's own boundary — including its wall to the bathroom,
+  // which the owner asked to be hard.
+  // Its walls to its own bathroom are deliberately NOT here. That suite has only
+  // 1.40 m of bathroom depth left once the walking strip has taken its share, and
+  // a 0.30 wall inside one suite costs more floor than the quiet is worth.
+  { matricule: 'F1-R09-GST-W2', length: 0.75 },
+  { matricule: 'F1-R09-GST-W5', length: 2.8 },
+  { matricule: 'F1-R09-GST-W6', length: 1.55 },
 ]);
 
 /** The side labels of the drawing. Side B is no longer open air. */

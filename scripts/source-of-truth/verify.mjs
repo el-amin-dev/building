@@ -247,15 +247,31 @@ check('2. Areas: room table, and the four totals closing on the plot');
     line(`R${String(room.n).padStart(2, '0')} ${room.id.padEnd(18)} ${room.kind.padEnd(11)} ${m(roomArea(room)).padStart(7)} m²`);
   }
 
-  const sumOf = (predicate) => cm(ROOMS.filter(predicate).reduce((s, r) => s + roomArea(r), 0));
-  const floor = sumOf((r) => FLOOR_KINDS.has(r.kind));
-  const voidArea = sumOf((r) => r.kind === 'void');
-  const stairwell = sumOf((r) => r.kind === 'stairwell');
-  const wallsArea = cm(PLOT_AREA - floor - voidArea - stairwell);
+  /**
+   * Every total here is computed UNROUNDED and rounded only to print.
+   *
+   * WHY: the rooms sit on the centimetre grid but their AREAS do not — a
+   * 2.45 × 2.30 bathroom is 5.6350 m², and a 0.15 m wall makes fractions of a
+   * centimetre squared routine. Rounding each room and then summing is therefore
+   * a different number from summing and then rounding, and this check used to do
+   * one of each and compare them: 225 − 180.65 (rooms rounded first) = 44.35,
+   * against a true remainder of 44.3575 that prints as 44.36. It reported that
+   * centimetre as "a rect overlaps or leaves the plot" for several rounds. It was
+   * reporting its own arithmetic.
+   *
+   * Like is compared with like now, and the tolerance is a real area rather than
+   * float noise, so an actual overlap of half a square centimetre still fails.
+   */
+  const AREA_TOL = 0.005;
+  const exactArea = (room) => room.rects.reduce((sum, r) => sum + rectArea(r), 0);
+  const exactSum = (predicate) => ROOMS.filter(predicate).reduce((sum, r) => sum + exactArea(r), 0);
+  const floor = exactSum((r) => FLOOR_KINDS.has(r.kind));
+  const voidArea = exactSum((r) => r.kind === 'void');
+  const stairwell = exactSum((r) => r.kind === 'stairwell');
 
-  // Independent second opinion on the wall area: compress the coordinates and
-  // add up the cells no rect covers. If this disagrees with "plot minus the
-  // rest", a rect is outside the plot or two rects overlap.
+  // The wall area MEASURED rather than inferred: compress the coordinates and
+  // add up the cells no rect covers, clamped to the plot so a stray rect outside
+  // it cannot be counted as wall.
   const xs = [...new Set([PLOT[0], PLOT[1], ...ROOMS.flatMap((r) => r.rects.flatMap((c) => [c[0], c[1]]))])].sort((a, b) => a - b);
   const zs = [...new Set([PLOT[2], PLOT[3], ...ROOMS.flatMap((r) => r.rects.flatMap((c) => [c[2], c[3]]))])].sort((a, b) => a - b);
   let uncovered = 0;
@@ -263,27 +279,58 @@ check('2. Areas: room table, and the four totals closing on the plot');
     for (let j = 0; j < zs.length - 1; j += 1) {
       const mx = (xs[i] + xs[i + 1]) / 2;
       const mz = (zs[j] + zs[j + 1]) / 2;
+      if (mx < PLOT[0] || mx > PLOT[1] || mz < PLOT[2] || mz > PLOT[3]) continue;
       const covered = ROOMS.some((r) => r.rects.some(([a, b, c, d]) => mx > a && mx < b && mz > c && mz < d));
       if (!covered) uncovered += (xs[i + 1] - xs[i]) * (zs[j + 1] - zs[j]);
     }
   }
-  uncovered = cm(uncovered);
+
+  // Two independent routes to the same quantity: the cells nothing covers, and
+  // the plot minus every room. They agree only if no two rects overlap and none
+  // leaves the plot — an overlapped patch is counted twice in the room sum but
+  // once by the cells, so the two routes differ by exactly the overlap, and a
+  // rect outside the plot shows up the same way. Both sides unrounded.
+  const byRemainder = PLOT_AREA - floor - voidArea - stairwell;
+  if (Math.abs(uncovered - byRemainder) > AREA_TOL) {
+    fail(
+      `wall area is ${byRemainder.toFixed(4)} m² by subtracting the rooms but ${uncovered.toFixed(4)} m² by measuring ` +
+        `the cells they leave, a difference of ${Math.abs(uncovered - byRemainder).toFixed(4)} m² — a rect overlaps another or leaves the plot`,
+    );
+  }
+
+  // Printed figures: the three kinds rounded from their exact values, and WALLS
+  // as the residual of those three, so the column the owner reads adds to the
+  // plot exactly instead of landing a centimetre out through rounding. WALLS is
+  // defined as the remainder, so taking it as the remainder is not a fudge.
+  const shownFloor = cm(floor);
+  const shownVoid = cm(voidArea);
+  const shownStair = cm(stairwell);
+  const shownWalls = cm(PLOT_AREA - shownFloor - shownVoid - shownStair);
+  const shownTotal = cm(shownFloor + shownVoid + shownStair + shownWalls);
 
   line('');
-  line(`FLOOR     (room/circulation/openAir) ${m(floor).padStart(7)} m²`);
-  line(`VOID                                 ${m(voidArea).padStart(7)} m²`);
-  line(`STAIRWELL                            ${m(stairwell).padStart(7)} m²`);
-  line(`WALLS     (plot − everything else)   ${m(wallsArea).padStart(7)} m²`);
+  line(`FLOOR     (room/circulation/openAir) ${m(shownFloor).padStart(7)} m²`);
+  line(`VOID                                 ${m(shownVoid).padStart(7)} m²`);
+  line(`STAIRWELL                            ${m(shownStair).padStart(7)} m²`);
+  line(`WALLS     (plot − everything else)   ${m(shownWalls).padStart(7)} m²`);
   line(`                                     ─────────`);
-  line(`TOTAL                                ${m(cm(floor + voidArea + stairwell + wallsArea)).padStart(7)} m² (plot ${m(PLOT_AREA)})`);
+  line(`TOTAL                                ${m(shownTotal).padStart(7)} m² (plot ${m(PLOT_AREA)})`);
+  // The unrounded figures, because the room column above is rounded per room and
+  // will not add to the printed FLOOR to the centimetre.
+  line(
+    `exact: floor ${floor.toFixed(4)} · void ${voidArea.toFixed(4)} · stairwell ${stairwell.toFixed(4)} · walls ${uncovered.toFixed(4)}`,
+  );
 
-  if (Math.abs(cm(floor + voidArea + stairwell + wallsArea) - PLOT_AREA) > EPS) {
-    fail(`the four totals sum to ${m(floor + voidArea + stairwell + wallsArea)}, not ${m(PLOT_AREA)}`);
+  if (Math.abs(shownTotal - PLOT_AREA) > EPS) {
+    fail(`the four printed totals sum to ${m(shownTotal)}, not ${m(PLOT_AREA)}`);
   }
-  if (Math.abs(uncovered - wallsArea) > EPS) {
-    fail(`wall area by subtraction is ${m(wallsArea)} but the uncovered plot area is ${m(uncovered)} — a rect overlaps or leaves the plot`);
+  // The printed WALLS is a residual of rounded figures, so it may sit a
+  // centimetre from the measured area; further than that and the rounding is
+  // hiding something rather than expressing it.
+  if (Math.abs(shownWalls - uncovered) > 0.01 + AREA_TOL) {
+    fail(`printed wall area ${m(shownWalls)} m² is more than a centimetre from the measured ${uncovered.toFixed(4)} m²`);
   }
-  if (wallsArea <= 0) fail('wall area is not positive');
+  if (uncovered <= 0) fail('wall area is not positive');
 }
 
 /* ───────────────────────────── 3. chains ───────────────────────────── */
