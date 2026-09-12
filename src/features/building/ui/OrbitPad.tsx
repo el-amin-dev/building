@@ -3,6 +3,7 @@ import { useViewStore } from '../application/viewStore.ts';
 import type { OrbitAction } from '../domain/orbitNavigation.ts';
 import { HoldPad } from './HoldPad.tsx';
 import type { HoldPadCluster } from './HoldPad.tsx';
+import { INTERIOR_REGION_ID } from './hudIds.ts';
 
 /** Accessible name of the whole pad. */
 const GROUP_LABEL = 'Camera control';
@@ -53,10 +54,11 @@ const CLUSTERS: readonly HoldPadCluster<OrbitAction>[] = Object.freeze([
  * is what the standing accessibility rule asks for. Rendered only in the exterior view,
  * where the orbit applies.
  *
- * No focus target is handed to {@link HoldPad}: the exterior view is not yet a focusable
- * region, so there is nothing to move focus back to after a pointer hold, and focus stays
- * where the pointer left it. Once the exterior view becomes a focusable region, its DOM id
- * belongs here as `focusTargetId`.
+ * After a pointer hold focus returns to the 3D view region, so the orbit keys keep working
+ * without the viewer having to Tab back out of the pad; a keyboard hold leaves focus on the
+ * button, where the user put it, since moving it would be an unexpected focus change. The
+ * region is focusable in both views and keeps the id `INTERIOR_REGION_ID` although it now
+ * serves the exterior view too — the naming debt is recorded in ADR-013 rather than renamed.
  *
  * Everything about holding, releasing and never sticking lives in {@link HoldPad}, which the
  * interior `RemoteControl` shares: this component is the exterior vocabulary and nothing else.
@@ -71,6 +73,7 @@ export function OrbitPad() {
       groupLabel={GROUP_LABEL}
       clusters={CLUSTERS}
       store={useOrbitControlStore}
+      focusTargetId={INTERIOR_REGION_ID}
       active={isExterior}
     />
   );

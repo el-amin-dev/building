@@ -5,11 +5,16 @@ import { useRemoteControlStore } from '../application/remoteControlStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
 import { ORBIT_ACTIONS } from '../domain/orbitNavigation.ts';
 import type { OrbitAction } from '../domain/orbitNavigation.ts';
+import { INTERIOR_REGION_ID } from './hudIds.ts';
 import { OrbitPad } from './OrbitPad.tsx';
 import { RemoteControl } from './RemoteControl.tsx';
 
 const GROUP_NAME = 'Camera control';
 const REMOTE_GROUP_NAME = 'Remote control';
+const REGION_TEST_ID = 'exterior-region';
+const FOCUSABLE_TAB_INDEX = 0;
+const SPACE_KEY = ' ';
+const ENTER_KEY = 'Enter';
 const FIRST_POINTER_ID = 1;
 /** Smallest target size the pad must offer on both axes: 44 px (WCAG 2.5.8). */
 const TARGET_SIZE_CLASSES: readonly string[] = ['min-h-11', 'min-w-11'];
@@ -36,6 +41,20 @@ function activeActions(): ReadonlySet<OrbitAction> {
 
 function getButton(name: string): HTMLElement {
   return screen.getByRole('button', { name });
+}
+
+/**
+ * Renders a focusable stand-in for the 3D view region before the pad, as in the app: one
+ * element serves both views and keeps the id `INTERIOR_REGION_ID` (ADR-013).
+ */
+function renderWithRegion() {
+  render(
+    <>
+      <div id={INTERIOR_REGION_ID} data-testid={REGION_TEST_ID} tabIndex={FOCUSABLE_TAB_INDEX} />
+      <OrbitPad />
+    </>,
+  );
+  return screen.getByTestId(REGION_TEST_ID);
 }
 
 describe('OrbitPad', () => {
@@ -114,6 +133,34 @@ describe('OrbitPad', () => {
 
     expect(getButton('Zoom in')).toHaveAttribute('aria-pressed', 'true');
     expect(getButton('Zoom out')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('moves focus back to the 3D view region after a pointer hold', () => {
+    const region = renderWithRegion();
+    const button = getButton('Rotate left');
+
+    // Without this the orbit keys stay dead until the viewer Tabs back out of the pad.
+    fireEvent.pointerDown(button, { pointerId: FIRST_POINTER_ID });
+    fireEvent.pointerUp(button, { pointerId: FIRST_POINTER_ID });
+
+    expect(region).toHaveFocus();
+  });
+
+  it.each([SPACE_KEY, ENTER_KEY])('keeps focus on the button when it is held with %j', (key) => {
+    const region = renderWithRegion();
+    const button = getButton('Zoom in');
+    act(() => {
+      button.focus();
+    });
+
+    // A keyboard hold ends where the user put focus: moving it would be an unexpected
+    // focus change, so the pointer route and the keyboard route differ on purpose.
+    fireEvent.keyDown(button, { key });
+    expect(button).toHaveFocus();
+
+    fireEvent.keyUp(button, { key });
+    expect(button).toHaveFocus();
+    expect(region).not.toHaveFocus();
   });
 
   it('is never mounted at the same time as the remote control', () => {
