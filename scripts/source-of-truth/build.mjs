@@ -4,7 +4,8 @@
  *   node scripts/source-of-truth/build.mjs [--dry]
  *
  * The owner draws intent by hand; that intent is read, measured, agreed, and
- * encoded in `plan-v2.mjs`. This script then rewrites the drawing from that
+ * encoded in `src/features/building/domain/sourceOfTruth/plan.ts`, the single
+ * copy of the geometry. This script then rewrites the drawing from that
  * data, so the plan, the wall register and the model can no longer drift apart
  * the way the hand-dragged version did (shapes off the centimetre grid, labels
  * still quoting areas the shapes no longer had).
@@ -15,7 +16,7 @@
  * `verify.mjs` computes the same figures independently: two implementations
  * that must agree is a cheaper check than one implementation everybody trusts.
  */
-import * as spec from './plan-v2.mjs';
+import * as spec from '../../src/features/building/domain/sourceOfTruth/plan.ts';
 import { deriveWalls } from './walls.mjs';
 import { readDiagrams, writeDiagrams } from './drawio.mjs';
 import { renderPlanPage } from './render-plan.mjs';

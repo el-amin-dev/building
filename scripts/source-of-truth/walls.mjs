@@ -1,5 +1,6 @@
 /**
- * Nominal walls, derived from the room rectangles of `plan-v2.mjs`.
+ * Nominal walls, derived from the room rectangles of the source of truth,
+ * `src/features/building/domain/sourceOfTruth/plan.ts`.
  *
  * WHY derive instead of declare: the owner edits rectangles, because a
  * rectangle is what he can measure on the drawing. A hand-written wall list
@@ -26,7 +27,7 @@
  * where geometry complaints get reported, not a silent guess here.
  */
 
-import * as planV2 from './plan-v2.mjs';
+import * as plan from '../../src/features/building/domain/sourceOfTruth/plan.ts';
 
 /** Metre tolerance: the spec is on the centimetre grid, so 1e-6 m is pure noise. */
 const EPS = 1e-6;
@@ -491,14 +492,14 @@ function assignJunctionReasons(walls, spec) {
   }
 }
 
-export function deriveWalls(spec = planV2) {
+export function deriveWalls(spec = plan) {
   const { FLOOR_NUMBER, PLOT, WALLS, ROOMS, JOIN_OVERRIDES } = spec;
   const exteriorT = WALLS.exterior;
 
   /**
    * The interior boundary: a face sitting on it is on the exterior envelope and
    * is 0.30 thick whatever is behind it. Side A is x 0, D is x 22.50, C is z 0
-   * and B is z 10.00 (plan-v2.mjs header).
+   * and B is z 10.00 (plan.ts header).
    */
   const envelope = {
     west: { at: cm(PLOT[0] + exteriorT), side: 'A' },

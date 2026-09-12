@@ -7,11 +7,11 @@
  * the owner actually checks a revision against — so they get their own page,
  * beside the plan, as five tables: ROOMS, WALLS, PORTS, WINDOWS, FIXTURES.
  *
- * This module consumes the contract of `plan-v2.mjs`, nothing else:
+ * This module consumes the contract of `sourceOfTruth/plan.ts`, nothing else:
  *
  *   renderTablePage({ spec, walls }) -> '<mxGraphModel>…</mxGraphModel>'
  *
- * `spec` is the module namespace of `plan-v2.mjs` and `walls` the array
+ * `spec` is the module namespace of `sourceOfTruth/plan.ts` and `walls` the array
  * `deriveWalls(spec)` returns (`walls.mjs`). Both arrive as arguments rather than
  * as imports so that this renderer stays a pure function of the data: the page
  * can be rendered from a fixture, and the build script (`build.mjs`) stays the
@@ -185,7 +185,7 @@ function metres(value) {
 /**
  * Build the id → display-name map of every space in the spec.
  *
- * @param {{ ROOMS: readonly object[] }} spec - The plan-v2 namespace.
+ * @param {{ ROOMS: readonly object[] }} spec - The plan namespace.
  * @returns {Map<string, string>} Space id to its name.
  */
 function buildNameIndex(spec) {
@@ -332,7 +332,7 @@ function indexDerivedOpenings(walls) {
  * all zero-thickness) falls back to composing it from the spec, and then the
  * composition rule lives here in one place.
  *
- * @param {{ FLOOR_NUMBER: number }} spec - The plan-v2 namespace.
+ * @param {{ FLOOR_NUMBER: number }} spec - The plan namespace.
  * @param {{ n: number, type: string }} room
  * @param {Map<number, string>} prefixes - Room number to matricule, from the walls.
  * @returns {string} e.g. `'F1-R11-KIT'`.
@@ -367,7 +367,7 @@ function buildRoomPrefixes(walls) {
  * rect by rect and its area is their sum — a single `w × d` would be a lie about
  * the corridor and the guest room.
  *
- * @param {object} spec - The plan-v2 namespace.
+ * @param {object} spec - The plan namespace.
  * @param {readonly object[]} walls - The derived walls, for the matricules.
  * @returns {Table}
  */
@@ -495,7 +495,7 @@ function unionLength(intervals) {
  * so it is not re-derived here; what this needs from an entry is which face it
  * names.
  *
- * @param {object} spec - The plan-v2 namespace.
+ * @param {object} spec - The plan namespace.
  * @param {readonly object[]} walls - The derived walls.
  * @returns {Map<string, { insulated: number, named: boolean, full: boolean }>}
  */
@@ -566,7 +566,7 @@ function describeIsolationTotal(insulated, total) {
  * with the sum of those, so a run that grew or vanished between two revisions
  * shows up as a changed number rather than as a row to be hunted for.
  *
- * @param {object} spec - The plan-v2 namespace.
+ * @param {object} spec - The plan namespace.
  * @param {readonly object[]} walls - The derived walls.
  * @returns {Table}
  */
@@ -726,7 +726,7 @@ function buildOpeningRows(names, declared, index, belongs, withHeights) {
 /**
  * PORTS: the doors and the one leafless opening, with the reason where given.
  *
- * @param {object} spec - The plan-v2 namespace.
+ * @param {object} spec - The plan namespace.
  * @param {Map<string, { matricule: string, walls: string[], opening: object }>} index
  * @returns {Table}
  */
@@ -756,7 +756,7 @@ function buildPortsTable(spec, index) {
  * `air` (above eye level), `pass` (counter height) and `light` (hand level) — so
  * they get a column of their own rather than hiding in the `why`.
  *
- * @param {object} spec - The plan-v2 namespace.
+ * @param {object} spec - The plan namespace.
  * @param {Map<string, { matricule: string, walls: string[], opening: object }>} index
  * @returns {Table}
  */
@@ -898,7 +898,7 @@ function summariseFixtures(rows) {
  * construction. Rooms are listed in room-number order; a fixture in a room the
  * spec does not declare keeps its raw room id rather than vanishing.
  *
- * @param {object} spec - The plan-v2 namespace.
+ * @param {object} spec - The plan namespace.
  * @param {readonly object[]} walls - The derived walls, for the room matricules.
  * @returns {Table}
  */
@@ -1129,7 +1129,7 @@ function layoutTable(table, x, y, nextId) {
  * them, so adding a room or rewording a note never pushes a table off the page.
  *
  * @param {object} args
- * @param {object} args.spec - Module namespace of `plan-v2.mjs`.
+ * @param {object} args.spec - Module namespace of `sourceOfTruth/plan.ts`.
  * @param {readonly object[]} args.walls - `deriveWalls(spec)`, per that file's contract.
  * @returns {string} `<mxGraphModel>…</mxGraphModel>`, one draw.io page.
  */

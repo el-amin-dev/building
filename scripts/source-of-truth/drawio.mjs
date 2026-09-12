@@ -3,7 +3,7 @@
  * `docs/source-of-truth-n-floor.drawio.html` without disturbing anything else.
  *
  * The owner edits that file by hand in the draw.io desktop app, and we
- * regenerate one of its pages from `plan-v2.mjs`. Both directions must survive
+ * regenerate one of its pages from `sourceOfTruth/plan.ts`. Both directions must survive
  * the other, so this module is deliberately conservative: it changes the bytes
  * it is asked to change and copies every other byte through verbatim.
  *

@@ -1,7 +1,8 @@
 /**
  * Self-check of the floor plan source of truth: `node scripts/source-of-truth/verify.mjs`
  *
- * WHY a verifier and not tests: the numbers in `plan-v2.mjs` are the owner's,
+ * WHY a verifier and not tests: the numbers in the source of truth
+ * (`src/features/building/domain/sourceOfTruth/plan.ts`) are the owner's,
  * edited between sessions by hand on a drawing. What breaks is never the code,
  * it is a rectangle moved 5 cm so a wall no longer closes, a door pushed flush
  * against a return, a room that ends up reachable only through the stairwell
@@ -28,7 +29,7 @@ import {
   WINDOWS,
   FIXTURES,
   INSULATED_WALLS,
-} from './plan-v2.mjs';
+} from '../../src/features/building/domain/sourceOfTruth/plan.ts';
 import { deriveWalls, wallsByRoom } from './walls.mjs';
 
 const SPEC = {

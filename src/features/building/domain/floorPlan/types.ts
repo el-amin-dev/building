@@ -16,7 +16,19 @@
  */
 import type { PlanRect, RectSide } from '../planGeometry.ts';
 
-/** Identifiers of every space on the floor, in a stable order. Frozen. */
+/**
+ * Identifiers of every space on the floor, in a stable order. Frozen.
+ *
+ * The order and the membership are the source of truth's: this is
+ * `ROOMS` of `../sourceOfTruth/plan.ts` in matricule order R01…R22. It is
+ * written out rather than derived so the ids stay literal types; the derivation
+ * in `floorPlanData.ts` fails to typecheck if the two ever disagree.
+ *
+ * Changed with the new plan: `linkCorridor` is gone, absorbed into the guest
+ * room's north strip; `ccBalcony` is new; and the baths and showers are rooms
+ * in their own right rather than fittings, which is what gives them walls and
+ * doors like everything else on the floor.
+ */
 export const SPACE_IDS = Object.freeze([
   'balconyA',
   'masterBedroom',
@@ -25,7 +37,6 @@ export const SPACE_IDS = Object.freeze([
   'bedroomFemaleKids',
   'stairs',
   'corridor',
-  'linkCorridor',
   'controlCenter',
   'guestRoom',
   'guestSanitair',
@@ -33,9 +44,14 @@ export const SPACE_IDS = Object.freeze([
   'laundry',
   'mainSanitair',
   'utilityRoom',
+  'ccBalcony',
   'balconySlabB',
   'voidWest',
   'voidEast',
+  'guestBathCubicle',
+  'guestShowerCubicle',
+  'mainBathCubicle',
+  'mainShowerCubicle',
 ] as const);
 
 /** Identifier of a space on the floor; one of {@link SPACE_IDS}. */

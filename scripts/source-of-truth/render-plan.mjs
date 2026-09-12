@@ -1,7 +1,7 @@
 /**
- * Render the floor plan of `plan-v2.mjs` as one draw.io page.
+ * Render the floor plan of `sourceOfTruth/plan.ts` as one draw.io page.
  *
- * This is the drawing half of the source of truth: `plan-v2.mjs` holds the
+ * This is the drawing half of the source of truth: `sourceOfTruth/plan.ts` holds the
  * geometry, `walls.mjs` derives the wall and opening matricules from it, and
  * this module turns both into the `<mxGraphModel>` XML of the plan page. It
  * computes no geometry of its own beyond pixels — every length it prints comes
@@ -245,7 +245,7 @@ const CHAR_W_PROSE = 0.58;
  * Render the plan page.
  *
  * @param {{ spec: Record<string, unknown>, walls: ReadonlyArray<Record<string, unknown>> }} input
- *   `spec` is the module namespace of `plan-v2.mjs`; `walls` is the `Wall[]` of
+ *   `spec` is the module namespace of `sourceOfTruth/plan.ts`; `walls` is the `Wall[]` of
  *   `walls.mjs` (passed in rather than imported so this module stays a pure
  *   function of its inputs and can be exercised against a fixture).
  * @returns {string} The `<mxGraphModel>…</mxGraphModel>` XML of the page.
