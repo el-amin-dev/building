@@ -5,7 +5,7 @@
  * matricule, every derived wall with its run and its length, and every port and
  * window with its span, its clear width and the owner's reason for it, are what
  * the owner actually checks a revision against — so they get their own page,
- * beside the plan, as four tables: ROOMS, WALLS, PORTS, WINDOWS.
+ * beside the plan, as five tables: ROOMS, WALLS, PORTS, WINDOWS, FIXTURES.
  *
  * This module consumes the contract of `plan-v2.mjs`, nothing else:
  *
@@ -621,6 +621,121 @@ function buildWindowsTable(spec, index) {
 }
 
 /**
+ * Position order of two fixtures in the same room: plan reading order.
+ *
+ * A fixture's number is part of its matricule, so this comparator decides what
+ * `F1-R13-BTH-X1` names — and the plan page must reach the same answer, or the
+ * two pages disagree about which fitting is which while both look correct. The
+ * rule is therefore fixed here, in one place, and justified rather than assumed:
+ * north strip first (`minZ`, since z runs C→B), then west to east (`minX`), which
+ * is how the drawing is read.
+ *
+ * It is not an arbitrary pick between that and `minX`-first. Sorting the main
+ * sanitair this way yields sink, shower, bath, and the guest sanitair sink, bath
+ * — exactly the owner's own recorded notation for the two rooms,
+ * `[open sink [shower][bath]]` and `[open sink [bath]]` (ADR-006, TASKS §Part 1).
+ * Sorting by `minX` first yields bath, sink, shower, which matches nothing the
+ * owner ever said, and declaration order swaps the shower and the bath. The
+ * ordering that reproduces the owner's description is the one that is right.
+ *
+ * @param {{ rect: readonly number[] }} a
+ * @param {{ rect: readonly number[] }} b
+ * @returns {number} Negative when `a` is read first.
+ */
+function byPosition(a, b) {
+  return a.rect[2] - b.rect[2] || a.rect[0] - b.rect[0];
+}
+
+/**
+ * Describe the rectangle a fixture occupies, in the form the wall runs use.
+ *
+ * A fixture is a footprint, not a run, so both spans are stated: the reader
+ * locates it the same way they locate a wall, by reading a coordinate off each
+ * axis, without having to learn a second notation for the same kind of fact.
+ *
+ * @param {readonly number[]} rect - `[minX, maxX, minZ, maxZ]`, metres.
+ * @returns {string} e.g. `'x 19.40–20.10 · z 5.70–6.15'`.
+ */
+function describeRect(rect) {
+  if (!Array.isArray(rect) || rect.length < 4) return ABSENT;
+  const [minX, maxX, minZ, maxZ] = rect;
+  return `x ${metres(minX)}–${metres(maxX)} · z ${metres(minZ)}–${metres(maxZ)}`;
+}
+
+/**
+ * FIXTURES: what stands in the rooms — the sanitair fittings and the television.
+ *
+ * Numbered per room with the tag `X`, in {@link byPosition} order, on the room
+ * matricule the other tables already use: `F1-R13-BTH-X1`. The room part is taken
+ * from the derived walls exactly as {@link buildRoomsTable} takes it, so a room
+ * cannot be `R13` in one table and `R13` in another by coincidence rather than by
+ * construction. Rooms are listed in room-number order; a fixture in a room the
+ * spec does not declare keeps its raw room id rather than vanishing.
+ *
+ * @param {object} spec - The plan-v2 namespace.
+ * @param {readonly object[]} walls - The derived walls, for the room matricules.
+ * @returns {Table}
+ */
+function buildFixturesTable(spec, walls) {
+  const names = buildNameIndex(spec);
+  const prefixes = buildRoomPrefixes(walls);
+  const roomsById = new Map(spec.ROOMS.map((room) => [room.id, room]));
+
+  /** @type {Map<string, object[]>} */
+  const byRoom = new Map();
+  for (const fixture of spec.FIXTURES ?? []) {
+    const list = byRoom.get(fixture.room);
+    if (list) list.push(fixture);
+    else byRoom.set(fixture.room, [fixture]);
+  }
+
+  const ordered = [...byRoom.entries()].sort((a, b) => {
+    return (
+      (roomsById.get(a[0])?.n ?? Number.MAX_SAFE_INTEGER) -
+      (roomsById.get(b[0])?.n ?? Number.MAX_SAFE_INTEGER)
+    );
+  });
+
+  /** @type {Row[]} */
+  const rows = [];
+  /** @type {string[]} */
+  const kinds = [];
+  for (const [roomId, list] of ordered) {
+    const room = roomsById.get(roomId);
+    const prefix = room ? roomMatricule(spec, room, prefixes) : roomId;
+    [...list].sort(byPosition).forEach((fixture, index) => {
+      if (!kinds.includes(fixture.kind)) kinds.push(fixture.kind);
+      const [minX, maxX, minZ, maxZ] = fixture.rect ?? [];
+      const hasRect = typeof minX === 'number' && typeof minZ === 'number';
+      rows.push({
+        kind: 'body',
+        cells: [
+          `${prefix}-X${index + 1}`,
+          spaceName(names, roomId),
+          fixture.kind ?? ABSENT,
+          describeRect(fixture.rect),
+          hasRect ? `${metres(maxX - minX)} × ${metres(maxZ - minZ)}` : ABSENT,
+          hasRect ? metres((maxX - minX) * (maxZ - minZ)) : ABSENT,
+        ],
+      });
+    });
+  }
+
+  return {
+    title: `FIXTURES — ${rows.length} fittings, by kind: ${kinds.join(' · ')}`,
+    columns: [
+      { head: 'MATRICULE', align: 'left' },
+      { head: 'ROOM', align: 'left' },
+      { head: 'KIND', align: 'left' },
+      { head: 'OCCUPIES', align: 'left' },
+      { head: 'SIZE m', align: 'left' },
+      { head: 'AREA m²', align: 'right' },
+    ],
+    rows,
+  };
+}
+
+/**
  * The draw.io style of one grid cell.
  *
  * `overflow=hidden` is deliberate: it makes a label that does not fit clip at the
@@ -778,9 +893,10 @@ function layoutTable(table, x, y, nextId) {
 /**
  * Render the reference-table page of the source-of-truth document.
  *
- * The four tables are stacked down one page in the order a revision is read in:
+ * The five tables are stacked down one page in the order a revision is read in:
  * what the spaces are (ROOMS), what the derivation made of them (WALLS), how they
- * are entered (PORTS) and how they are aired and lit (WINDOWS). Each table starts
+ * are entered (PORTS), how they are aired and lit (WINDOWS) and what stands in
+ * them (FIXTURES). Each table starts
  * below the previous one's real height, and the page is sized to the widest of
  * them, so adding a room or rewording a note never pushes a table off the page.
  *
@@ -796,6 +912,7 @@ export function renderTablePage({ spec, walls }) {
     buildWallsTable(spec, walls),
     buildPortsTable(spec, derivedOpenings),
     buildWindowsTable(spec, derivedOpenings),
+    buildFixturesTable(spec, walls),
   ];
 
   const nextId = createIdFactory();

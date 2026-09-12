@@ -23,13 +23,15 @@
  * ## Why the labels are packed rather than centred
  *
  * The owner asked for *every* wall to be labelled with its matricule and its
- * length; ports and windows carry their matricule alone. Even so a label is
- * usually wider than the opening it names, so labels cannot simply sit inside
- * the thing they name. What saves it is that rooms are drawn as *clear*
- * rectangles: the 6 px (partition) and 9 px (exterior) gaps between them form a
- * continuous empty lattice, which is exactly where wall, port and window labels
- * belong. So every such label is queued into a "band" — one shared line of
- * constant centreline per wall axis — and each band is then packed:
+ * length; ports and windows carry their matricule alone, and a fixture its
+ * matricule and its kind, since a small rectangle does not otherwise say whether
+ * it is a sink or a shower. Even so a label is usually wider than the opening it
+ * names, so labels cannot simply sit inside the thing they name. What saves it
+ * is that rooms are drawn as *clear* rectangles: the 12 px (partition) and 18 px
+ * (exterior) gaps between them form a continuous empty lattice, which is exactly
+ * where wall, port and window labels belong. So every such label is queued into
+ * a "band" — one shared line of constant centreline per wall axis — and each
+ * band is then packed:
  *
  * - up to six interleaved lanes per band ({@link BAND_ROWS}), straddling the
  *   wall line, because a band carries both faces of its wall plus every opening
@@ -41,8 +43,10 @@
  *   horizontal one leaves both unreadable.
  *
  * At 60 px = 1 m this succeeds almost everywhere: one label of about a hundred
- * ends up off the wall it names, and none now form a band below the plot. Where
- * a label does sit a little outside its wall that is deliberate and permitted.
+ * ends up off the wall it names, and the only ones reaching past the outline are
+ * six on the 0.80 m walls of the south strip, where the label is half again as
+ * long as the wall it names — five of those clear it by under 20 px. A label
+ * sitting a little outside its own wall is deliberate and permitted.
  * The side labels and the captions are placed against the *measured* bounds of
  * everything drawn, not a fixed margin, so they cannot land on a label however
  * `walls.mjs` changes. Nothing is ever dropped: an unlabelled wall would defeat
@@ -69,7 +73,7 @@
  * 24…60 px/m at six lanes, the labels left off the wall they name run 27 (at 30)
  * → 10 (40) → 6 (45) → 4 (50) → 1 (60), and every scale below 60 still leaves a
  * ~75 px band of overflow under the plot; at 60 the last label clears the plot's
- * bottom edge. The page is then 1414 × 759 px, which still fits a screen.
+ * bottom edge. The page is then about 1400 × 800 px, which still fits a screen.
  *
  * This is the one number the whole placement geometry keys off.
  */
@@ -116,6 +120,15 @@ const PORT_COLORS = Object.freeze({ fill: '#00b050', stroke: 'none', text: '#007
 const WINDOW_COLORS = Object.freeze({ fill: '#e3c800', stroke: '#B09500', text: '#7a5c00' });
 /** Grey of a wall label: present, readable, and never competing with a matricule. */
 const WALL_TEXT = '#666666';
+
+/**
+ * Blue-grey of a fixture: a sink, a bath, a shower, the television.
+ *
+ * Deliberately outside the pastel range the rooms are filled with, and nowhere
+ * near the green of a port or the gold of a window, so a fixture reads as a
+ * thing standing in a room rather than as part of the fabric around it.
+ */
+const FIXTURE_COLORS = Object.freeze({ fill: '#cfd8dc', stroke: '#455a64', text: '#37474f' });
 
 /**
  * How each spelling of a wall's `side` maps to the axis the wall runs along and
@@ -180,7 +193,7 @@ const CHAR_W_PROSE = 0.58;
  * @returns {string} The `<mxGraphModel>…</mxGraphModel>` XML of the page.
  */
 export function renderPlanPage({ spec, walls }) {
-  const { PLOT, ROOMS, WALLS, STAIRS, SIDES, FLOOR_NUMBER } = spec;
+  const { PLOT, ROOMS, WALLS, STAIRS, SIDES, FIXTURES, FLOOR_NUMBER } = spec;
   const [plotMinX, plotMaxX, plotMinZ, plotMaxZ] = PLOT;
 
   /** Emitted cells, in z-order: later cells paint on top of earlier ones. */
@@ -199,6 +212,17 @@ export function renderPlanPage({ spec, walls }) {
    */
   const boxes = [];
 
+  /**
+   * Every *label* box committed so far: room matricules first, then fixtures,
+   * then the wall, port and window labels.
+   *
+   * One shared list, because the owner's instruction this round was to fix any
+   * overlap — not merely overlaps between labels of the same kind. It is what
+   * lets a wall label steer around a fixture label it otherwise knows nothing
+   * about, and what keeps both off a room's matricule.
+   */
+  const placedLabels = [];
+
   // ---------------------------------------------------------------- the plot
   cells.push(
     shape({
@@ -210,6 +234,17 @@ export function renderPlanPage({ spec, walls }) {
       h: SCALE * (plotMaxZ - plotMinZ),
     }),
   );
+
+  // ------------------------------------------------- fixtures, planned first
+  // The fixture shapes are drawn further down, on top of the room fills, but
+  // their boxes are needed here: a room's matricule has to know where the bath
+  // is before it can choose a corner of the room to sit in.
+  for (const [, items] of fixturesByRoom(FIXTURES ?? [], ROOMS)) {
+    for (const fixture of items) {
+      const [minX, maxX, minZ, maxZ] = fixture.rect;
+      placedLabels.push({ x0: px(minX), y0: py(minZ), x1: px(maxX), y1: py(maxZ) });
+    }
+  }
 
   // --------------------------------------------------------------- the rooms
   for (const room of ROOMS) {
@@ -227,12 +262,23 @@ export function renderPlanPage({ spec, walls }) {
         room.kind === 'stairwell'
           ? { fontSize: BAND_FONT, lines: [] }
           : roomLabel({ matricule, index, rectCount: room.rects.length, wPx, hPx });
+      // draw.io centres a shape's label, and in a small room that can drop the
+      // matricule straight onto a fixture: the 1.60 × 1.30 guest sanitair, whose
+      // centre is inside its bath, is exactly that case. So the matricule takes
+      // the first of draw.io's nine anchor positions that is clear of everything
+      // placed so far — the centre first, so only a room that needs to move does.
+      const anchor = placeRoomLabel(
+        label,
+        { x0: px(minX), y0: py(minZ), x1: px(maxX), y1: py(maxZ) },
+        placedLabels,
+      );
       cells.push(
         shape({
           style:
             `rounded=0;whiteSpace=wrap;html=1;fillColor=${fill};strokeColor=${stroke};` +
             `strokeWidth=${room.kind === 'openAir' ? 2 : 1};fontSize=${label.fontSize};fontStyle=1;` +
-            `verticalAlign=middle;align=center;${isVoid ? 'dashed=1;fontColor=#cc0000;' : ''}`,
+            `verticalAlign=${anchor.vertical};align=${anchor.horizontal};` +
+            `${isVoid ? 'dashed=1;fontColor=#cc0000;' : ''}`,
           value: label.lines.join('\n'),
           x: px(minX),
           y: py(minZ),
@@ -240,6 +286,9 @@ export function renderPlanPage({ spec, walls }) {
           h: hPx,
         }),
       );
+      // What must stay clear is the text itself, not the whole rect: a
+      // rect-sized obstacle would push every wall label out of every room.
+      if (anchor.box) placedLabels.push(anchor.box);
     });
   }
 
@@ -249,20 +298,23 @@ export function renderPlanPage({ spec, walls }) {
     // 18 risers over two flights: state the per-flight count rather than hard-
     // coding 9, so a change to `riserCount` cannot leave the drawing lying.
     const perFlight = Math.round(STAIRS.riserCount / 2);
-    const flights = [
-      [STAIRS.flightA, `flight A — ${perFlight} risers ↓`],
-      [STAIRS.halfLanding, 'half-landing\n(half a storey down)'],
-      [STAIRS.flightB, `flight B — ${perFlight} risers ↓`],
-    ];
-    for (const [rect, text] of flights) {
-      if (!rect) continue;
+    // Whatever pieces the spec defines, in the order it defines them — which is
+    // travel order, from the corridor down. Naming them here once meant the
+    // arrival landing went undrawn when the owner added it, leaving bare bay
+    // fill where the one new thing was supposed to be; a fifth piece now appears
+    // by itself.
+    for (const [name, rect] of stairPieces(STAIRS)) {
       const [minX, maxX, minZ, maxZ] = rect;
+      // Hatched for the flights, plain for the landings: what you can stand on
+      // as floor is drawn as floor, and the label says which level that is.
+      const isFlight = /flight/i.test(name);
       cells.push(
         shape({
           style:
-            'rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;fillStyle=hatch;strokeColor=#666666;' +
-            `strokeWidth=1;fontSize=${BAND_FONT};fontStyle=0;fontColor=#333333;verticalAlign=middle;align=center;`,
-          value: text,
+            `rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;${isFlight ? 'fillStyle=hatch;' : ''}` +
+            `strokeColor=#666666;strokeWidth=1;fontSize=${BAND_FONT};fontStyle=0;fontColor=#333333;` +
+            'verticalAlign=middle;align=center;',
+          value: stairPieceLabel(name, perFlight),
           x: px(minX),
           y: py(minZ),
           w: SCALE * (maxX - minX),
@@ -271,10 +323,66 @@ export function renderPlanPage({ spec, walls }) {
       );
     }
     // The "no floor here, the top landing is the corridor" note used to be drawn
-    // in the band where the stair meets the corridor. It is not any more: the
-    // plan carries identity only, and that is a description. It survives as a
-    // caption under the drawing, where it explains the plan's oddest feature
-    // without cluttering it.
+    // in the band where the stair meets the corridor, and a fuller version sat
+    // under the plan. Both are gone: the plan carries identity only and those are
+    // descriptions. The three piece labels above still say what the bay holds;
+    // the rest is on the Registers page.
+  }
+
+  // ------------------------------------------------------------- the fixtures
+  // The things standing in a room: a sink, a bath, a shower, the television. A
+  // fixture is in a room, not in a wall, so it is numbered per room — X1, X2 …
+  // in reading order, top to bottom then left to right — and placed here rather
+  // than through the band machinery, which exists to thread labels along walls.
+  for (const [roomId, items] of fixturesByRoom(FIXTURES ?? [], ROOMS)) {
+    const room = ROOMS.find((candidate) => candidate.id === roomId);
+    if (!room) continue;
+    const base = roomMatricule(FLOOR_NUMBER, room);
+    const roomBoxes = room.rects.map(([minX, maxX, minZ, maxZ]) => ({
+      x0: px(minX),
+      y0: py(minZ),
+      x1: px(maxX),
+      y1: py(maxZ),
+    }));
+
+    items.forEach((fixture, index) => {
+      const [minX, maxX, minZ, maxZ] = fixture.rect;
+      const box = { x0: px(minX), y0: py(minZ), x1: px(maxX), y1: py(maxZ) };
+      cells.push(
+        shape({
+          style:
+            `rounded=0;whiteSpace=wrap;html=1;fillColor=${FIXTURE_COLORS.fill};` +
+            `strokeColor=${FIXTURE_COLORS.stroke};strokeWidth=1;`,
+          value: '',
+          x: box.x0,
+          y: box.y0,
+          w: box.x1 - box.x0,
+          h: box.y1 - box.y0,
+        }),
+      );
+      // The shape is already an obstacle: it was registered in the planning pass
+      // above, before any room matricule chose where to sit.
+
+      // The kind word is carried as well as the matricule, against the
+      // matricule-only rule the rest of the plan follows. A small rectangle is
+      // the one shape here that does not say what it is on sight.
+      const label = `${base}-X${index + 1} ${fixture.kind}`;
+      const spot = placeLabelBox(label, box, roomBoxes, placedLabels);
+      if (!spot) return;
+      placedLabels.push(spot);
+      cells.push(
+        text({
+          style:
+            `text;html=1;align=center;verticalAlign=middle;fontSize=${BAND_FONT};` +
+            `fontColor=${FIXTURE_COLORS.text};`,
+          value: label,
+          x: spot.x0,
+          y: spot.y0,
+          w: spot.x1 - spot.x0,
+          h: spot.y1 - spot.y0,
+        }),
+      );
+    });
   }
 
   // ----------------------------------------- walls, and the openings in them
@@ -403,8 +511,8 @@ export function renderPlanPage({ spec, walls }) {
 
   caption(
     'text;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fontSize=9;fontColor=#00701a;',
-    'Green = port (door or opening) · Gold = window · Hatched = stair flights · Dashed red = void (no floor)\n' +
-      'Every shape carries its matricule, and a wall carries its length. Sizes, notes, widths and sill→head are on the Registers page.',
+    'Green = port (door or opening) · Gold = window · Blue-grey = fixture · Hatched = stair flights · Dashed red = void (no floor)\n' +
+      'Every shape carries its matricule; a wall carries its length and a fixture its kind. Sizes, notes, widths and sill→head are on the Registers page.',
     26,
   );
 
@@ -529,8 +637,9 @@ export function renderPlanPage({ spec, walls }) {
    */
   function emitBands() {
     const height = BAND_FONT + 2;
-    /** Boxes already committed, in page coordinates, for the collision test. */
-    const placed = [];
+    // Every label box committed so far — the room matricules and the fixture
+    // labels included — so a wall label never lands on one.
+    const placed = placedLabels;
 
     for (const key of [...bands.keys()].sort()) {
       const { axis, at, items } = bands.get(key);
@@ -599,6 +708,231 @@ export function renderPlanPage({ spec, walls }) {
       { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity },
     );
   }
+}
+
+/**
+ * Group the fixtures by room and put each room's in reading order.
+ *
+ * Numbering is per room, not per wall: a fixture stands in a room. Ordering by
+ * z and then x makes `X1`, `X2` … stable — the same fixture keeps its number
+ * from one run to the next as long as it has not moved, which matters because
+ * these matricules are quoted on the Registers page.
+ *
+ * @param {ReadonlyArray<{room: string, rect: ReadonlyArray<number>}>} fixtures The spec's fixtures.
+ * @param {ReadonlyArray<{id: string}>} rooms The spec's rooms, for a stable room order.
+ * @returns {Array<[string, Array<Record<string, unknown>>]>} `[roomId, fixtures]`, rooms in spec order.
+ */
+function fixturesByRoom(fixtures, rooms) {
+  const roomOrder = new Map(rooms.map((room, index) => [room.id, index]));
+  const grouped = new Map();
+  for (const fixture of fixtures) {
+    if (!grouped.has(fixture.room)) grouped.set(fixture.room, []);
+    grouped.get(fixture.room).push(fixture);
+  }
+  for (const items of grouped.values()) {
+    items.sort((a, b) => a.rect[2] - b.rect[2] || a.rect[0] - b.rect[0]);
+  }
+  return [...grouped.entries()].sort(
+    (a, b) => (roomOrder.get(a[0]) ?? 0) - (roomOrder.get(b[0]) ?? 0),
+  );
+}
+
+/**
+ * The pieces of the stair, in the order the spec lists them — travel order.
+ *
+ * Anything on `STAIRS` that is a rectangle and is not the `bay` is a piece. The
+ * bay is the bounding box of the lot and is drawn separately as the stairwell
+ * room's own rect, so including it would paint over everything inside it.
+ *
+ * Read from the data rather than named, because they were named once and the
+ * arrival landing the owner asked for then went undrawn.
+ *
+ * @param {Record<string, unknown>} stairs The spec's `STAIRS`.
+ * @returns {Array<[string, ReadonlyArray<number>]>} `[name, rect]` in spec order.
+ */
+function stairPieces(stairs) {
+  return Object.entries(stairs).filter(
+    ([name, value]) =>
+      name !== 'bay' &&
+      Array.isArray(value) &&
+      value.length === 4 &&
+      value.every((n) => Number.isFinite(n)),
+  );
+}
+
+/**
+ * The label for one stair piece: what it is, and what level it is at.
+ *
+ * The level is the thing a reader needs and cannot see: the east landing is
+ * walkable floor at *this* storey, the half-landing is floor half a storey down,
+ * and a flight is neither — it is the descent between them. The name is
+ * un-camel-cased so a piece the spec adds later reads correctly without being
+ * listed here; a one-letter word such as the `A` of `flightA` keeps its capital.
+ *
+ * @param {string} name The key on `STAIRS`, e.g. `flightA` or `landingEast`.
+ * @param {number} perFlight Risers in one flight.
+ * @returns {string} Two lines: the name, then the level.
+ */
+function stairPieceLabel(name, perFlight) {
+  const words = name
+    .replace(/([A-Z])/g, ' $1')
+    .split(/\s+/)
+    .filter(Boolean);
+  const pretty = words.map((word, i) => (i === 0 || word.length === 1 ? word : word.toLowerCase()));
+  const title = pretty.join(' ');
+
+  if (/flight/i.test(name)) return `${title}\n${perFlight} risers ↓`;
+  if (/half/i.test(name)) return `${title}\nhalf a storey down`;
+  if (/landing/i.test(name)) return `${title}\nthis floor's level`;
+  return title;
+}
+
+/**
+ * draw.io's nine label anchors, in the order a room's matricule should try them.
+ *
+ * Centre first, so a room only moves its matricule when something is in the way;
+ * then the edges, then the corners, which are the positions a small room with a
+ * bath across it still has free.
+ */
+const ROOM_ANCHORS = Object.freeze([
+  ['center', 'middle'],
+  ['center', 'top'],
+  ['center', 'bottom'],
+  ['left', 'middle'],
+  ['right', 'middle'],
+  ['left', 'top'],
+  ['right', 'top'],
+  ['left', 'bottom'],
+  ['right', 'bottom'],
+]);
+
+/**
+ * Choose where inside its rect a room's matricule should sit.
+ *
+ * Returns the draw.io alignment to set on the room's own shape rather than a
+ * position, so the matricule stays part of the rect — one cell, not two — and
+ * still moves out from under a bath when it has to.
+ *
+ * @param {{fontSize: number, lines: string[]}} label The chosen room label.
+ * @param {{x0: number, y0: number, x1: number, y1: number}} rect The room rect, px.
+ * @param {ReadonlyArray<{x0: number, y0: number, x1: number, y1: number}>} obstacles Boxes to avoid.
+ * @returns {{horizontal: string, vertical: string, box: {x0: number, y0: number, x1: number,
+ *   y1: number} | null}} The alignment, and the box it puts the text in.
+ */
+function placeRoomLabel(label, rect, obstacles) {
+  if (label.lines.length === 0) return { horizontal: 'center', vertical: 'middle', box: null };
+
+  const w = label.lines[0].length * label.fontSize * CHAR_W_PROSE;
+  const h = label.fontSize * 1.45;
+  const pad = 2;
+  const free = (box) =>
+    !obstacles.some(
+      (o) =>
+        box.x0 < o.x1 - 0.01 &&
+        o.x0 < box.x1 - 0.01 &&
+        box.y0 < o.y1 - 0.01 &&
+        o.y0 < box.y1 - 0.01,
+    );
+
+  let centred = null;
+  for (const [horizontal, vertical] of ROOM_ANCHORS) {
+    const x0 =
+      horizontal === 'center'
+        ? (rect.x0 + rect.x1) / 2 - w / 2
+        : horizontal === 'left'
+          ? rect.x0 + pad
+          : rect.x1 - pad - w;
+    const y0 =
+      vertical === 'middle'
+        ? (rect.y0 + rect.y1) / 2 - h / 2
+        : vertical === 'top'
+          ? rect.y0 + pad
+          : rect.y1 - pad - h;
+    const box = { x0, y0, x1: x0 + w, y1: y0 + h };
+    if (!centred) centred = { horizontal, vertical, box };
+    if (free(box)) return { horizontal, vertical, box };
+  }
+  // Every anchor is blocked: keep the centred one and let the checks report it.
+  return centred;
+}
+
+/**
+ * Find a box for a fixture's label: as close to the fixture as possible, inside
+ * its own room if that can be managed, and clear of everything already placed.
+ *
+ * Candidates are stacked directly above and below the fixture and stepped
+ * outwards, and at each step the label may slide along the fixture as well as
+ * shoulder past it. Every candidate inside the room is tried before any outside
+ * it, so a label leaves the room it belongs to only when the room has genuinely
+ * run out of space — which the 1.60 × 1.50 guest sanitair, holding a bath and a
+ * sink, very nearly does.
+ *
+ * @param {string} label The text to place.
+ * @param {{x0: number, y0: number, x1: number, y1: number}} fixture The fixture's box, px.
+ * @param {ReadonlyArray<{x0: number, y0: number, x1: number, y1: number}>} roomBoxes Its room's rects, px.
+ * @param {ReadonlyArray<{x0: number, y0: number, x1: number, y1: number}>} obstacles Boxes to avoid.
+ * @returns {{x0: number, y0: number, x1: number, y1: number} | null} The box, or null if nowhere is free.
+ */
+function placeLabelBox(label, fixture, roomBoxes, obstacles) {
+  const w = label.length * BAND_FONT * CHAR_W + 4;
+  const h = BAND_FONT + 2;
+  const cx = (fixture.x0 + fixture.x1) / 2;
+  const step = h + 2;
+
+  // How far the label can slide along the fixture and still sit over it. This is
+  // the freedom a long thin fixture needs: the television is a 3.50 × 0.08 bar,
+  // 210 px of it, and with only a couple of sideways positions to try its label
+  // could not get past the corridor's own matricule — so it walked away in y
+  // instead and ended up 0.55 m adrift, reading as a label for the corridor.
+  const slide = Math.max(0, (fixture.x1 - fixture.x0 - w) / 2);
+  const offsets = [0];
+  for (const fraction of [0.25, 0.5, 0.75, 1]) {
+    offsets.push(slide * fraction, -slide * fraction);
+  }
+  // Shoulder positions, for a fixture too small to slide along at all.
+  offsets.push(w * 0.55, -w * 0.55, w * 0.9, -w * 0.9);
+  // Nearest sideways position first, so the label stays over its own shape; the
+  // ring (distance above or below) stays the outer loop, so adjacency wins over
+  // alignment every time.
+  const shifts = [...new Set(offsets.map((v) => Math.round(v * 100) / 100))].sort(
+    (a, b) => Math.abs(a) - Math.abs(b) || a - b,
+  );
+
+  const candidates = [];
+  for (let ring = 1; ring <= 14; ring += 1) {
+    for (const dx of shifts) {
+      for (const side of [1, -1]) {
+        const cy = side > 0 ? fixture.y1 + (ring - 0.5) * step : fixture.y0 - (ring - 0.5) * step;
+        candidates.push({
+          x0: cx + dx - w / 2,
+          y0: cy - h / 2,
+          x1: cx + dx + w / 2,
+          y1: cy + h / 2,
+        });
+      }
+    }
+  }
+
+  const free = (box) =>
+    !obstacles.some(
+      (o) =>
+        box.x0 < o.x1 - 0.01 &&
+        o.x0 < box.x1 - 0.01 &&
+        box.y0 < o.y1 - 0.01 &&
+        o.y0 < box.y1 - 0.01,
+    );
+  const insideRoom = (box) =>
+    roomBoxes.some(
+      (r) =>
+        box.x0 >= r.x0 - 0.01 &&
+        box.x1 <= r.x1 + 0.01 &&
+        box.y0 >= r.y0 - 0.01 &&
+        box.y1 <= r.y1 + 0.01,
+    );
+
+  for (const box of candidates) if (insideRoom(box) && free(box)) return box;
+  for (const box of candidates) if (free(box)) return box;
+  return null;
 }
 
 /**

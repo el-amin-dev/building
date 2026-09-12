@@ -26,10 +26,11 @@ import {
   JOIN_OVERRIDES,
   PORTS,
   WINDOWS,
+  FIXTURES,
 } from './plan-v2.mjs';
 import { deriveWalls, wallsByRoom } from './walls.mjs';
 
-const SPEC = { FLOOR_NUMBER, PLOT, WALLS, HEIGHTS, STAIRS, ROOMS, JOIN_OVERRIDES, PORTS, WINDOWS };
+const SPEC = { FLOOR_NUMBER, PLOT, WALLS, HEIGHTS, STAIRS, ROOMS, JOIN_OVERRIDES, PORTS, WINDOWS, FIXTURES };
 
 const EPS = 1e-6;
 const cm = (v) => Math.round(v * 100) / 100;
@@ -48,6 +49,22 @@ const PLOT_AREA = cm((PLOT[1] - PLOT[0]) * (PLOT[3] - PLOT[2]));
 
 /** The kinds that carry walkable floor, as opposed to a hole or the stair bay. */
 const FLOOR_KINDS = new Set(['room', 'circulation', 'openAir']);
+
+/**
+ * The stairwell's pieces, read out of STAIRS by shape rather than by name: every
+ * 4-number rect on it except the bay they tile.
+ *
+ * WHY not a written list: a hand-kept list of piece names is only right until
+ * someone adds a fifth piece, and the failure is silent — the missing piece is
+ * simply never checked, never drawn, and nobody sees an error. A renderer lost
+ * one that way this round. Enumerating the spec cannot miss one.
+ */
+const STAIR_PIECES = Object.entries(STAIRS)
+  .filter(
+    ([key, value]) =>
+      key !== 'bay' && Array.isArray(value) && value.length === 4 && value.every((v) => typeof v === 'number'),
+  )
+  .map(([key, rect]) => ({ key, rect }));
 
 const failures = [];
 const notes = [];
@@ -69,7 +86,9 @@ const walls = deriveWalls(SPEC);
 const byRoom = wallsByRoom(walls);
 
 console.log(`floor plan v2 — self-check (floor ${FLOOR_NUMBER}, plot ${n(PLOT[1])} × ${n(PLOT[3])})`);
-console.log(`${ROOMS.length} spaces · ${walls.length} derived walls · ${PORTS.length} ports · ${WINDOWS.length} windows`);
+console.log(
+  `${ROOMS.length} spaces · ${walls.length} derived walls · ${PORTS.length} ports · ${WINDOWS.length} windows · ${FIXTURES.length} fixtures`,
+);
 
 /* ───────────────────────────── 1. rects ───────────────────────────── */
 
@@ -313,57 +332,248 @@ check('5. Matricules are unique');
 
 /* ───────────────────────── 6. reachability ───────────────────────── */
 
-check('6. Every floor space reachable from the corridor through ports only');
+check('6. Reachability, and what a port is allowed to open onto');
 {
-  const graph = new Map(ROOMS.map((r) => [r.id, []]));
-  for (const p of PORTS) {
-    graph.get(p.between[0])?.push(p.between[1]);
-    graph.get(p.between[1])?.push(p.between[0]);
-  }
-  const seen = new Set(['corridor']);
-  const queue = ['corridor'];
-  while (queue.length) {
-    for (const next of graph.get(queue.shift()) ?? []) {
-      if (!seen.has(next)) {
-        seen.add(next);
-        queue.push(next);
+  const roomById = new Map(ROOMS.map((r) => [r.id, r]));
+  const kindOf = (id) => roomById.get(id)?.kind;
+  const flightRun = cm((STAIRS.riserCount / 2 - 1) * STAIRS.going);
+  const spansOverlap = (a, b) => Math.min(a[1], b[1]) - Math.max(a[0], b[0]) > EPS;
+  const extentAlong = (rect, axis) => (axis === 'x' ? [rect[0], rect[1]] : [rect[2], rect[3]]);
+  /** Does this rect run right up to that wall's face? */
+  const reachesWall = (rect, wall) =>
+    wall.side === 'east'
+      ? Math.abs(rect[1] - wall.at) < EPS
+      : wall.side === 'west'
+        ? Math.abs(rect[0] - wall.at) < EPS
+        : wall.side === 'north'
+          ? Math.abs(rect[2] - wall.at) < EPS
+          : Math.abs(rect[3] - wall.at) < EPS;
+
+  /**
+   * The stairwell's open edges: its walls that carry no wall at all and face
+   * floored space. Floors that meet across a zero join are at the same level —
+   * that is what "no wall" means physically — so the corridor's level is
+   * readable off the geometry rather than off a comment.
+   */
+  const openEdges = walls.filter(
+    (w) =>
+      kindOf(w.roomId) === 'stairwell' &&
+      Math.abs(w.thickness) < EPS &&
+      w.neighbours.length > 0 &&
+      w.neighbours.every((id) => FLOOR_KINDS.has(kindOf(id))),
+  );
+
+  /**
+   * A stair piece is at this storey's level when it reaches an open edge and is
+   * not a flight arriving at one. Travel through an edge runs normal to it, so a
+   * piece whose extent along that axis is a whole flight run is a flight, however
+   * it is named — that guard is what stops an open-tread stair from being read as
+   * a landing just because its top tread touches the corridor.
+   *
+   * Derived, so a second landing, a moved join or a renamed piece is picked up
+   * without editing this check. The piece names are never read here; the one
+   * thing names still carry is which piece plays which role in check 7.
+   */
+  const atThisLevel = [];
+  for (const piece of STAIR_PIECES) {
+    for (const edge of openEdges) {
+      if (!reachesWall(piece.rect, edge)) continue;
+      if (!spansOverlap(extentAlong(piece.rect, edge.axis), [edge.spanMin, edge.spanMax])) continue;
+      const travel = edge.axis === 'x' ? 'z' : 'x';
+      const [lo, hi] = extentAlong(piece.rect, travel);
+      if (Math.abs(cm(hi - lo) - flightRun) < EPS) {
+        fail(`${piece.key} reaches the open edge ${edge.matricule} but is ${m(hi - lo)} along the way in — a full flight run, so it is a flight, not a landing`);
+        continue;
       }
+      atThisLevel.push({ ...piece, edge });
+      break;
     }
   }
+  const levelKeys = new Set(atThisLevel.map((p) => p.key));
+
+  /** A space you can stand on at this storey: floored, or a stairwell with a landing at this level. */
+  const carriesFloor = (id) =>
+    FLOOR_KINDS.has(kindOf(id)) || (kindOf(id) === 'stairwell' && atThisLevel.length > 0);
+
+  /**
+   * Where a port is allowed to land. A void is always refused: it is a hole, and
+   * no door may open onto it. A stairwell is refused unless the span lies wholly
+   * inside a piece that is at this storey's level AND that reaches the wall the
+   * door sits in.
+   *
+   * WHY that is sharp: check 7 proves the pieces tile the bay exactly, so a span
+   * wholly inside the level piece cannot also be over a flight or over the
+   * half-landing. No separate "is it a flight" test is needed to keep the fall
+   * out — the tiling does it, and the fall is the whole point: a door onto a
+   * flight, or onto a landing half a storey down, opens onto nothing.
+   */
+  const admittingPiece = (wall, span) =>
+    atThisLevel.find(
+      (piece) =>
+        reachesWall(piece.rect, wall) &&
+        span[0] >= extentAlong(piece.rect, wall.axis)[0] - EPS &&
+        span[1] <= extentAlong(piece.rect, wall.axis)[1] + EPS,
+    ) ?? null;
+
+  for (const p of PORTS) {
+    const span = [p.spanMin, cm(p.spanMin + p.width)];
+    for (const id of p.between) {
+      if (kindOf(id) === 'void') {
+        fail(`${p.between.join(' ↔ ')} opens onto ${id}, a void — a hole in the floor is never a doorway`);
+        continue;
+      }
+      if (kindOf(id) !== 'stairwell') continue;
+      const wall = walls.find(
+        (w) =>
+          w.roomId === id &&
+          w.openings.some((op) => op.between === p.between && Math.abs(op.spanMin - p.spanMin) < EPS),
+      );
+      if (!wall) {
+        fail(`${p.between.join(' ↔ ')} touches the stairwell but sits in no derived ${id} wall`);
+        continue;
+      }
+      const piece = admittingPiece(wall, span);
+      if (!piece) {
+        const over = STAIR_PIECES.filter(
+          (q) => reachesWall(q.rect, wall) && spansOverlap(extentAlong(q.rect, wall.axis), span),
+        ).map((q) => q.key);
+        fail(
+          `${p.between.join(' ↔ ')} ${m(span[0])}–${m(span[1])} on ${wall.matricule} does not lie in a stair piece at this storey's level` +
+            `${over.length ? `: it is over ${over.join(' and ')}, which ${over.length > 1 ? 'are' : 'is'} not floor here` : ''}`,
+        );
+        continue;
+      }
+      const [lo, hi] = extentAlong(piece.rect, wall.axis);
+      line(`${p.between.join(' ↔ ')} ${m(span[0])}–${m(span[1])} lands on ${piece.key} (${m(lo)}–${m(hi)}), jambs ${m(span[0] - lo)} / ${m(hi - span[1])}`);
+    }
+  }
+
+  /**
+   * Prove the refusal still bites. Every piece that is NOT at this storey's
+   * level gets a doorway's worth of span placed in the middle of it, against a
+   * stairwell wall it reaches, and must be refused. If this ever goes quiet the
+   * rule has gone soft, and the next door onto a flight would pass unseen.
+   */
+  const stairWalls = walls.filter((w) => kindOf(w.roomId) === 'stairwell');
+  const probes = [];
+  for (const piece of STAIR_PIECES) {
+    if (levelKeys.has(piece.key)) continue;
+    for (const wall of stairWalls) {
+      if (!reachesWall(piece.rect, wall)) continue;
+      const [lo, hi] = extentAlong(piece.rect, wall.axis);
+      const mid = cm((lo + hi) / 2);
+      const probe = [cm(mid - 0.45), cm(mid + 0.45)];
+      if (probe[0] < lo - EPS || probe[1] > hi + EPS) continue;
+      probes.push(`${piece.key} via ${wall.matricule}`);
+      if (admittingPiece(wall, probe)) {
+        fail(`a 0.90 doorway at ${m(probe[0])}–${m(probe[1])} on ${wall.matricule} lands on ${piece.key}, half a storey off this floor, and the rule admitted it`);
+      }
+      break;
+    }
+  }
+
+  const graph = new Map(ROOMS.map((r) => [r.id, []]));
+  const link = (a, b) => {
+    graph.get(a)?.push(b);
+    graph.get(b)?.push(a);
+  };
+  for (const p of PORTS) link(p.between[0], p.between[1]);
+  // Continuous floors need no door: you walk off the corridor onto the landing.
+  // Only where both sides carry floor — a zero join to a void is an unguarded
+  // edge, not a route.
+  const joins = [];
+  for (const w of walls) {
+    if (Math.abs(w.thickness) > EPS) continue;
+    for (const id of w.neighbours) {
+      if (!carriesFloor(w.roomId) || !carriesFloor(id)) continue;
+      if (joins.some((j) => j.has(w.roomId) && j.has(id))) continue;
+      joins.push(new Set([w.roomId, id]));
+      link(w.roomId, id);
+    }
+  }
+
+  const from = new Map([['corridor', null]]);
+  const queue = ['corridor'];
+  while (queue.length) {
+    const here = queue.shift();
+    for (const next of graph.get(here) ?? []) {
+      if (from.has(next)) continue;
+      from.set(next, here);
+      queue.push(next);
+    }
+  }
+  const pathTo = (id) => {
+    const hops = [];
+    for (let at = id; at != null; at = from.get(at)) hops.unshift(at);
+    return hops.join(' → ');
+  };
+
   const want = ROOMS.filter((r) => FLOOR_KINDS.has(r.kind));
-  const stranded = want.filter((r) => !seen.has(r.id));
-  for (const r of stranded) fail(`${r.id} (R${r.n}, ${r.kind}) has no route from the corridor through ports`);
+  const stranded = want.filter((r) => !from.has(r.id));
+  for (const r of stranded) fail(`${r.id} (R${r.n}, ${r.kind}) has no route from the corridor`);
   line(`${want.length - stranded.length}/${want.length} reachable${stranded.length ? `; stranded: ${stranded.map((r) => r.id).join(', ')}` : ''}`);
-  const nonFloorPorts = PORTS.filter((p) => p.between.some((id) => !FLOOR_KINDS.has(ROOMS.find((r) => r.id === id)?.kind)));
-  for (const p of nonFloorPorts) fail(`${p.between.join(' ↔ ')} opens onto a space with no floor`);
+  line(`at this storey's level: ${atThisLevel.map((p) => `${p.key} (via ${p.edge.matricule}, the 0.00 join to ${p.edge.faces})`).join(', ') || 'nothing'}`);
+  line(`walk-through joins, no door: ${joins.map((j) => [...j].join(' ↔ ')).join(', ') || 'none'}`);
+  line(`guest room: ${pathTo('guestRoom')}`);
+  line(`refusal proved on ${probes.length} piece(s) off this level: ${probes.join(', ') || 'none'}`);
 }
 
 /* ───────────────────────────── 7. stairs ───────────────────────────── */
 
-check('7. Stair fit inside the bay');
+check('7. Stair fit: four pieces tiling the bay, two flights between two landings');
 {
   const [bayMinX, bayMaxX, bayMinZ, bayMaxZ] = STAIRS.bay;
   const goingsPerFlight = STAIRS.riserCount / 2 - 1;
-  const needed = cm(goingsPerFlight * STAIRS.going);
-  const pieces = [
-    ['flightA', STAIRS.flightA],
-    ['halfLanding', STAIRS.halfLanding],
-    ['flightB', STAIRS.flightB],
-  ];
+  const runNeeded = cm(goingsPerFlight * STAIRS.going);
+  // Listed in travel order: arrive on landingEast at this floor's level, down
+  // flightA to the west, turn 180° on halfLanding half a storey down, down
+  // flightB to the east and the floor below.
+  // Enumerated from the spec, not listed here: a fifth piece joins the tiling
+  // and the assertions below on its own. The split into flights and landings is
+  // the one thing still read off the names — nothing in the data says which a
+  // piece is — so every piece lands in exactly one of the two lists and none can
+  // fall between them.
+  const pieces = STAIR_PIECES.map((p) => [p.key, p.rect]);
+  const isFlight = (key) => /flight/i.test(key);
+  const flights = pieces.map(([key]) => key).filter(isFlight);
+  const landings = pieces.map(([key]) => key).filter((key) => !isFlight(key));
 
-  line(`bay ${m(bayMaxX - bayMinX)} × ${m(bayMaxZ - bayMinZ)}; ${STAIRS.riserCount} risers of ${m(HEIGHTS.floorToFloor / STAIRS.riserCount)} (${m(HEIGHTS.floorToFloor)} storey)`);
+  line(`bay ${m(bayMaxX - bayMinX)} × ${m(bayMaxZ - bayMinZ)}; ${STAIRS.riserCount} risers of ${m(HEIGHTS.floorToFloor / STAIRS.riserCount)} (${m(HEIGHTS.floorToFloor)} storey), ${STAIRS.riserCount / 2} per flight`);
   for (const [name, [minX, maxX, minZ, maxZ]] of pieces) {
     line(`${name.padEnd(11)} x ${m(minX)}–${m(maxX)} (${m(maxX - minX)}) · z ${m(minZ)}–${m(maxZ)} (${m(maxZ - minZ)})`);
   }
-  line(`each flight needs ${goingsPerFlight} goings of ${m(STAIRS.going)} = ${m(needed)} of run`);
+  line(`each flight needs ${goingsPerFlight} goings of ${m(STAIRS.going)} = ${m(runNeeded)} of run; each landing needs ${m(STAIRS.flightWidth)} to turn in`);
 
-  for (const name of ['flightA', 'flightB']) {
+  // WHY the run is (risers/2 − 1) goings and not risers/2: the last riser of a
+  // flight lands ON the landing, so the treads that need floor are one fewer.
+  // Both flights travel along x, so the run is the x extent and the width the z
+  // extent; a landing is crossed along x too, which is the direction a 180°
+  // turn has to be at least one flight wide in.
+  for (const name of flights) {
     const [minX, maxX, minZ, maxZ] = STAIRS[name];
-    if (Math.abs(cm(maxX - minX) - needed) > EPS) fail(`${name} run is ${m(maxX - minX)}, needs ${m(needed)}`);
+    if (Math.abs(cm(maxX - minX) - runNeeded) > EPS) {
+      fail(`${name} run is ${m(maxX - minX)}, needs ${goingsPerFlight} × ${m(STAIRS.going)} = ${m(runNeeded)}`);
+    }
     if (Math.abs(cm(maxZ - minZ) - STAIRS.flightWidth) > EPS) fail(`${name} is ${m(maxZ - minZ)} wide, not ${m(STAIRS.flightWidth)}`);
   }
-  const landingRun = cm(STAIRS.halfLanding[1] - STAIRS.halfLanding[0]);
-  if (landingRun < STAIRS.flightWidth - EPS) fail(`half-landing is ${m(landingRun)} long, shorter than the ${m(STAIRS.flightWidth)} flight width`);
+  for (const name of landings) {
+    const run = cm(STAIRS[name][1] - STAIRS[name][0]);
+    if (run < STAIRS.flightWidth - EPS) {
+      fail(`${name} is ${m(run)} long in the direction of travel, less than the ${m(STAIRS.flightWidth)} a 180° turn needs`);
+    }
+  }
+
+  // Side by side: the same run, touching along their long edge. That is what
+  // makes the pair read as one stair two flights wide and the turn a true half
+  // turn rather than two unrelated flights sharing a bay.
+  const [aMinX, aMaxX, aMinZ, aMaxZ] = STAIRS.flightA;
+  const [bMinX, bMaxX, bMinZ, bMaxZ] = STAIRS.flightB;
+  if (Math.abs(aMinX - bMinX) > EPS || Math.abs(aMaxX - bMaxX) > EPS) {
+    fail(`the flights do not share a run: flightA x ${m(aMinX)}–${m(aMaxX)}, flightB x ${m(bMinX)}–${m(bMaxX)}`);
+  }
+  if (Math.abs(aMaxZ - bMinZ) > EPS && Math.abs(bMaxZ - aMinZ) > EPS) {
+    fail(`the flights are not side by side: flightA z ${m(aMinZ)}–${m(aMaxZ)} and flightB z ${m(bMinZ)}–${m(bMaxZ)} do not touch`);
+  }
 
   for (const [name, rect] of pieces) {
     if (rect[0] < bayMinX - EPS || rect[1] > bayMaxX + EPS || rect[2] < bayMinZ - EPS || rect[3] > bayMaxZ + EPS) {
@@ -375,10 +585,14 @@ check('7. Stair fit inside the bay');
       if (rectsOverlap(pieces[i][1], pieces[j][1])) fail(`${pieces[i][0]} overlaps ${pieces[j][0]}`);
     }
   }
+  // Inside the bay + no overlap + areas summing to the bay is an exact tiling:
+  // there is nowhere for a gap to hide once all three hold.
   const piecesArea = cm(pieces.reduce((s, [, r]) => s + rectArea(r), 0));
   const bayArea = cm(rectArea(STAIRS.bay));
-  if (Math.abs(piecesArea - bayArea) > EPS) fail(`the three pieces cover ${m(piecesArea)} of the ${m(bayArea)} bay — they do not tile it`);
-  line(`pieces ${m(piecesArea)} m² = bay ${m(bayArea)} m², no overlap`);
+  if (Math.abs(piecesArea - bayArea) > EPS) {
+    fail(`the ${pieces.length} pieces cover ${m(piecesArea)} of the ${m(bayArea)} bay — they do not tile it`);
+  }
+  line(`pieces ${m(piecesArea)} m² = bay ${m(bayArea)} m², inside it, no overlap`);
 
   const bayRoom = ROOMS.find((r) => r.id === 'stairs');
   if (bayRoom && bayRoom.rects.length === 1 && bayRoom.rects[0].some((v, i) => Math.abs(v - STAIRS.bay[i]) > EPS)) {
@@ -416,6 +630,102 @@ check('8. Derived wall thickness matches the gap left between the rooms');
   line(`thicknesses: ${[...kinds.entries()].sort().map(([t, c]) => `${t} × ${c}`).join(', ')}`);
 }
 
+/* ───────────────────────────── 9. fixtures ───────────────────────────── */
+
+check('9. Fixtures: inside their room, clear of each other and of every door swing');
+{
+  const roomById = new Map(ROOMS.map((r) => [r.id, r]));
+  const inside = (rect, [minX, maxX, minZ, maxZ]) =>
+    rect[0] >= minX - EPS && rect[1] <= maxX + EPS && rect[2] >= minZ - EPS && rect[3] <= maxZ + EPS;
+
+  for (const [i, f] of FIXTURES.entries()) {
+    const room = roomById.get(f.room);
+    if (!room) {
+      fail(`FIXTURES[${i}] ${f.kind} names room '${f.room}', which does not exist`);
+      continue;
+    }
+    // One rect, not the union: a fixture straddling two rects of an L-shaped
+    // room would sit across the internal seam, which is a corner in the room,
+    // not a wall — nothing stands there.
+    if (!room.rects.some((r) => inside(f.rect, r))) {
+      fail(`FIXTURES[${i}] ${f.kind} [${f.rect.map(n).join(', ')}] is not wholly inside any rect of ${f.room}`);
+    }
+    const offGrid = f.rect.filter((v) => !onGrid(v));
+    if (offGrid.length) fail(`FIXTURES[${i}] ${f.kind} in ${f.room} is off the centimetre grid: ${offGrid.join(', ')}`);
+  }
+
+  for (let i = 0; i < FIXTURES.length; i += 1) {
+    for (let j = i + 1; j < FIXTURES.length; j += 1) {
+      if (rectsOverlap(FIXTURES[i].rect, FIXTURES[j].rect)) {
+        fail(`${FIXTURES[i].kind} (${FIXTURES[i].room}) overlaps ${FIXTURES[j].kind} (${FIXTURES[j].room})`);
+      }
+    }
+  }
+
+  /**
+   * Door swing. The clear rectangle is the leaf's width by its own width deep,
+   * measured into the room from the wall face: a leaf has to be able to stand
+   * at 90° with nothing under it.
+   *
+   * Taken off the derived walls rather than off PORTS, because a wall already
+   * knows which room it belongs to and which way is inward — so each face of a
+   * shared door is tested in its own room, with no second copy of that logic.
+   *
+   * Doors only. The living-room port is declared leafless, and what stands
+   * across the corridor from it is the television, on purpose (FIXTURES header)
+   * — swinging a leaf that does not exist would condemn the one arrangement the
+   * owner asked for by name.
+   */
+  const swings = [];
+  for (const w of walls) {
+    for (const op of w.openings) {
+      if (op.kind !== 'door') continue;
+      const from = op.spanMin;
+      const to = cm(op.spanMin + op.width);
+      const deep = op.width;
+      const rect =
+        w.side === 'north'
+          ? [from, to, w.at, cm(w.at + deep)]
+          : w.side === 'south'
+            ? [from, to, cm(w.at - deep), w.at]
+            : w.side === 'east'
+              ? [cm(w.at - deep), w.at, from, to]
+              : [w.at, cm(w.at + deep), from, to];
+      swings.push({ wall: w, op, rect });
+    }
+  }
+
+  for (const swing of swings) {
+    for (const f of FIXTURES) {
+      if (f.room !== swing.wall.roomId) continue;
+      if (!rectsOverlap(f.rect, swing.rect)) continue;
+      const ox = cm(Math.min(f.rect[1], swing.rect[1]) - Math.max(f.rect[0], swing.rect[0]));
+      const oz = cm(Math.min(f.rect[3], swing.rect[3]) - Math.max(f.rect[2], swing.rect[2]));
+      fail(
+        `${f.kind} in ${f.room} blocks ${swing.op.matricule}: its ${m(swing.op.width)} × ${m(swing.op.width)} clear rectangle ` +
+          `[${swing.rect.map(n).join(', ')}] is covered ${m(ox)} × ${m(oz)} = ${m(ox * oz)} m²`,
+      );
+    }
+  }
+
+  const byFixtureRoom = new Map();
+  for (const f of FIXTURES) {
+    if (!byFixtureRoom.has(f.room)) byFixtureRoom.set(f.room, []);
+    byFixtureRoom.get(f.room).push(f);
+  }
+  for (const [roomId, list] of byFixtureRoom) {
+    const room = roomById.get(roomId);
+    line(`${room ? `${room.name} (${m(roomArea(room))} m²)` : roomId}:`);
+    for (const f of list) {
+      line(
+        `   ${f.kind.padEnd(7)} ${m(f.rect[1] - f.rect[0])} × ${m(f.rect[3] - f.rect[2])}` +
+          `  at x ${m(f.rect[0])}–${m(f.rect[1])}, z ${m(f.rect[2])}–${m(f.rect[3])}`,
+      );
+    }
+  }
+  line(`${FIXTURES.length} fixtures, ${swings.length} door faces checked for swing`);
+}
+
 /* ───────────────────────────── report ───────────────────────────── */
 
 console.log('\n── walls per room');
@@ -438,7 +748,9 @@ if (notes.length) {
 
 console.log('');
 if (failures.length === 0) {
-  console.log(`PASS — 8 checks, ${walls.length} walls, ${PORTS.length + WINDOWS.length} openings, everything closes.`);
+  console.log(
+    `PASS — 9 checks, ${walls.length} walls, ${PORTS.length + WINDOWS.length} openings, ${FIXTURES.length} fixtures, everything closes.`,
+  );
   process.exit(0);
 }
 console.log(`FAIL — ${failures.length} problem(s):`);
