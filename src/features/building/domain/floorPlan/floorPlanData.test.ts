@@ -19,17 +19,37 @@ const INTERIOR_MAX_Z = 9.7;
 const INTERIOR_WIDTH = 21.9;
 const INTERIOR_DEPTH = 9.4;
 
-const FLOOR_AREA_TOTAL = 167.38;
-const VOID_WEST_AREA = 11.1;
-const VOID_EAST_AREA = 4.0;
-const VOID_AREA_TOTAL = 15.1;
-const WALL_AREA_TOTAL = 42.52;
-const SIDE_B_STRIP_AREA = 18.6;
+/**
+ * The four totals that must close on the plot, in square metres.
+ *
+ * Measured from the rects of the redrawn floor, not copied from the brief: the
+ * v1 figures (167.38 floor, 15.10 void, 42.52 wall) belong to a superseded plan.
+ * `pnpm verify:plan` prints the same numbers from the source of truth, splitting
+ * the stairwell out of the floor total — the model maps `stairwell` onto
+ * `circulation`, so here the stairs' 8.00 m² is part of {@link FLOOR_AREA_TOTAL}
+ * (163.515 + 8.00).
+ */
+const FLOOR_AREA_TOTAL = 171.515;
+const VOID_WEST_AREA = 5.4;
+const VOID_EAST_AREA = 3.96;
+const VOID_AREA_TOTAL = 9.36;
+const WALL_AREA_TOTAL = 44.125;
 
-const GUEST_ROOM_NET_AREA = 10.02;
-const GUEST_ROOM_GROSS_AREA = 12.72;
-const GUEST_SANITAIR_BLOCK_WIDTH = 1.8;
-const GUEST_SANITAIR_BLOCK_DEPTH = 1.5;
+/**
+ * The side-B strip, in square metres: the two voids, the balcony slab and the
+ * control-center balcony, which together tile z 8.90–9.70 from x 4.10 to 20.30.
+ *
+ * Three spaces in v1, four now: `ccBalcony` is new, and the strip is 0.80 deep
+ * rather than 1.00, the 0.20 having gone to the kitchen, laundry and main
+ * sanitair.
+ */
+const SIDE_B_STRIP_AREA = 12.96;
+/** Start of the side-B strip along x, in metres: the west face of `ccBalcony`. */
+const SIDE_B_STRIP_MIN_X = 4.1;
+/** End of the side-B strip along x, in metres: the east face of `voidEast`. */
+const SIDE_B_STRIP_MAX_X = 20.3;
+/** Depth of the side-B strip along z, in metres. */
+const SIDE_B_STRIP_DEPTH = 0.8;
 
 const DEPTH_CHAIN_X = 15.0;
 const WIDTH_CHAIN_Z = 2.0;
@@ -45,33 +65,56 @@ type Segment =
   | { readonly kind: 'space'; readonly id: SpaceId; readonly length: number }
   | { readonly kind: 'gap'; readonly length: number };
 
-/** The clear rects of every space, brief + drawing Page-2, as `[minX, maxX, minZ, maxZ]`. */
+/**
+ * The clear rects of every space, as `[minX, maxX, minZ, maxZ]`.
+ *
+ * The owner's geometry, as `ROOMS` of `../sourceOfTruth/plan.ts` states it and
+ * `floorPlanData.ts` derives it. Exhaustive by construction: the record is keyed
+ * on `SpaceId`, so a space added to the plan fails to typecheck until it is
+ * measured in here too.
+ */
 const EXPECTED_RECTS: Record<SpaceId, readonly RectTuple[]> = {
   balconyA: [[0.3, 1.3, 0.3, 9.7]],
   masterBedroom: [[1.6, 6.6, 0.3, 3.7]],
-  livingRoom: [[6.8, 11.8, 0.3, 3.7]],
-  bedroomMaleKids: [[12.0, 17.0, 0.3, 3.7]],
-  bedroomFemaleKids: [[17.2, 22.2, 0.3, 3.7]],
-  stairs: [[1.6, 5.3, 3.9, 5.4]],
-  corridor: [[5.3, 20.2, 3.9, 5.4]],
-  linkCorridor: [[1.6, 7.0, 5.6, 6.5]],
-  controlCenter: [[1.6, 3.8, 6.7, 8.4]],
-  guestRoom: [
-    [4.0, 8.0, 6.7, 8.4],
-    [7.2, 8.0, 5.6, 6.7],
-    [8.0, 9.8, 5.6, 6.9],
+  livingRoom: [[6.9, 11.9, 0.3, 3.85]],
+  bedroomMaleKids: [[12.05, 17.05, 0.3, 3.85]],
+  bedroomFemaleKids: [[17.2, 22.2, 0.3, 3.85]],
+  stairs: [[1.6, 5.6, 4.0, 6.0]],
+  corridor: [
+    [5.6, 20.2, 4.0, 5.5],
+    [5.6, 11.9, 5.5, 6.0],
   ],
-  guestSanitair: [[8.2, 9.8, 7.1, 8.4]],
-  kitchen: [[10.0, 14.0, 5.6, 8.4]],
-  laundry: [[14.2, 17.4, 5.6, 8.4]],
-  mainSanitair: [[17.6, 20.2, 5.6, 8.4]],
-  utilityRoom: [[20.4, 22.2, 3.9, 9.7]],
-  balconySlabB: [[12.7, 16.2, 8.7, 9.7]],
-  voidWest: [[1.6, 12.7, 8.7, 9.7]],
-  voidEast: [[16.2, 20.2, 8.7, 9.7]],
+  controlCenter: [[1.6, 3.8, 7.2, 9.7]],
+  guestRoom: [
+    [1.6, 9.7, 6.3, 7.05],
+    [4.1, 6.9, 7.05, 8.6],
+  ],
+  guestSanitair: [[7.05, 9.85, 7.2, 7.75]],
+  kitchen: [
+    [10.0, 12.2, 6.3, 8.6],
+    [12.2, 14.1, 5.8, 8.6],
+  ],
+  laundry: [[14.25, 17.55, 5.8, 8.6]],
+  mainSanitair: [[17.7, 20.35, 5.8, 7.3]],
+  utilityRoom: [[20.5, 22.2, 4.15, 9.7]],
+  ccBalcony: [[4.1, 4.9, 8.9, 9.7]],
+  balconySlabB: [[11.65, 15.35, 8.9, 9.7]],
+  voidWest: [[4.9, 11.65, 8.9, 9.7]],
+  voidEast: [[15.35, 20.3, 8.9, 9.7]],
+  guestBathCubicle: [[7.05, 8.7, 7.9, 8.6]],
+  guestShowerCubicle: [[8.85, 9.85, 7.9, 8.6]],
+  mainBathCubicle: [[17.7, 19.35, 7.45, 8.6]],
+  mainShowerCubicle: [[19.5, 20.35, 7.45, 8.6]],
 };
 
-/** The kind of every space. */
+/**
+ * The kind of every space.
+ *
+ * The stairs are `circulation` here and `stairwell` in the source of truth: that
+ * one mapping is the whole of the difference between the two (`floorPlanData.ts`).
+ * The four bath and shower cubicles are `room`s, not fittings — that is what
+ * gives them walls, doors and a window each (owner).
+ */
 const EXPECTED_KINDS: Record<SpaceId, SpaceKind> = {
   balconyA: 'openAir',
   masterBedroom: 'room',
@@ -80,7 +123,6 @@ const EXPECTED_KINDS: Record<SpaceId, SpaceKind> = {
   bedroomFemaleKids: 'room',
   stairs: 'circulation',
   corridor: 'circulation',
-  linkCorridor: 'circulation',
   controlCenter: 'room',
   guestRoom: 'room',
   guestSanitair: 'room',
@@ -88,55 +130,86 @@ const EXPECTED_KINDS: Record<SpaceId, SpaceKind> = {
   laundry: 'room',
   mainSanitair: 'room',
   utilityRoom: 'room',
+  ccBalcony: 'openAir',
   balconySlabB: 'openAir',
   voidWest: 'void',
   voidEast: 'void',
+  guestBathCubicle: 'room',
+  guestShowerCubicle: 'room',
+  mainBathCubicle: 'room',
+  mainShowerCubicle: 'room',
 };
 
-/** Brief §8 clear areas, square metres. */
-const BRIEF_AREAS: readonly (readonly [SpaceId, number])[] = [
-  ['masterBedroom', 17.0],
-  ['livingRoom', 17.0],
-  ['bedroomMaleKids', 17.0],
-  ['bedroomFemaleKids', 17.0],
-  ['stairs', 5.55],
-  ['corridor', 22.35],
-  ['linkCorridor', 4.86],
-  ['controlCenter', 3.74],
-  ['guestRoom', GUEST_ROOM_NET_AREA],
-  ['guestSanitair', 2.08],
-  ['kitchen', 11.2],
-  ['laundry', 8.96],
-  ['mainSanitair', 7.28],
-  ['utilityRoom', 10.44],
-  ['balconyA', 9.4],
-  ['balconySlabB', 3.5],
-];
+/**
+ * The clear area of every space, in square metres, measured from
+ * {@link EXPECTED_RECTS}.
+ *
+ * Every space is listed, voids included, so the four totals below are a sum of
+ * numbers this table already pins rather than an independent claim.
+ */
+const SPACE_AREAS: Readonly<Record<SpaceId, number>> = {
+  balconyA: 9.4,
+  masterBedroom: 17.0,
+  livingRoom: 17.75,
+  bedroomMaleKids: 17.75,
+  bedroomFemaleKids: 17.75,
+  stairs: 8.0,
+  corridor: 25.05,
+  controlCenter: 5.5,
+  guestRoom: 10.415,
+  guestSanitair: 1.54,
+  kitchen: 10.38,
+  laundry: 9.24,
+  mainSanitair: 3.975,
+  utilityRoom: 9.435,
+  ccBalcony: 0.64,
+  balconySlabB: 2.96,
+  voidWest: VOID_WEST_AREA,
+  voidEast: VOID_EAST_AREA,
+  guestBathCubicle: 1.155,
+  guestShowerCubicle: 0.7,
+  mainBathCubicle: 1.8975,
+  mainShowerCubicle: 0.9775,
+};
 
-/** Brief §8 depth chain along z at x = 15.00, from side C to side B. */
+/**
+ * Depth chain along z at x = 15.00, from side C to side B.
+ *
+ * Re-measured for the redrawn floor: the male kids' bedroom is 3.55 deep behind
+ * a 0.15 partition (the 0.15 each thin wall frees goes into the room, which is
+ * what keeps the corridor's north face straight at z 4.00), the laundry is 2.80
+ * and the balcony slab 0.80 rather than 1.00.
+ */
 const DEPTH_CHAIN: readonly Segment[] = [
   { kind: 'gap', length: 0.3 },
-  { kind: 'space', id: 'bedroomMaleKids', length: 3.4 },
-  { kind: 'gap', length: 0.2 },
+  { kind: 'space', id: 'bedroomMaleKids', length: 3.55 },
+  { kind: 'gap', length: 0.15 },
   { kind: 'space', id: 'corridor', length: 1.5 },
-  { kind: 'gap', length: 0.2 },
+  { kind: 'gap', length: 0.3 },
   { kind: 'space', id: 'laundry', length: 2.8 },
   { kind: 'gap', length: 0.3 },
-  { kind: 'space', id: 'balconySlabB', length: 1.0 },
+  { kind: 'space', id: 'balconySlabB', length: 0.8 },
   { kind: 'gap', length: 0.3 },
 ];
 
-/** Brief §8 width chain along x at z = 2.00, from side A to side D. */
+/**
+ * Width chain along x at z = 2.00, from side A to side D.
+ *
+ * The four top-row rooms are still 5.00 wide each, but the walls between them
+ * are no longer all equal: the master bedroom is on the owner's isolation list
+ * on all four sides, so its wall to the living room is 0.30, while the two
+ * kids' bedrooms are separated by plain 0.15 partitions.
+ */
 const WIDTH_CHAIN: readonly Segment[] = [
   { kind: 'gap', length: 0.3 },
   { kind: 'space', id: 'balconyA', length: 1.0 },
   { kind: 'gap', length: 0.3 },
   { kind: 'space', id: 'masterBedroom', length: 5.0 },
-  { kind: 'gap', length: 0.2 },
+  { kind: 'gap', length: 0.3 },
   { kind: 'space', id: 'livingRoom', length: 5.0 },
-  { kind: 'gap', length: 0.2 },
+  { kind: 'gap', length: 0.15 },
   { kind: 'space', id: 'bedroomMaleKids', length: 5.0 },
-  { kind: 'gap', length: 0.2 },
+  { kind: 'gap', length: 0.15 },
   { kind: 'space', id: 'bedroomFemaleKids', length: 5.0 },
   { kind: 'gap', length: 0.3 },
 ];
@@ -217,6 +290,11 @@ describe('floorPlanData', () => {
       expect(FLOOR_PLAN.spaces.map((space) => space.id)).toEqual(SPACE_IDS);
     });
 
+    it('holds the 22 spaces of the redrawn floor, with no link corridor', () => {
+      expect(FLOOR_PLAN.spaces).toHaveLength(Object.keys(EXPECTED_RECTS).length);
+      expect(FLOOR_PLAN.spaces.map((space) => space.id)).not.toContain('linkCorridor');
+    });
+
     it('is deeply frozen', () => {
       expect(Object.isFrozen(FLOOR_PLAN)).toBe(true);
       expect(Object.isFrozen(FLOOR_PLAN.plot)).toBe(true);
@@ -262,21 +340,28 @@ describe('floorPlanData', () => {
     });
   });
 
-  describe('brief §8 areas', () => {
-    it.each(BRIEF_AREAS)('gives %s a clear area of %f m²', (id, area) => {
-      expect(getSpaceArea(getSpace(FLOOR_PLAN, id))).toBeCloseTo(area, PRECISION_DIGITS);
+  describe('clear areas', () => {
+    it.each(SPACE_IDS)('gives %s its measured clear area', (id) => {
+      expect(getSpaceArea(getSpace(FLOOR_PLAN, id))).toBeCloseTo(SPACE_AREAS[id], PRECISION_DIGITS);
     });
 
-    it('gives the guest room a §4.3 gross area of net + the 1.80 × 1.50 m sanitair block', () => {
+    it('gives the guest suite four rooms rather than one sanitair block', () => {
+      // v1 measured a 1.80 × 1.50 m sanitair block carved out of the guest room and
+      // checked the room's gross area as net + block. The owner has since made the
+      // bath and the shower rooms of their own, each with a door and a window, so the
+      // suite is four rooms (sanitair + two cubicles) and there is no single block to
+      // add back. What is worth pinning instead is that the three wet rooms of the
+      // suite tile one footprint with the partitions between them.
       const sanitair = getSpace(FLOOR_PLAN, 'guestSanitair').rects[0];
-      const blockWidth = rectWidth(sanitair) + WALL_SPEC.partition;
-      const blockDepth = rectDepth(sanitair) + WALL_SPEC.partition;
-      const net = getSpaceArea(getSpace(FLOOR_PLAN, 'guestRoom'));
+      const bath = getSpace(FLOOR_PLAN, 'guestBathCubicle').rects[0];
+      const shower = getSpace(FLOOR_PLAN, 'guestShowerCubicle').rects[0];
 
-      expect(blockWidth).toBeCloseTo(GUEST_SANITAIR_BLOCK_WIDTH, PRECISION_DIGITS);
-      expect(blockDepth).toBeCloseTo(GUEST_SANITAIR_BLOCK_DEPTH, PRECISION_DIGITS);
-      expect(net).toBeCloseTo(GUEST_ROOM_NET_AREA, PRECISION_DIGITS);
-      expect(net + blockWidth * blockDepth).toBeCloseTo(GUEST_ROOM_GROSS_AREA, PRECISION_DIGITS);
+      expect(sanitair.minX).toBe(bath.minX);
+      expect(sanitair.maxX).toBe(shower.maxX);
+      expect(toPlanLength(bath.minZ - sanitair.maxZ)).toBe(WALL_SPEC.partition);
+      expect(toPlanLength(shower.minX - bath.maxX)).toBe(WALL_SPEC.partition);
+      expect(bath.minZ).toBe(shower.minZ);
+      expect(bath.maxZ).toBe(shower.maxZ);
     });
   });
 
@@ -292,11 +377,18 @@ describe('floorPlanData', () => {
       expect(rectArea(PLOT_RECT)).toBeCloseTo(PLOT_AREA, PRECISION_DIGITS);
     });
 
-    it('has 167.38 m² of floor', () => {
+    it('has 171.515 m² of floor, the 8.00 m² stairwell included', () => {
       expect(floorArea).toBeCloseTo(FLOOR_AREA_TOTAL, PRECISION_DIGITS);
+      expect(floorArea).toBeCloseTo(
+        SPACE_IDS.filter((id) => EXPECTED_KINDS[id] !== 'void').reduce(
+          (sum, id) => sum + SPACE_AREAS[id],
+          0,
+        ),
+        PRECISION_DIGITS,
+      );
     });
 
-    it('has 15.10 m² of void: 11.10 west + 4.00 east', () => {
+    it('has 9.36 m² of void: 5.40 west + 3.96 east', () => {
       expect(getSpaceArea(getSpace(FLOOR_PLAN, 'voidWest'))).toBeCloseTo(
         VOID_WEST_AREA,
         PRECISION_DIGITS,
@@ -308,29 +400,38 @@ describe('floorPlanData', () => {
       expect(voidArea).toBeCloseTo(VOID_AREA_TOTAL, PRECISION_DIGITS);
     });
 
-    it('leaves 42.52 m² of walls', () => {
+    it('leaves 44.125 m² of walls', () => {
       expect(rectArea(PLOT_RECT) - floorArea - voidArea).toBeCloseTo(
         WALL_AREA_TOTAL,
         PRECISION_DIGITS,
       );
     });
 
-    it('has an 18.60 m² side-B strip: void + balcony slab', () => {
-      const slabArea = getSpaceArea(getSpace(FLOOR_PLAN, 'balconySlabB'));
+    it('has a 12.96 m² side-B strip: the voids, the slab and the cc balcony', () => {
+      const strip =
+        voidArea +
+        getSpaceArea(getSpace(FLOOR_PLAN, 'balconySlabB')) +
+        getSpaceArea(getSpace(FLOOR_PLAN, 'ccBalcony'));
 
-      expect(voidArea + slabArea).toBeCloseTo(SIDE_B_STRIP_AREA, PRECISION_DIGITS);
+      expect(strip).toBeCloseTo(SIDE_B_STRIP_AREA, PRECISION_DIGITS);
+      // The four spaces tile one 0.80 m deep strip with no wall between them, so its
+      // area is also its bounding rectangle.
+      expect((SIDE_B_STRIP_MAX_X - SIDE_B_STRIP_MIN_X) * SIDE_B_STRIP_DEPTH).toBeCloseTo(
+        SIDE_B_STRIP_AREA,
+        PRECISION_DIGITS,
+      );
     });
   });
 
   describe('chains', () => {
-    it('matches the brief §8 depth chain at x = 15.00', () => {
+    it('matches the depth chain at x = 15.00', () => {
       const section = crossSection(FLOOR_PLAN, 'z', DEPTH_CHAIN_X);
 
       expect(section).toEqual(DEPTH_CHAIN);
       expect(totalLength(section)).toBe(PLOT_DEPTH);
     });
 
-    it('matches the brief §8 width chain at z = 2.00', () => {
+    it('matches the width chain at z = 2.00', () => {
       const section = crossSection(FLOOR_PLAN, 'x', WIDTH_CHAIN_Z);
       const topRow = section.slice(TOP_ROW_FIRST_SEGMENT, TOP_ROW_END_SEGMENT);
 

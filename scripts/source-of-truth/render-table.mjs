@@ -39,6 +39,20 @@
  * page that cannot.
  */
 
+/**
+ * The derivation's own vocabulary. `walls.mjs` is the one place a wall, a contact
+ * and the plan namespace are described, so those descriptions are imported rather
+ * than restated here: a renderer that re-declared them could drift from what it
+ * is handed.
+ *
+ * @import { Contact, PlanSpec, Span, Wall } from './walls.mjs'
+ */
+
+/**
+ * @import { PlanFixture, PlanRectCoordinates, PlanRoom }
+ *   from '../../src/features/building/domain/sourceOfTruth/plan.ts'
+ */
+
 /** Font size of every table cell, px. Titles are two points larger. */
 const FONT_SIZE = 9;
 
@@ -117,6 +131,30 @@ const DECIMALS = 2;
  */
 
 /**
+ * The fields of an opening this page reads, from whichever end it arrived.
+ *
+ * A row is built either from a spec declaration (`PlanPort` or `PlanWindow`) or
+ * from the derived twin `walls.mjs` placed on a wall, and those do not share one
+ * type: only a window has a sill and a head, only a derived opening carries a
+ * matricule and the `alias` flag, and `PlanPort & PlanWindow` is uninhabited
+ * because the two `kind` unions do not overlap. Naming the fields that are
+ * actually read is what lets one row builder serve both without claiming that a
+ * door has a sill.
+ *
+ * @typedef {object} OpeningLike
+ * @property {string} [kind] - `'door'`, `'opening'`, `'air'`, `'pass'`, `'light'`.
+ * @property {readonly string[]} [between] - The two space ids it joins.
+ * @property {string} [along] - The axis its width runs along.
+ * @property {number} [spanMin] - Start along that axis, metres.
+ * @property {number} [width] - Clear width, metres.
+ * @property {number} [sill] - Windows only: sill above the floor, metres.
+ * @property {number} [head] - Windows only: head above the floor, metres.
+ * @property {string} [why] - The owner's reason, where one was given.
+ * @property {string} [matricule] - Derived openings only.
+ * @property {true} [alias] - Derived openings only: the second sighting of one port.
+ */
+
+/**
  * Escape a string for an XML attribute value.
  *
  * draw.io keeps a cell's label in the `value` attribute, so a label's line breaks
@@ -185,11 +223,13 @@ function metres(value) {
 /**
  * Build the id → display-name map of every space in the spec.
  *
- * @param {{ ROOMS: readonly object[] }} spec - The plan namespace.
+ * @param {PlanSpec} spec - The plan namespace.
  * @returns {Map<string, string>} Space id to its name.
  */
 function buildNameIndex(spec) {
-  return new Map(spec.ROOMS.map((room) => [room.id, room.name]));
+  // The pair is cast to a tuple because `map` alone infers `string[]`, which is
+  // not the `[key, value]` shape the `Map` constructor accepts.
+  return new Map(spec.ROOMS.map((room) => /** @type {[string, string]} */ ([room.id, room.name])));
 }
 
 /**
@@ -273,8 +313,7 @@ function describeOpeningSpan(opening) {
  * rooms it joins, so the pair of ids is sorted: the two copies hash alike and a
  * spec entry finds its derived twin whichever way round it was written.
  *
- * @param {{ kind?: string, between?: readonly string[], along?: string,
- *           spanMin?: number, width?: number }} opening
+ * @param {OpeningLike} opening
  * @returns {string} The key.
  */
 function openingKey(opening) {
@@ -298,11 +337,11 @@ function openingKey(opening) {
  * join genuinely sits in the walls of both rooms and the owner looks for it under
  * either.
  *
- * @param {readonly object[]} walls - The derived walls.
- * @returns {Map<string, { matricule: string, walls: string[], opening: object }>}
+ * @param {readonly Wall[]} walls - The derived walls.
+ * @returns {Map<string, { matricule: string, walls: string[], opening: OpeningLike }>}
  */
 function indexDerivedOpenings(walls) {
-  /** @type {Map<string, { matricule: string, walls: string[], opening: object }>} */
+  /** @type {Map<string, { matricule: string, walls: string[], opening: OpeningLike }>} */
   const index = new Map();
   for (const wall of walls) {
     for (const opening of wall.openings ?? []) {
@@ -332,8 +371,8 @@ function indexDerivedOpenings(walls) {
  * all zero-thickness) falls back to composing it from the spec, and then the
  * composition rule lives here in one place.
  *
- * @param {{ FLOOR_NUMBER: number }} spec - The plan namespace.
- * @param {{ n: number, type: string }} room
+ * @param {PlanSpec} spec - The plan namespace.
+ * @param {PlanRoom} room
  * @param {Map<number, string>} prefixes - Room number to matricule, from the walls.
  * @returns {string} e.g. `'F1-R11-KIT'`.
  */
@@ -346,7 +385,7 @@ function roomMatricule(spec, room, prefixes) {
 /**
  * Map each room number to the room part of its walls' matricules.
  *
- * @param {readonly object[]} walls - The derived walls.
+ * @param {readonly Wall[]} walls - The derived walls.
  * @returns {Map<number, string>} Room number to room matricule.
  */
 function buildRoomPrefixes(walls) {
@@ -367,14 +406,19 @@ function buildRoomPrefixes(walls) {
  * rect by rect and its area is their sum — a single `w × d` would be a lie about
  * the corridor and the guest room.
  *
- * @param {object} spec - The plan namespace.
- * @param {readonly object[]} walls - The derived walls, for the matricules.
+ * @param {PlanSpec} spec - The plan namespace.
+ * @param {readonly Wall[]} walls - The derived walls, for the matricules.
  * @returns {Table}
  */
 function buildRoomsTable(spec, walls) {
   const prefixes = buildRoomPrefixes(walls);
+  // Widened to the interface the spec itself declares. The spec is a deeply frozen
+  // `as const` literal, so its 22 rooms are 22 distinct literal types, and `note`
+  // — which only some of them carry — is absent from their union.
+  /** @type {readonly PlanRoom[]} */
   const rooms = [...spec.ROOMS].sort((a, b) => a.n - b.n);
   const rows = rooms.map((room) => {
+    /** @type {readonly PlanRectCoordinates[]} */
     const rects = room.rects ?? [];
     const size = rects
       .map(([minX, maxX, minZ, maxZ]) => `${metres(maxX - minX)} × ${metres(maxZ - minZ)}`)
@@ -432,10 +476,11 @@ const COORD_EPSILON = 5e-4;
  * of that very wall. `varies` decides which rows need it, so a face the
  * derivation calls uniform is still reported as a single number.
  *
- * @param {object} wall - The derived wall, with `contacts` and `varies`.
+ * @param {Wall} wall - The derived wall, with `contacts` and `varies`.
  * @returns {string} `'0.20'`, or `'varies 0.15 · 0.20 · 0.30'`.
  */
 function describeThickness(wall) {
+  /** @type {readonly Contact[]} */
   const contacts = Array.isArray(wall.contacts) ? wall.contacts : [];
   if (!wall.varies || contacts.length === 0) return metres(wall.thickness);
   const distinct = [...new Set(contacts.map((contact) => metres(contact.thickness)))].sort();
@@ -456,18 +501,21 @@ function describeThickness(wall) {
 function unionLength(intervals) {
   const sorted = [...intervals].sort((p, q) => p[0] - q[0]);
   let total = 0;
-  let from = null;
-  let to = null;
+  // The run being merged, held as one pair rather than as two ends that happen to
+  // be assigned together. Both ends were only ever set in the same statement, so a
+  // half-open run was already impossible; saying so in the type is what makes the
+  // closing `to - from` provably a subtraction of two numbers.
+  /** @type {[number, number] | null} */
+  let run = null;
   for (const [start, end] of sorted) {
-    if (to === null || start > to + COORD_EPSILON) {
-      if (to !== null) total += to - from;
-      from = start;
-      to = end;
-    } else if (end > to) {
-      to = end;
+    if (run === null || start > run[1] + COORD_EPSILON) {
+      if (run !== null) total += run[1] - run[0];
+      run = [start, end];
+    } else if (end > run[1]) {
+      run[1] = end;
     }
   }
-  return to === null ? total : total + (to - from);
+  return run === null ? total : total + (run[1] - run[0]);
 }
 
 /**
@@ -495,21 +543,27 @@ function unionLength(intervals) {
  * so it is not re-derived here; what this needs from an entry is which face it
  * names.
  *
- * @param {object} spec - The plan namespace.
- * @param {readonly object[]} walls - The derived walls.
+ * @param {PlanSpec} spec - The plan namespace.
+ * @param {readonly Wall[]} walls - The derived walls.
  * @returns {Map<string, { insulated: number, named: boolean, full: boolean }>}
  */
 function buildInsulationIndex(spec, walls) {
+  // Widened to `Set<string>`: the owner's list is a frozen literal, so an
+  // un-widened set would accept only those exact matricules and never a derived
+  // wall's, which is the whole question being asked of it.
+  /** @type {Set<string>} */
   const named = new Set((spec.INSULATED_WALLS ?? []).map((entry) => entry.matricule));
+  /** @type {Map<string, { insulated: number, named: boolean, full: boolean }>} */
   const index = new Map();
   for (const wall of walls) {
+    /** @type {readonly Contact[]} */
     const contacts = Array.isArray(wall.contacts) ? wall.contacts : [];
-    /** @type {Array<[number, number]>} */
+    /** @type {Span[]} */
     const intervals = named.has(wall.matricule)
       ? [[wall.spanMin, wall.spanMax]]
       : contacts
           .filter((contact) => contact.reason === 'isolation')
-          .map((contact) => [contact.spanMin, contact.spanMax]);
+          .map((contact) => /** @type {Span} */ ([contact.spanMin, contact.spanMax]));
     const insulated = unionLength(intervals);
     index.set(wall.matricule, {
       insulated,
@@ -529,7 +583,7 @@ function buildInsulationIndex(spec, walls) {
  * no isolation is blank rather than `no`: the register is a list of what is
  * built, and an empty cell reads as "nothing special here" at a glance.
  *
- * @param {object} wall - The derived wall.
+ * @param {Wall} wall - The derived wall.
  * @param {{ insulated: number, full: boolean } | undefined} entry - Its index row.
  * @returns {string} `'full 5.00'`, `'part 7.80 of 8.40'`, or an empty cell.
  */
@@ -566,8 +620,8 @@ function describeIsolationTotal(insulated, total) {
  * with the sum of those, so a run that grew or vanished between two revisions
  * shows up as a changed number rather than as a row to be hunted for.
  *
- * @param {object} spec - The plan namespace.
- * @param {readonly object[]} walls - The derived walls.
+ * @param {PlanSpec} spec - The plan namespace.
+ * @param {readonly Wall[]} walls - The derived walls.
  * @returns {Table}
  */
 function buildWallsTable(spec, walls) {
@@ -581,6 +635,7 @@ function buildWallsTable(spec, walls) {
   let groupLength = 0;
   let groupInsulated = 0;
   let groupCount = 0;
+  /** @type {string | null} */
   let groupRoom = null;
 
   /** Close the room being listed with its subtotal row. */
@@ -666,7 +721,7 @@ function buildWallsTable(spec, walls) {
  * One row of an opening table, joining a spec entry to its derived twin.
  *
  * @param {Map<string, string>} names - From {@link buildNameIndex}.
- * @param {object} opening - The spec entry (or an unmatched derived opening).
+ * @param {OpeningLike} opening - The spec entry (or an unmatched derived opening).
  * @param {{ matricule: string, walls: string[] } | undefined} derived
  * @param {boolean} withHeights - WINDOWS also report sill → head.
  * @returns {Row}
@@ -697,9 +752,9 @@ function buildOpeningRow(names, opening, derived, withHeights) {
  * and the derivation is worse than a page that shows one.
  *
  * @param {Map<string, string>} names - From {@link buildNameIndex}.
- * @param {readonly object[]} declared - `spec.PORTS` or `spec.WINDOWS`.
- * @param {Map<string, { matricule: string, walls: string[], opening: object }>} index
- * @param {(kind: unknown) => boolean} belongs - Whether a derived kind is this family's.
+ * @param {readonly OpeningLike[]} declared - `spec.PORTS` or `spec.WINDOWS`.
+ * @param {Map<string, { matricule: string, walls: string[], opening: OpeningLike }>} index
+ * @param {(kind: string | undefined) => boolean} belongs - Whether a derived kind is this family's.
  * @param {boolean} withHeights - WINDOWS also report sill → head.
  * @returns {Row[]}
  */
@@ -726,12 +781,13 @@ function buildOpeningRows(names, declared, index, belongs, withHeights) {
 /**
  * PORTS: the doors and the one leafless opening, with the reason where given.
  *
- * @param {object} spec - The plan namespace.
- * @param {Map<string, { matricule: string, walls: string[], opening: object }>} index
+ * @param {PlanSpec} spec - The plan namespace.
+ * @param {Map<string, { matricule: string, walls: string[], opening: OpeningLike }>} index
  * @returns {Table}
  */
 function buildPortsTable(spec, index) {
   const names = buildNameIndex(spec);
+  /** @type {(kind: string | undefined) => boolean} */
   const isPort = (kind) => kind === 'door' || kind === 'opening';
   const rows = buildOpeningRows(names, spec.PORTS, index, isPort, false);
   return {
@@ -756,12 +812,13 @@ function buildPortsTable(spec, index) {
  * `air` (above eye level), `pass` (counter height) and `light` (hand level) — so
  * they get a column of their own rather than hiding in the `why`.
  *
- * @param {object} spec - The plan namespace.
- * @param {Map<string, { matricule: string, walls: string[], opening: object }>} index
+ * @param {PlanSpec} spec - The plan namespace.
+ * @param {Map<string, { matricule: string, walls: string[], opening: OpeningLike }>} index
  * @returns {Table}
  */
 function buildWindowsTable(spec, index) {
   const names = buildNameIndex(spec);
+  /** @type {(kind: string | undefined) => boolean} */
   const isWindow = (kind) => kind === 'air' || kind === 'pass' || kind === 'light';
   const rows = buildOpeningRows(names, spec.WINDOWS, index, isWindow, true);
   return {
@@ -856,7 +913,7 @@ const ROLE_FITTING = 'fitting';
  * fittings they enclose; this column is precisely what stops that reading as a
  * mistake.
  *
- * @param {unknown} kind - A fixture's `kind`.
+ * @param {string} kind - A fixture's `kind`; every declared fixture carries one.
  * @returns {string} {@link ROLE_SCREEN} or {@link ROLE_FITTING}.
  */
 function fixtureRole(kind) {
@@ -881,6 +938,7 @@ function fixtureRole(kind) {
 function summariseFixtures(rows) {
   const screens = rows.filter((row) => row.cells.includes(ROLE_SCREEN)).length;
   const fittings = rows.length - screens;
+  /** @type {(count: number, noun: string) => string} */
   const plural = (count, noun) => `${count} ${noun}${count === 1 ? '' : 's'}`;
   if (screens === 0) return plural(rows.length, 'fitting');
   const entries = `${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}`;
@@ -898,16 +956,18 @@ function summariseFixtures(rows) {
  * construction. Rooms are listed in room-number order; a fixture in a room the
  * spec does not declare keeps its raw room id rather than vanishing.
  *
- * @param {object} spec - The plan namespace.
- * @param {readonly object[]} walls - The derived walls, for the room matricules.
+ * @param {PlanSpec} spec - The plan namespace.
+ * @param {readonly Wall[]} walls - The derived walls, for the room matricules.
  * @returns {Table}
  */
 function buildFixturesTable(spec, walls) {
   const names = buildNameIndex(spec);
   const prefixes = buildRoomPrefixes(walls);
-  const roomsById = new Map(spec.ROOMS.map((room) => [room.id, room]));
+  const roomsById = new Map(
+    spec.ROOMS.map((room) => /** @type {[string, PlanRoom]} */ ([room.id, room])),
+  );
 
-  /** @type {Map<string, object[]>} */
+  /** @type {Map<string, PlanFixture[]>} */
   const byRoom = new Map();
   for (const fixture of spec.FIXTURES ?? []) {
     const list = byRoom.get(fixture.room);
@@ -931,7 +991,13 @@ function buildFixturesTable(spec, walls) {
     const prefix = room ? roomMatricule(spec, room, prefixes) : roomId;
     [...list].sort(byPosition).forEach((fixture, index) => {
       if (!kinds.includes(fixture.kind)) kinds.push(fixture.kind);
-      const [minX, maxX, minZ, maxZ] = fixture.rect ?? [];
+      // Read through a plain list of numbers, the shape {@link describeRect} also
+      // takes, so the defensive `?? []` survives typing: the union of the tuple
+      // and the empty array would make every coordinate optional, and `hasRect`
+      // cannot clear an optional the other two coordinates never mention.
+      /** @type {readonly number[]} */
+      const rect = fixture.rect ?? [];
+      const [minX, maxX, minZ, maxZ] = rect;
       const hasRect = typeof minX === 'number' && typeof minZ === 'number';
       rows.push({
         kind: 'body',
@@ -1073,7 +1139,11 @@ function layoutTable(table, x, y, nextId) {
     }),
   );
 
-  /** Left edge of each column, px, accumulated once and reused per row. */
+  /**
+   * Left edge of each column, px, accumulated once and reused per row.
+   *
+   * @type {number[]}
+   */
   const offsets = [];
   let offset = x;
   for (const columnWidth of widths) {
@@ -1129,8 +1199,8 @@ function layoutTable(table, x, y, nextId) {
  * them, so adding a room or rewording a note never pushes a table off the page.
  *
  * @param {object} args
- * @param {object} args.spec - Module namespace of `sourceOfTruth/plan.ts`.
- * @param {readonly object[]} args.walls - `deriveWalls(spec)`, per that file's contract.
+ * @param {PlanSpec} args.spec - Module namespace of `sourceOfTruth/plan.ts`.
+ * @param {readonly Wall[]} args.walls - `deriveWalls(spec)`, per that file's contract.
  * @returns {string} `<mxGraphModel>…</mxGraphModel>`, one draw.io page.
  */
 export function renderTablePage({ spec, walls }) {

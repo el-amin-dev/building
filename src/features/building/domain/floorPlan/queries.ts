@@ -20,8 +20,19 @@ import type { FloorPlan, Space, SpaceContact, SpaceId, SpaceKind } from './types
 /**
  * Widest gap between two facing rects that still counts as a contact: the
  * thickest wall of `WALL_SPEC`, in metres.
+ *
+ * `insulated` is listed even though it equals `exterior` today. Isolation is a
+ * width now, so it is the one kind the owner may raise — and leaving it out
+ * would not fail loudly: a wall built wider than this stops being seen as a
+ * contact at all, so `getNeighbours` would quietly lose those two rooms, and
+ * the walls, windows and railings derived from it would go with them.
  */
-const MAX_CONTACT_GAP = Math.max(WALL_SPEC.exterior, WALL_SPEC.partition, WALL_SPEC.voidFacing);
+const MAX_CONTACT_GAP = Math.max(
+  WALL_SPEC.exterior,
+  WALL_SPEC.insulated,
+  WALL_SPEC.partition,
+  WALL_SPEC.voidFacing,
+);
 
 /** How one rect faces another: the side, the raw gap and the overlap along the face. */
 interface Facing {

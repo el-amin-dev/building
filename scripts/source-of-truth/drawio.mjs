@@ -205,14 +205,17 @@ export function writeDiagrams(htmlPath, diagrams, { compress = false } = {}) {
  * shaped, and so the error messages naming a malformed file live in one place.
  *
  * @param {string} htmlPath Path to the export.
- * @returns {{ html: string, attributeMatch: RegExpMatchArray, options: Record<string, unknown>,
+ * @returns {{ html: string, attributeMatch: RegExpExecArray, options: Record<string, unknown>,
  *   mxfilePrefix: string, mxfileBody: string, mxfileSuffix: string }} The raw file, the
  *   located attribute, the parsed viewer options, and the `<mxfile>` wrapper split
  *   around its `<diagram>` list.
  */
 function readWrapper(htmlPath) {
   const html = readFileSync(htmlPath, 'utf8');
-  const attributeMatch = html.match(DATA_MXGRAPH);
+  // `exec`, not `match`: identical for this non-global regex, but its result type
+  // carries the `index` that {@link writeDiagrams} splices on, which `match` has
+  // to leave optional because a global regex would not report one.
+  const attributeMatch = DATA_MXGRAPH.exec(html);
   if (!attributeMatch) {
     throw new Error(`${htmlPath}: no data-mxgraph attribute — not a draw.io HTML export?`);
   }

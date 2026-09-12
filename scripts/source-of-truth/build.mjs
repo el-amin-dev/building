@@ -22,6 +22,22 @@ import { readDiagrams, writeDiagrams } from './drawio.mjs';
 import { renderPlanPage } from './render-plan.mjs';
 import { renderTablePage } from './render-table.mjs';
 
+/**
+ * @import { PlanRectCoordinates, PlanRoom }
+ *   from '../../src/features/building/domain/sourceOfTruth/plan.ts'
+ */
+
+/**
+ * The four areas the drawing states, and the plot they have to close on.
+ *
+ * @typedef {object} Totals
+ * @property {number} floor Area carrying a floor slab, in m².
+ * @property {number} void Area with no floor, open to the sky, in m².
+ * @property {number} stairwell Stair bay that is floor at this level, in m².
+ * @property {number} walls The remainder of the plot, in m².
+ * @property {number} plot The whole plot, in m².
+ */
+
 /** Path of the drawing, relative to the repository root. */
 const DRAWING = 'docs/source-of-truth-n-floor.drawio.html';
 
@@ -31,8 +47,8 @@ const FLOORED_KINDS = new Set(['room', 'circulation', 'openAir']);
 /**
  * Area of a rect in square metres.
  *
- * @param rect - Clear rect as `[minX, maxX, minZ, maxZ]`.
- * @returns The area.
+ * @param {PlanRectCoordinates} rect Clear rect as `[minX, maxX, minZ, maxZ]`.
+ * @returns {number} The area.
  */
 function areaOf([minX, maxX, minZ, maxZ]) {
   return (maxX - minX) * (maxZ - minZ);
@@ -43,11 +59,16 @@ function areaOf([minX, maxX, minZ, maxZ]) {
  * remainder of the plot, which is the only way the four figures are guaranteed
  * to close on the plot area.
  *
- * @param rooms - The rooms of {@link spec.ROOMS}.
- * @param plot - The plot rect.
- * @returns Floor, void, stairwell, wall and plot areas, rounded to the centimetre.
+ * @param {readonly PlanRoom[]} rooms The rooms of {@link spec.ROOMS}.
+ * @param {PlanRectCoordinates} plot The plot rect.
+ * @returns {Totals} Floor, void, stairwell, wall and plot areas, rounded to the
+ *   centimetre.
  */
 function computeTotals(rooms, plot) {
+  /**
+   * @param {number} value Any area, in m².
+   * @returns {number} It, rounded to the centimetre.
+   */
   const round = (value) => Math.round(value * 100) / 100;
   let floor = 0;
   let voidArea = 0;
@@ -73,8 +94,8 @@ function computeTotals(rooms, plot) {
  * Builds the one-line totals summary that both pages carry, so the drawing
  * always states the areas the geometry actually has.
  *
- * @param totals - Output of {@link computeTotals}.
- * @returns A single line of text.
+ * @param {Totals} totals Output of {@link computeTotals}.
+ * @returns {string} A single line of text.
  */
 function totalsLine(totals) {
   return (

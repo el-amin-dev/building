@@ -19,7 +19,8 @@ import type { Port, PortAxis } from './types.ts';
 
 /**
  * Level of the bottom of every port, in metres above the finished floor: a port
- * starts at the floor and rises to `FloorHeights.door` (ADR-006).
+ * starts at the floor and rises to `FloorHeights.door`, the door head of the
+ * source of truth (`sourceOfTruth/plan.ts`, `HEIGHTS.door`).
  */
 const FLOOR_LEVEL = 0;
 
@@ -87,8 +88,8 @@ export function getPortSpan(port: Port): readonly [number, number] {
  * second space, whose span runs along `port.along`, and whose span contains the
  * whole port span within {@link LENGTH_TOLERANCE}. Exactly one contact must
  * remain: `port.along` is what separates the two candidates when a pair of
- * spaces touches on both axes, as guestRoom ↔ linkCorridor and
- * guestRoom ↔ guestSanitair do.
+ * spaces touches on both axes, as corridor ↔ kitchen, controlCenter ↔ guestRoom
+ * and guestRoom ↔ guestSanitair do.
  *
  * @param plan - The floor plan holding the two spaces.
  * @param port - The port to locate.
@@ -124,6 +125,12 @@ export function getPortContact(plan: FloorPlan, port: Port): SpaceContact {
  * span. The opening starts at the finished floor and rises to `heights.door`,
  * with a lintel filling the wall above it (`types.ts`).
  *
+ * The depth is that single gap, which is only right while the wall is one
+ * thickness across the port. A wall face can now be two thicknesses along its
+ * length, so that is a real assumption rather than a given; `validatePorts`
+ * rejects a port that crosses a change of thickness, using
+ * {@link getPortThicknesses}, so nothing reaches here with an ambiguous depth.
+ *
  * @param plan - The floor plan holding the two spaces.
  * @param port - The port to cut.
  * @param heights - Vertical sizes to use; defaults to `FLOOR_HEIGHTS`.
@@ -152,6 +159,66 @@ export function getPortOpening(
     FLOOR_LEVEL,
     heights.door,
   );
+}
+
+/**
+ * Lists the distinct wall thicknesses a port crosses, thinnest first.
+ *
+ * A wall between two spaces is not one number along its length any more. The
+ * owner's isolation is built as width, so a face runs 0.30 where it backs onto a
+ * weather-exposed or isolated space and 0.15 where it backs onto an ordinary
+ * one; `scripts/source-of-truth/walls.mjs` models that by tiling each face with
+ * a `contacts` list, one stretch per thickness. This is the same idea asked of
+ * one port: every contact between the two spaces that runs along the port's axis
+ * and genuinely overlaps its span, reduced to the thicknesses found there.
+ *
+ * One value is the normal answer, and the only one an opening can be cut at —
+ * see {@link getPortOpening}. Two or more means the port is drawn across a step
+ * in the wall, which `validatePorts` rejects.
+ *
+ * @param plan - The floor plan holding the two spaces.
+ * @param port - The port to measure.
+ * @returns A frozen, ascending array of the distinct gaps, in metres; empty when
+ *   nothing of the second space faces the port span along its axis.
+ * @throws RangeError naming the id when either space is missing from the plan.
+ */
+export function getPortThicknesses(plan: FloorPlan, port: Port): readonly number[] {
+  const [first, second] = port.spaces;
+  const [spanMin, spanMax] = getPortSpan(port);
+  const gaps = getNeighbours(plan, first)
+    .filter(
+      (contact) =>
+        contact.neighbourId === second &&
+        getContactAxis(contact.side) === port.along &&
+        Math.min(contact.spanMax, spanMax) - Math.max(contact.spanMin, spanMin) > LENGTH_TOLERANCE,
+    )
+    .map((contact) => contact.gap);
+  return Object.freeze([...new Set(gaps)].sort((a, b) => a - b));
+}
+
+/**
+ * Tells whether a port needs clear floor for its leaf to open into.
+ *
+ * The single place this exemption is decided, so that no check has to re-derive
+ * it and none can skip a door by accident. Two ports need no clearance:
+ *
+ * - an `opening` has no leaf at all — the living-room opening faces the
+ *   television across the corridor on purpose, and swinging a leaf that does not
+ *   exist would condemn the one arrangement the owner asked for by name;
+ * - a leaf that slides needs no floor to open into, which is the whole reason
+ *   the plan gives five of them a `swing` of `'slide'`: a bathroom whose open
+ *   part is 0.55 m deep cannot have a leaf swing into it.
+ *
+ * A caller that exempts a port must say so out loud — name it and the reason —
+ * rather than passing it silently, the way `verify.mjs` step 9 lists every
+ * exempt door after running the swing test.
+ *
+ * @param port - The port to judge.
+ * @returns `true` when the port is a door whose leaf swings, and so needs a
+ *   clear rectangle of floor; `false` for an opening and for a sliding leaf.
+ */
+export function needsSwingClearance(port: Port): boolean {
+  return port.kind === 'door' && port.swing !== 'slide';
 }
 
 /**

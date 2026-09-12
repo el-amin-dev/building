@@ -2,6 +2,8 @@
 
 > Everything below is a **requirement from the owner**, not a suggestion, unless marked `OPEN` or `NOTE`.
 
+`SUPERSEDED IN PART — read this first (2026-09-12)` This brief is the owner's **original** requirements, and it keeps its authority over **intent**: what each room is for, why it is where it is, and which rules must never be undone. It has lost its authority over **numbers**. The owner redesigned the plan after Parts 0–2 were built, and the single source of truth for every dimension, area and door is now `src/features/building/domain/sourceOfTruth/plan.ts`, checked by `pnpm verify:plan` and drawn into `docs/source-of-truth-n-floor.drawio.html`, which is GENERATED from it (ADR-010). **Where this document and the plan disagree, the plan wins.** The sections changed most are marked `SUPERSEDED` below; the headline changes are: interior partitions are 0.15 m and isolation is wall **width**, not a material; the **link corridor no longer exists**; a bathroom's bath and shower are now **rooms** with their own sliding doors, taking the floor from 18 spaces to 22; the stair **runs through** this floor on 18 risers and its bay is a hole but for the arrival landing; windows are 9 **declared** openings with a purpose each, not one derived size; and the plot closes in **four** parts, not three (see §8).
+
 ---
 
 ## 1. SITE & ORIENTATION
@@ -28,6 +30,8 @@
 | Walls facing open air / void | **0.30 m** (weather-exposed face) |
 | Interior envelope | 21.90 m × 9.40 m |
 | All dimensions in §4 | **CLEAR / INNER** (finished face to finished face) |
+
+`SUPERSEDED` Interior partitions are **0.15 m**, not 0.20 m, and isolation is a wall's **width** rather than a property of how it is made: a face the owner named off the wall register is built **0.30 m** and a plain separator **0.15 m**. Exterior and void-facing walls are unchanged at 0.30 m, one join keeps a stated 0.20 m (east void ↔ utility room), and five joins are zero-thickness. A consequence the drawing now shows: **a wall can change thickness along its length** — four faces do, and each face carries a list of contact stretches with the thickness and the reason for each. `pnpm verify:plan` check 8 prints them; the totals are 0.15 m over 87.05 m of face, 0.30 m over 178.55 m, 0.20 m over 1.90 m and 0.00 m over 8.80 m, and 108.90 m of the floor's 276.30 m of wall face is insulated.
 
 ---
 
@@ -67,6 +71,8 @@
 - Stairs sit at the **A end**, continuous with the corridor (no wall between them).
 - Corridor **ends at the Main Sanitair** (x = 20.20 m). It does **not** continue past it — the Utility Room takes the remaining depth.
 - Link corridor runs east–west at the A end, below the stairs. It connects: **A balcony ↔ stairs ↔ corridor ↔ control center ↔ guest room**.
+
+`SUPERSEDED` **The link corridor no longer exists.** The guest room's north strip absorbed it and does its job: the strip runs the full width from the side-A balcony at x 1.60 to x 9.70, reaches the balcony directly, and is the only side the control center can be entered from. The stair bay grew from 3.70 × 1.50 to **4.00 × 2.00 = 8.00 m²** so that a landing fits at each end with the two flights between them, taking 0.30 m off the corridor's west end; the corridor is 25.05 m² over two rects, the second of which is the stair hall and the television wall. The stairs are still continuous with the corridor through a zero-thickness join.
 
 ### 4.3 Service row (B side), depth 2.80 m
 
@@ -118,6 +124,8 @@
 
 `CRITICAL` The strip is **not** a continuous balcony. It is a void. Only the 3.50 m stretch serving the laundry and kitchen is a walkable slab.
 
+`SUPERSEDED` The `CRITICAL` rule above still holds — the strip is a hole with a slab in it — but every number in this table has moved, and **side B is now a normal 0.30 m exterior wall at full height, not an open face**. The strip is **0.80 m deep**, not 1.00: it carries the water, gas and electricity risers, which take about 0.15 m off the wall, so 0.80 m leaves about 0.65 m for a plumber to stand in, and the 0.20 m saved went to the kitchen, laundry and main sanitair. It is four pieces in a row, west to east: the **control-center balcony** (x 4.10–4.90, 0.64 m², new — walkable), **void (west)** (x 4.90–11.65, **5.40 m²**), the **balcony slab** (x 11.65–15.35, 3.70 × 0.80 = **2.96 m²** — the only part with a floor, still in front of the laundry and part of the kitchen, still the barbecue place) and **void (east)** (x 15.35–20.30, **3.96 m²**). Pure void is therefore **9.36 m²**, not 15.10 m². The slab runs 0.10 m wider than drawn at each end so the kitchen and laundry doors keep a 0.10 m jamb to the railing instead of opening onto it.
+
 ---
 
 ## 6. ACCESS GRAPH (door schedule)
@@ -148,6 +156,10 @@ All doors are **0.90 m** unless stated.
 | Master Bedroom does **NOT** open onto the stairs | It is the parents' room — privacy. It opens onto the corridor and the A balcony |
 | Guest Room opens onto the **link corridor** | So guests reach the stairs and entry without crossing the family zone |
 | Control Center is reached from the **link corridor** | It is a technical room — it needs direct access without crossing a habitable room. An earlier version routed it through the guest room; that is superseded |
+
+`SUPERSEDED` The schedule is now **20 ports**: 19 doors from 0.60 to 0.90 m plus the single 3.50 m living-room opening with no leaf. Doors are no longer all 0.90 m, and **five slide** because no leaf can swing in the floor their room has left (the guest room ↔ guest sanitair door and all four bath/shower cubicle doors). The five **link-corridor doors are gone** with the link corridor, and so is the guest room ↔ kitchen door, which the owner replaced with a 0.65 m food-pass window through the wall. Entry is **through the stairs only** and there is deliberately no side-A exterior door, so the "Side A (exterior) → A balcony" row above no longer holds (ADR-006). The **guest room now opens onto the stair landing** directly, and the **control center is entered from the guest room's north strip** — the strip is what replaced the link corridor, so the two hard rules below about link-corridor access are met by it rather than voided. The four hard rules that still bind unchanged: the laundry has no corridor door, the utility room has exactly one, the master bedroom does not open onto the stairs, and the guest bathroom is reached through its own suite. `pnpm verify:plan` check 6 proves 19/19 spaces reachable with neither void reachable, and that a door opens onto the stair bay only where the landing is floor at this level.
+
+`SUPERSEDED 2026-09-12` The hard rule above — "Control Center is reached from the **link corridor** … it needs direct access without crossing a habitable room. An earlier version routed it through the guest room; that is superseded" — is **retired**, by the owner's decision. Plan v2 does route it through the guest room: `controlCenter ↔ guestRoom` and `controlCenter ↔ ccBalcony` are the room's only two doors. The owner decided that is **fine as built**, because the guest room's north strip *is* the circulation the rule asks for — it is the old link corridor, absorbed into the room when the link corridor disappeared (§4.2), running the full width from the side-A balcony at x 1.60 to x 9.70. The rule's intent survives, which is that a technical room is entered from circulation rather than through someone's living space; the sentence naming the link corridor cannot survive, because the link corridor does not exist. The trade-off was put to the owner and accepted: a technician reaching the water, gas and electricity risers still crosses a bedroom to get to them. Recorded in ADR-011 (`.claude/claude.questions.md` Q16).
 
 ---
 
@@ -190,6 +202,8 @@ The owner's model: `[ sink [bath] [shower] ]`
 |---|---|
 | **Main Sanitair** | Sink (open) + **Bath** + **Shower** |
 | **Guest Sanitair** | Sink (open) + **Bath** — **NO shower** |
+
+`SUPERSEDED` The concept above is exactly what got built, and it was made literal: the owner's `[ sink [bath] [shower] ]` means **the bath and the shower are rooms, not fittings** — "bathroom is room contain open sink, [bath],[shower] and both isolated with wall and has port". Each therefore has its own walls, its own matricule and its own **sliding** door, which is what took the floor from 18 spaces to 22. The guest sanitair **does get a shower** after all, contrary to the row above: it has all three, cut to the minimum that still works. As built — Main sanitair 3.98 m² (open part, sink 0.70 × 0.45) + Family bath 1.90 m² (a 1.50 × 0.70 bath) + Family shower 0.98 m²; Guest sanitair 1.54 m² (open part only 0.55 m deep, sink 0.70 × 0.45) + Guest bath 1.15 m² (a 1.55 × 0.60 bath across its width) + Guest shower 0.70 m². Every leaf in both suites slides because nothing can swing into 0.55 m, and the ventilation is a 0.60–0.70 m slot above eye level (sill 1.90 m, head 2.30 m) onto the side-B void. `OPEN` If the guest suite proves too tight in the 3D walk-through, the levers are to drop its bath or take depth from the guest room.
 
 ### 7.4 Control Center — **building services / technical entry**
 
@@ -259,6 +273,20 @@ The owner's model: `[ sink [bath] [shower] ]`
 | WALLS | 42.52 m² |
 | **GROSS PLOT** | **225.00 m²** ✓ |
 
+`SUPERSEDED` The table above is the owner's verification of **2026-09-11**, of a floor that has since changed; it is kept as the record of what was asked for. The floor that is built closes on the same plot in **FOUR** parts, not three, because the stair bay is now a hole with one landing in it. These figures come from `pnpm verify:plan`, which is the authority (ADR-010):
+
+| Item | Area | Note |
+|---|---|---|
+| **FLOOR (slabs)** | **165.515 m²** | the plan's own FLOOR total of 163.515 m² (`room` + `circulation` + `openAir`, which excludes the stair bay) plus the 2.00 m² arrival landing |
+| **VOID (no floor)** | **9.360 m²** | void (west) 5.40 + void (east) 3.96 |
+| **WALLS** | **44.125 m²** | wall footprint = plot − floor − void − stairwell |
+| **SHAFT** | **6.000 m²** | the stair bay (8.00 m²) less its 1.00 × 2.00 arrival landing: the stair runs THROUGH this floor, so the rest of the bay is an open hole |
+| **GROSS PLOT** | **225.000 m²** ✓ | 22.50 × 10.00 |
+
+Room areas as built: Master bedroom 17.00 · Living room 17.75 · Bedroom male kids 17.75 · Bedroom female kids 17.75 · Stairwell 8.00 · Corridor 25.05 · Control center 5.50 · Guest room 10.42 · Guest sanitair 1.54 · Kitchen 10.38 · Laundry 9.24 · Main sanitair 3.98 · Utility room 9.43 · Side-A balcony 9.40 · Control-center balcony 0.64 · Side-B balcony slab 2.96 · Void west 5.40 · Void east 3.96 · Guest bath 1.15 · Guest shower 0.70 · Family bath 1.90 · Family shower 0.98 m². The three rooms that grew did so because a 0.15 m partition gives back what a 0.20 m one took; the living room and both kids bedrooms are 3.55 m deep rather than 3.40 m, which is what keeps the corridor's north face running straight.
+
+`SUPERSEDED` The two chains below are also superseded in their numbers — the partition is 0.15 m, the service row is 3.00 m deep where the strip gave up 0.20 m, and the open-air strip is 0.80 m. The chains still close on 10.00 m and 22.50 m, and `pnpm verify:plan` check 3 prints the real ones, five across the depth and two across the width, each summing wall + space + wall … to the plot.
+
 ### Depth chain — must always total 10.00 m
 
 ```
@@ -299,6 +327,10 @@ The owner's model: `[ sink [bath] [shower] ]`
 | **Elevator** | Space reserved, specification `OPEN` |
 | **Guest Room L-shape** | **Intentional. Do not "fix" it into a rectangle.** |
 | **Utility Room proportion** | 1.80 m wide × 5.80 m deep is a long thin room. Works as storage/technical, poor for anything needing width |
+| **Side-A balustrade height** | `RESOLVED 2026-09-12 — built at 1.10 m.` The balcony's outer edge (`F1-R01-BAL-W4`, 9.40 m long) is the only wall on the floor below storey height. It was **stated at 1.00 m** against the plan's own railing constant of **1.10 m**, and `pnpm verify:plan` printed the disagreement on every run. The owner chose **1.10 m** and the stated 1.00 m is deleted — 1.10 m is the usual minimum for an edge a person can fall over, which is very likely why the constant is 1.10 m. The fix is structural, not just a new number: the `PARAPET_WALLS` entry now carries `HEIGHTS.railing` itself, so no second literal is left to disagree with it, and check 11 reports the one low face with no disagreement line. Recorded in ADR-011 |
+| **Control Center = 5.50 m²** | The room grew from 3.74 m² and now runs to the side-B wall, with its own 0.64 m² balcony, which eases the `PRIORITY` item above — but the two-compartment split is still not drawn, so check it against real equipment sizes before building |
+| **No daylight for 3 rooms** | Still open, and still in tension with the §1 `NOTE`. Of the 9 windows, none is in the side-C or side-D envelope: the living room and both kids bedrooms touch only blocked side C and get electric light only. The master bedroom also has **no window at all**, by the owner's choice — its only opening is the balcony door |
+| **Link corridor items above** | Void: the link corridor no longer exists (see §4.2), so its 0.90 m width and its "appliances cannot pass" consequence no longer apply. All appliance moves route via the 1.50 m corridor, and the stair was widened to 1.00 m flights with a 2.00 m landing at each end specifically so a fridge or washing machine can be turned in it |
 
 ---
 

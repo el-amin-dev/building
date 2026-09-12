@@ -60,6 +60,83 @@
  * Node built-ins only, ES modules.
  */
 
+/** @import { Axis, Contact, PlanSpec, Wall } from './walls.mjs' */
+
+/**
+ * @import { InsulatedWall, PlanRectCoordinates, PlanRoom, PlanRoomType, PlanSides,
+ *   PlanStairs, PlanWallThicknesses }
+ *   from '../../src/features/building/domain/sourceOfTruth/plan.ts'
+ */
+
+/**
+ * A rectangle on the page, in px: `x0`/`y0` its top-left corner, `x1`/`y1` its
+ * bottom-right.
+ *
+ * Every placement decision in this module is taken in these terms — a room rect,
+ * a fixture and a label are all just boxes once they are on the page, which is
+ * what lets one obstacle list hold all three.
+ *
+ * @typedef {{ x0: number, y0: number, x1: number, y1: number }} Box
+ */
+
+/**
+ * A {@link Box} that remembers how many rings out from its fixture it sits, so
+ * {@link placeLabelBox} can prefer a near spot to a merely contained one.
+ *
+ * @typedef {Box & { ring: number }} RingBox
+ */
+
+/**
+ * How one run of wall is painted: {@link WALL_HARD} or {@link WALL_SOFT}.
+ *
+ * @typedef {{ fill: string, stroke: string, width: number }} WallLook
+ */
+
+/**
+ * A fixture as the drawing needs it: what it is, the room it stands in, and the
+ * floor it covers.
+ *
+ * `kind` is a plain `string` rather than the spec's `PlanFixtureKind` union on
+ * purpose. This renderer treats one value specially — a `partition` is drawn as
+ * fabric and carries no label — and that has to keep working whether or not the
+ * spec's union happens to list that kind today.
+ *
+ * @typedef {{ kind: string, room: string, rect: readonly number[] }} RenderFixture
+ */
+
+/**
+ * One queued band label: where along its band it would like to sit, how wide it
+ * is and how to draw it. `seq` is the order it was queued in, which is what
+ * keeps the packing deterministic when two labels want the same spot.
+ *
+ * @typedef {{ centre: number, text: string, color: string, w: number, seq: number }} BandItem
+ */
+
+/**
+ * One band: a single line of constant centreline, shared by both faces of a wall
+ * and by every opening in it. See {@link queueBand}.
+ *
+ * @typedef {{ axis: Axis, at: number, items: BandItem[] }} Band
+ */
+
+/**
+ * One drawn wall band: every stretch that shares an axis, a centreline and a
+ * depth, with the insulated spans kept apart so they can be painted red.
+ *
+ * @typedef {{ axis: Axis, at: number, thickness: number, every: number[][],
+ *   hard: number[][] }} WallBand
+ */
+
+/**
+ * One stretch of a wall face as {@link wallStretches} reads it: either a
+ * {@link Contact}, or the whole-face fallback built for a wall that carries no
+ * contacts at all. The fallback has no `reason` and its `thickness` may be
+ * missing, so the pair is described here rather than by `Contact`.
+ *
+ * @typedef {{ spanMin: number, spanMax: number, thickness?: number | null,
+ *   reason?: string }} StretchSource
+ */
+
 /**
  * Pixels per metre.
  *
@@ -96,7 +173,20 @@ const py = (z) => ORIGIN_Y + SCALE * z;
  * `GST` is not in the brief's palette list but the owner coloured the guest room
  * `#fff2cc`, so that is kept. `VOID` is white with a dashed red stroke and red
  * text, which is how the drawing distinguishes "no floor" from "floor".
+ *
+ * `BAT` and `SHW` — the walled bath and the walled shower, rooms rather than
+ * fittings since they were given their own walls and their own doors — are wet
+ * rooms, so they take the sanitair's own `BTH` colour rather than a new one.
+ * Sharing a pair is how this palette already says "the same kind of space":
+ * `BED` and `CTR` share one, and so do `COR` and `STR`. With no entry at all they
+ * fell through to white on grey, which read as an unclassified hole cut out of a
+ * coloured bathroom.
+ *
+ * Typed as a *partial* record of the room types: a type with no entry here falls
+ * back to white on grey in {@link fillFor}, so a type added to the plan shows up
+ * as uncoloured rather than stopping the page.
  */
+/** @type {Readonly<Partial<Record<PlanRoomType, readonly [string, string]>>>} */
 const PALETTE = Object.freeze({
   BED: ['#dae8fc', '#6c8ebf'],
   CTR: ['#dae8fc', '#6c8ebf'],
@@ -104,6 +194,8 @@ const PALETTE = Object.freeze({
   KIT: ['#d5e8d4', '#82b366'],
   LND: ['#ffd9b3', '#d79b00'],
   BTH: ['#ffe6cc', '#d79b00'],
+  BAT: ['#ffe6cc', '#d79b00'],
+  SHW: ['#ffe6cc', '#d79b00'],
   UTL: ['#f8cecc', '#b85450'],
   BAL: ['#c9e6c9', '#2d7d2d'],
   COR: ['#f5f5f5', '#666666'],
@@ -113,7 +205,11 @@ const PALETTE = Object.freeze({
 });
 
 /** The master bedroom is the one `BED` the owner drew in the living-room violet. */
-const MASTER_FILL = Object.freeze(['#e1d5e7', '#9673a6']);
+const MASTER_FILL = Object.freeze(
+  // A pair, not a list: `fillFor` hands back `[fill, stroke]` and its callers
+  // destructure exactly two colours out of it.
+  /** @type {readonly [string, string]} */ (['#e1d5e7', '#9673a6']),
+);
 
 /** Green of a port bar, and the darker green its label is written in. */
 const PORT_COLORS = Object.freeze({ fill: '#00b050', stroke: 'none', text: '#00701a' });
@@ -182,7 +278,12 @@ const MIN_DRAWN_THICKNESS = 0.08;
  * `walls.mjs` says `north`/`east`/`south`/`west`; the domain model's `RectSide`
  * says `minZ`/`maxX`/`maxZ`/`minX`. Both are accepted so this renderer is not
  * hostage to which one the derivation happens to use. See {@link bandOf}.
+ *
+ * Keyed by `string` and valued `| undefined`, because a lookup here is allowed
+ * to miss: a wall whose `side` is neither vocabulary is read as carrying a
+ * centreline already, and both readers below handle the miss explicitly.
  */
+/** @type {Readonly<Record<string, { axis: Axis, outward: number } | undefined>>} */
 const SIDE_GEOMETRY = Object.freeze({
   north: { axis: 'x', outward: -1 },
   south: { axis: 'x', outward: 1 },
@@ -244,14 +345,36 @@ const CHAR_W_PROSE = 0.58;
 /**
  * Render the plan page.
  *
- * @param {{ spec: Record<string, unknown>, walls: ReadonlyArray<Record<string, unknown>> }} input
+ * @param {{ spec: PlanSpec, walls: readonly Wall[] }} input
  *   `spec` is the module namespace of `sourceOfTruth/plan.ts`; `walls` is the `Wall[]` of
  *   `walls.mjs` (passed in rather than imported so this module stays a pure
  *   function of its inputs and can be exercised against a fixture).
  * @returns {string} The `<mxGraphModel>…</mxGraphModel>` XML of the page.
  */
 export function renderPlanPage({ spec, walls }) {
-  const { PLOT, ROOMS, WALLS, STAIRS, SIDES, FIXTURES, INSULATED_WALLS, FLOOR_NUMBER } = spec;
+  // Each of these is widened from the frozen `as const` literal to the interface
+  // the spec declares for it. The literal types are far narrower than the data
+  // means — `STAIRS.bay` is the tuple `[1.6, 5.6, 4, 6]`, not "a rect", and
+  // `SIDES.C` is one particular sentence — and a renderer that only reads a
+  // value has no business being pinned to the number the owner happens to have
+  // typed. Widening at the door keeps every consequence below honest: `PLOT` is
+  // four metres, `ROOMS` is rooms.
+  /** @type {PlanRectCoordinates} */
+  const PLOT = spec.PLOT;
+  /** @type {readonly PlanRoom[]} */
+  const ROOMS = spec.ROOMS;
+  /** @type {PlanWallThicknesses} */
+  const WALLS = spec.WALLS;
+  /** @type {PlanStairs} */
+  const STAIRS = spec.STAIRS;
+  /** @type {PlanSides} */
+  const SIDES = spec.SIDES;
+  /** @type {readonly RenderFixture[]} */
+  const FIXTURES = spec.FIXTURES;
+  /** @type {readonly InsulatedWall[]} */
+  const INSULATED_WALLS = spec.INSULATED_WALLS;
+  /** @type {number} */
+  const FLOOR_NUMBER = spec.FLOOR_NUMBER;
   const [plotMinX, plotMaxX, plotMinZ, plotMaxZ] = PLOT;
 
   /** Emitted cells, in z-order: later cells paint on top of earlier ones. */
@@ -259,7 +382,11 @@ export function renderPlanPage({ spec, walls }) {
   let idCounter = 0;
   const nextId = () => `v2-${++idCounter}`;
 
-  /** Band label requests, resolved in one pass after every shape is placed. */
+  /**
+   * Band label requests, resolved in one pass after every shape is placed.
+   *
+   * @type {Map<string, Band>}
+   */
   const bands = new Map();
   let bandSeq = 0;
 
@@ -267,6 +394,8 @@ export function renderPlanPage({ spec, walls }) {
    * Visual bounds of every cell emitted so far, which is how the side labels and
    * the notes block find somewhere clear to sit: a band label may spill past the
    * plot outline, so measuring beats guessing a fixed margin.
+   *
+   * @type {Box[]}
    */
   const boxes = [];
 
@@ -278,6 +407,8 @@ export function renderPlanPage({ spec, walls }) {
    * overlap — not merely overlaps between labels of the same kind. It is what
    * lets a wall label steer around a fixture label it otherwise knows nothing
    * about, and what keeps both off a room's matricule.
+   *
+   * @type {Box[]}
    */
   const placedLabels = [];
 
@@ -505,6 +636,7 @@ export function renderPlanPage({ spec, walls }) {
   //
   // Drawn before the openings, so a port or a window still sits on top.
   const insulatedNames = new Set((INSULATED_WALLS ?? []).map((entry) => entry.matricule));
+  /** @type {Map<string, WallBand>} */
   const wallBands = new Map();
   for (const wall of walls) {
     const { axis } = bandOf(wall, 0);
@@ -519,13 +651,17 @@ export function renderPlanPage({ spec, walls }) {
       if (stretch.hard) band.hard.push([stretch.spanMin, stretch.spanMax]);
     }
   }
-  for (const key of [...wallBands.keys()].sort()) {
-    const { axis, at, thickness, every, hard } = wallBands.get(key);
+  for (const [, { axis, at, thickness, every, hard }] of sortedByKey(wallBands)) {
     const across = SCALE * Math.max(thickness, MIN_DRAWN_THICKNESS);
     const hardRuns = mergeRanges(hard);
+    // Each run is a pair — the span, and how to paint it — so it is written as
+    // one: a plain literal would be inferred as a list of "either a span or a
+    // look", which is not what the loop below unpacks.
     const runs = [
-      ...hardRuns.map((range) => [range, WALL_HARD]),
-      ...subtractRanges(mergeRanges(every), hardRuns).map((range) => [range, WALL_SOFT]),
+      ...hardRuns.map((range) => /** @type {[number[], WallLook]} */ ([range, WALL_HARD])),
+      ...subtractRanges(mergeRanges(every), hardRuns).map(
+        (range) => /** @type {[number[], WallLook]} */ ([range, WALL_SOFT]),
+      ),
     ];
     for (const [[min, max], look] of runs) {
       const along = SCALE * (max - min);
@@ -618,6 +754,12 @@ export function renderPlanPage({ spec, walls }) {
   const plotW = SCALE * (plotMaxX - plotMinX);
   const plotH = SCALE * (plotMaxZ - plotMinZ);
   const midZ = py((plotMinZ + plotMaxZ) / 2);
+  /**
+   * The shared style of a side label, plus whatever this one adds.
+   *
+   * @param {string} extra Style fragment appended to the shared part.
+   * @returns {string} Cell style.
+   */
   const sideStyle = (extra) => `text;html=1;align=center;verticalAlign=middle;fontSize=11;${extra}`;
 
   // C is the north side (z = 0) and B the south (z = 10); A (x = 0) and D
@@ -812,12 +954,12 @@ export function renderPlanPage({ spec, walls }) {
     // labels included — so a wall label never lands on one.
     const placed = placedLabels;
 
-    for (const key of [...bands.keys()].sort()) {
-      const { axis, at, items } = bands.get(key);
+    for (const [, { axis, at, items }] of sortedByKey(bands)) {
       items.sort((a, b) => a.centre - b.centre || a.seq - b.seq);
 
       for (const item of items) {
         const wanted = item.centre - item.w / 2;
+        /** @type {{ start: number, offset: number, lo: number, hi: number } | null} */
         let best = null;
         for (const row of BAND_ROWS) {
           const offset = row * height;
@@ -835,6 +977,14 @@ export function renderPlanPage({ spec, walls }) {
           }
         }
 
+        // Every lane is tried and the nearest kept, so a label always has a spot:
+        // `BAND_ROWS` is a module constant of six. Stated rather than assumed,
+        // because emptying it would otherwise place this label at NaN and lose it
+        // off the page silently — an unlabelled wall is the one outcome this
+        // renderer must never produce.
+        if (best === null) {
+          throw new Error(`BAND_ROWS is empty: nowhere to put the label "${item.text}"`);
+        }
         placed.push(
           axis === 'x'
             ? { x0: best.start, x1: best.start + item.w, y0: best.lo, y1: best.hi }
@@ -882,6 +1032,24 @@ export function renderPlanPage({ spec, walls }) {
 }
 
 /**
+ * The entries of a map, in ascending key order.
+ *
+ * Emission order is what makes two runs over the same spec produce byte-identical
+ * XML, and every key here is a string built out of the geometry, so sorting the
+ * keys is that guarantee. Walking the entries rather than looking each key back
+ * up is also what says a value is always there: a `get` with a key taken from the
+ * very same map cannot miss, but only a reader knows that.
+ *
+ * @template V
+ * @param {Map<string, V>} map Any map keyed by string.
+ * @returns {Array<[string, V]>} Its entries, ascending by key — the order
+ *   `[...map.keys()].sort()` gives, which is code-unit order.
+ */
+function sortedByKey(map) {
+  return [...map.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/**
  * Group the fixtures by room and put each room's in reading order.
  *
  * Numbering is per room, not per wall: a fixture stands in a room. Ordering by
@@ -889,16 +1057,23 @@ export function renderPlanPage({ spec, walls }) {
  * from one run to the next as long as it has not moved, which matters because
  * these matricules are quoted on the Registers page.
  *
- * @param {ReadonlyArray<{room: string, rect: ReadonlyArray<number>}>} fixtures The spec's fixtures.
+ * @param {readonly RenderFixture[]} fixtures The spec's fixtures.
  * @param {ReadonlyArray<{id: string}>} rooms The spec's rooms, for a stable room order.
- * @returns {Array<[string, Array<Record<string, unknown>>]>} `[roomId, fixtures]`, rooms in spec order.
+ * @returns {Array<[string, RenderFixture[]]>} `[roomId, fixtures]`, rooms in spec order.
  */
 function fixturesByRoom(fixtures, rooms) {
   const roomOrder = new Map(rooms.map((room, index) => [room.id, index]));
+  /** @type {Map<string, RenderFixture[]>} */
   const grouped = new Map();
   for (const fixture of fixtures) {
-    if (!grouped.has(fixture.room)) grouped.set(fixture.room, []);
-    grouped.get(fixture.room).push(fixture);
+    // One lookup, not a `has` and then a `get`: the room's list is either
+    // already there or this is its first fixture.
+    let items = grouped.get(fixture.room);
+    if (!items) {
+      items = [];
+      grouped.set(fixture.room, items);
+    }
+    items.push(fixture);
   }
   for (const items of grouped.values()) {
     items.sort((a, b) => a.rect[2] - b.rect[2] || a.rect[0] - b.rect[0]);
@@ -933,7 +1108,7 @@ function mergeRanges(ranges) {
 /**
  * Which way a wall's solid lies from the face `at` records.
  *
- * @param {Record<string, unknown>} wall A derived wall.
+ * @param {Wall} wall A derived wall.
  * @returns {number} `+1`, `-1`, or `0` when the side is not one we recognise.
  */
 function outwardOf(wall) {
@@ -959,7 +1134,7 @@ function outwardOf(wall) {
  * A wall with no `contacts` falls back to one stretch covering the whole face, so
  * an older derivation still draws.
  *
- * @param {Record<string, unknown>} wall A derived wall.
+ * @param {Wall} wall A derived wall.
  * @param {Set<string>} insulatedNames Matricules the owner named for isolation.
  * @returns {Array<{spanMin: number, spanMax: number, thickness: number, at: number,
  *   hard: boolean}>} The stretches to draw, in the order `contacts` lists them.
@@ -967,6 +1142,10 @@ function outwardOf(wall) {
 function wallStretches(wall, insulatedNames) {
   const outward = outwardOf(wall);
   const isNamed = insulatedNames.has(wall.matricule);
+  // Either the face's own contacts or the one-stretch fallback — described by
+  // {@link StretchSource}, which is a contact minus the fields the fallback
+  // cannot know.
+  /** @type {readonly StretchSource[]} */
   const contacts =
     Array.isArray(wall.contacts) && wall.contacts.length > 0
       ? wall.contacts
@@ -990,9 +1169,9 @@ function wallStretches(wall, insulatedNames) {
  * An opening never straddles a change of depth — a door cannot be half 0.30 and
  * half 0.15 — so the midpoint settles it.
  *
- * @param {Record<string, unknown>} wall The wall the opening belongs to.
+ * @param {Wall} wall The wall the opening belongs to.
  * @param {{spanMin: number, width: number}} opening A derived opening.
- * @returns {Record<string, unknown> | null} Its contact, or null if none matches.
+ * @returns {Contact | null} Its contact, or null if none matches.
  */
 function contactFor(wall, opening) {
   const mid = opening.spanMin + opening.width / 2;
@@ -1039,13 +1218,19 @@ function subtractRanges(ranges, cut) {
  * has stopped having — which is exactly what happens when isolation starts being
  * expressed as width.
  *
- * @param {Record<string, unknown>} thicknesses The spec's `WALLS`.
+ * @param {PlanWallThicknesses} thicknesses The spec's `WALLS`.
  * @returns {string} One `name thickness` pair per numeric entry, joined by `·`.
  */
 function wallThicknessSummary(thicknesses) {
-  return Object.entries(thicknesses ?? {})
-    .filter(([, value]) => typeof value === 'number' && Number.isFinite(value))
-    .map(([name, value]) => `${name} ${metres(value)}`)
+  /** @type {Array<[string, unknown]>} */
+  const entries = Object.entries(thicknesses ?? {});
+  // Chosen and formatted in one pass: filtering and then mapping reads each
+  // value twice, and the second read has forgotten that the first proved it a
+  // finite number.
+  return entries
+    .flatMap(([name, value]) =>
+      typeof value === 'number' && Number.isFinite(value) ? [`${name} ${metres(value)}`] : [],
+    )
     .join(' · ');
 }
 
@@ -1059,16 +1244,22 @@ function wallThicknessSummary(thicknesses) {
  * Read from the data rather than named, because they were named once and the
  * arrival landing the owner asked for then went undrawn.
  *
- * @param {Record<string, unknown>} stairs The spec's `STAIRS`.
- * @returns {Array<[string, ReadonlyArray<number>]>} `[name, rect]` in spec order.
+ * @param {PlanStairs} stairs The spec's `STAIRS`.
+ * @returns {Array<[string, PlanRectCoordinates]>} `[name, rect]` in spec order.
  */
 function stairPieces(stairs) {
-  return Object.entries(stairs).filter(
-    ([name, value]) =>
-      name !== 'bay' &&
-      Array.isArray(value) &&
-      value.length === 4 &&
-      value.every((n) => Number.isFinite(n)),
+  /** @type {Array<[string, unknown]>} */
+  const entries = Object.entries(stairs);
+  // Written as a type predicate because "is a rect" is precisely what the test
+  // decides, and the caller then reads four numbers out of what comes back.
+  return entries.filter(
+    /** @type {(entry: [string, unknown]) => entry is [string, PlanRectCoordinates]} */ (
+      ([name, value]) =>
+        name !== 'bay' &&
+        Array.isArray(value) &&
+        value.length === 4 &&
+        value.every((n) => Number.isFinite(n))
+    ),
   );
 }
 
@@ -1126,17 +1317,28 @@ const ROOM_ANCHORS = Object.freeze([
  * still moves out from under a bath when it has to.
  *
  * @param {{fontSize: number, lines: string[]}} label The chosen room label.
- * @param {{x0: number, y0: number, x1: number, y1: number}} rect The room rect, px.
- * @param {ReadonlyArray<{x0: number, y0: number, x1: number, y1: number}>} obstacles Boxes to avoid.
- * @returns {{horizontal: string, vertical: string, box: {x0: number, y0: number, x1: number,
- *   y1: number} | null}} The alignment, and the box it puts the text in.
+ * @param {Box} rect The room rect, px.
+ * @param {ReadonlyArray<Box>} obstacles Boxes to avoid.
+ * @returns {{horizontal: string, vertical: string, box: Box | null, free: boolean}} The
+ *   alignment, the box it puts the text in, and whether that box is clear of
+ *   everything placed so far — which is what tells the caller to lift the
+ *   matricule out of the shape.
  */
 function placeRoomLabel(label, rect, obstacles) {
-  if (label.lines.length === 0) return { horizontal: 'center', vertical: 'middle', box: null };
+  // A stairwell rect carries no text at all, so there is nothing to keep clear
+  // and nothing to move: `free` is false because no box was found, not because
+  // one was blocked, and the caller reads the empty label first either way.
+  if (label.lines.length === 0) {
+    return { horizontal: 'center', vertical: 'middle', box: null, free: false };
+  }
 
   const w = label.lines[0].length * label.fontSize * CHAR_W_PROSE;
   const h = label.fontSize * 1.45;
   const pad = 2;
+  /**
+   * @param {Box} box A candidate box.
+   * @returns {boolean} True when it touches no obstacle.
+   */
   const free = (box) =>
     !obstacles.some(
       (o) =>
@@ -1146,6 +1348,7 @@ function placeRoomLabel(label, rect, obstacles) {
         o.y0 < box.y1 - 0.01,
     );
 
+  /** @type {{horizontal: string, vertical: string, box: Box, free: boolean} | null} */
   let centred = null;
   for (const [horizontal, vertical] of ROOM_ANCHORS) {
     const x0 =
@@ -1167,6 +1370,11 @@ function placeRoomLabel(label, rect, obstacles) {
   // Every anchor is blocked. Report it rather than quietly drawing over a bath:
   // the caller lifts the matricule out of the shape and places it in whatever
   // gap the room has left.
+  //
+  // `ROOM_ANCHORS` is a module constant of nine positions, so the first turn of
+  // the loop above always records the centred one. Saying so out loud is what
+  // lets this function promise an answer instead of a maybe.
+  if (!centred) throw new Error('ROOM_ANCHORS is empty: a room matricule has nowhere to sit');
   return centred;
 }
 
@@ -1236,6 +1444,7 @@ function findFreeBoxInRect(size, rect, obstacles) {
   // screen by 0.05 px, and so reported the room full when it was not.
   const step = 1;
 
+  /** @type {Box[]} */
   const candidates = [];
   for (let y = rect.y0 + 2; y + h <= rect.y1 - 2; y += step) {
     for (let x = rect.x0 + 2; x + w <= rect.x1 - 2; x += step) {
@@ -1243,6 +1452,10 @@ function findFreeBoxInRect(size, rect, obstacles) {
     }
   }
   // Nearest the middle first, so the name still reads as belonging to the room.
+  /**
+   * @param {Box} box A candidate box.
+   * @returns {number} How far its centre is from the rect's, px.
+   */
   const distance = (box) => Math.hypot((box.x0 + box.x1) / 2 - cx, (box.y0 + box.y1) / 2 - cy);
   candidates.sort((a, b) => distance(a) - distance(b));
 
@@ -1302,6 +1515,7 @@ function placeLabelBox(label, fixture, roomBoxes, obstacles) {
     (a, b) => Math.abs(a) - Math.abs(b) || a - b,
   );
 
+  /** @type {RingBox[]} */
   const candidates = [];
   for (let ring = 1; ring <= 14; ring += 1) {
     for (const dx of shifts) {
@@ -1318,6 +1532,10 @@ function placeLabelBox(label, fixture, roomBoxes, obstacles) {
     }
   }
 
+  /**
+   * @param {Box} box A candidate box.
+   * @returns {boolean} True when it touches no obstacle.
+   */
   const free = (box) =>
     !obstacles.some(
       (o) =>
@@ -1326,6 +1544,10 @@ function placeLabelBox(label, fixture, roomBoxes, obstacles) {
         box.y0 < o.y1 - 0.01 &&
         o.y0 < box.y1 - 0.01,
     );
+  /**
+   * @param {Box} box A candidate box.
+   * @returns {boolean} True when one of the room's rects contains it whole.
+   */
   const insideRoom = (box) =>
     roomBoxes.some(
       (r) =>
@@ -1342,6 +1564,10 @@ function placeLabelBox(label, fixture, roomBoxes, obstacles) {
   // the search climbed six rings to find a spot that was merely *inside* and
   // left the label 0.85 m above the thing it named. A label hanging a few px
   // over the room's edge still points at its fixture; one that far away does not.
+  /**
+   * @param {RingBox} box A candidate box.
+   * @returns {boolean} True when it is still next to the fixture it names.
+   */
   const adjacent = (box) => box.ring <= ADJACENT_RINGS;
   for (const box of candidates) if (adjacent(box) && insideRoom(box) && free(box)) return box;
   for (const box of candidates) if (adjacent(box) && free(box)) return box;
@@ -1367,6 +1593,10 @@ function placeLabelBox(label, fixture, roomBoxes, obstacles) {
  * @returns {number} The chosen start.
  */
 function nearestFreeStart(blockers, wanted, w) {
+  /**
+   * @param {number} start A candidate start, band coordinates.
+   * @returns {boolean} True when a label of width `w` fits there untouched.
+   */
   const free = (start) =>
     !blockers.some(([lo, hi]) => start < hi + BAND_GAP && lo - BAND_GAP < start + w);
   if (free(wanted)) return wanted;
@@ -1410,7 +1640,7 @@ function nearestFreeStart(blockers, wanted, w) {
  * keeps the two in a single packing lane. Geometry must not use it — the wall
  * bands and the opening bars take their depth per contact instead.
  *
- * @param {Record<string, unknown>} wall A derived wall.
+ * @param {Wall} wall A derived wall.
  * @param {number} fallbackThickness Thickness to assume when the wall omits one.
  * @returns {{ axis: 'x'|'z', at: number }} Its axis and centreline coordinate.
  */
@@ -1428,7 +1658,12 @@ function bandOf(wall, fallbackThickness) {
  * `door`/`opening` and windows `light`/`pass`/`air` today, but only a window can
  * ever carry a sill and a head, so this survives a new kind being added.
  *
- * @param {Record<string, unknown>} opening A derived opening.
+ * @param {{ width: number, sill?: unknown, head?: unknown }} opening A derived
+ *   opening. Typed by what is being asked of it rather than as an opening: a port
+ *   simply has no `sill`, and that absence is the whole test. `width` is the one
+ *   field every opening does carry, and it is named so that a port — which
+ *   answers none of the optional questions — is still recognisably an opening
+ *   rather than an unrelated object.
  * @returns {boolean} True for a window.
  */
 function isWindow(opening) {
@@ -1449,7 +1684,7 @@ function roomMatricule(floor, room) {
 /**
  * Fill and stroke for a room.
  *
- * @param {{ type: string, id: string }} room A room of the spec.
+ * @param {{ type: PlanRoomType, id: string }} room A room of the spec.
  * @returns {readonly [string, string]} `[fillColor, strokeColor]`.
  */
 function fillFor(room) {

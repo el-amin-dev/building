@@ -118,11 +118,15 @@ export interface PlanStairs {
   readonly flightWidth: number;
   /** Arrival landing, at this floor's level, continuous with the corridor. */
   readonly landingEast: PlanRectCoordinates;
-  /** Flight A descends west along the north strip, 9 risers. */
+  /** Flight A rises west along the north strip, 9 risers, to the half-landing above. */
   readonly flightA: PlanRectCoordinates;
-  /** The turn, half a storey down, spanning both strips. */
+  /**
+   * The turn, spanning both strips. Its footprint is occupied twice over: half a
+   * storey ABOVE this floor, where flight A arrives, and half a storey BELOW it,
+   * where flight B starts. The stair repeats, so every half-landing level exists.
+   */
   readonly halfLanding: PlanRectCoordinates;
-  /** Flight B descends east along the south strip, 9 risers, to the floor below. */
+  /** Flight B rises east along the south strip, 9 risers, from the half-landing below to this floor. */
   readonly flightB: PlanRectCoordinates;
 }
 
@@ -140,7 +144,21 @@ export interface PlanStairs {
  * 0.25, down from 0.28: the second landing is worth more than the extra 0.03,
  * and two 1.00 × 2.00 landings are far better for turning a washing machine or a
  * fridge than one. The east landing is at this floor's level and continuous with
- * the corridor; the west one is half a storey down.
+ * the corridor.
+ *
+ * **The stair does not begin or end at this floor — it runs through it** (owner).
+ * This is the typical floor of a stack, so the stairwell repeats every storey,
+ * and the two flights touching this landing go in OPPOSITE directions:
+ *
+ * - flight A, the north strip, RISES from this floor to the half-landing above;
+ * - flight B, the south strip, RISES from the half-landing below to this floor.
+ *
+ * Modelling both as descending would be a stair that arrives here and stops —
+ * it would show no way up at all, and would put two flights in the footprints of
+ * one. Which strip rises and which arrives is not arbitrary: a dog-leg that
+ * repeats must hand the walker from one strip to the other at each half-landing,
+ * so the strip you climb out of this landing on is the strip you did not arrive
+ * by.
  */
 export const STAIRS = deepFreeze({
   bay: [1.6, 5.6, 4.0, 6.0],
@@ -149,11 +167,11 @@ export const STAIRS = deepFreeze({
   flightWidth: 1.0,
   /** Arrival landing, at this floor's level, continuous with the corridor. */
   landingEast: [4.6, 5.6, 4.0, 6.0],
-  /** Flight A descends west along the north strip, 9 risers. */
+  /** Flight A rises west along the north strip, 9 risers, to the half-landing above. */
   flightA: [2.6, 4.6, 4.0, 5.0],
-  /** The turn, half a storey down, spanning both strips. */
+  /** The turn, spanning both strips, at half a storey above AND half a storey below. */
   halfLanding: [1.6, 2.6, 4.0, 6.0],
-  /** Flight B descends east along the south strip, 9 risers, to the floor below. */
+  /** Flight B rises east along the south strip, 9 risers, from the half-landing below. */
   flightB: [2.6, 4.6, 5.0, 6.0],
 } as const satisfies PlanStairs);
 
@@ -300,7 +318,7 @@ export const ROOMS = deepFreeze([
     note: 'entered from the guest-room strip above it',
   },
   // The north strip now runs the full width from the side-A balcony at x 1.60 to
-  // x 9.80, passing over the control center (owner). That strip is what gives the
+  // x 9.70, passing over the control center (owner). That strip is what gives the
   // balcony its second door and what the control center opens onto, so it is
   // circulation as much as room — the old link corridor, absorbed into the room.
   // The lower rect keeps its west edge at x 4.10 so the control center's east
@@ -327,7 +345,7 @@ export const ROOMS = deepFreeze([
     rects: [[7.05, 9.85, 7.2, 7.75]],
     note: 'the open part: sink, and the sliding doors into the bath and shower cubicles',
   },
-  // No longer a rectangle: the corridor's television run now reaches x 11.80, so
+  // No longer a rectangle: the corridor's television run now reaches x 11.90, so
   // the kitchen steps back at its west end and keeps its full depth
   // east of it (owner: "the kitchen shape is not square, make it fit").
   {
@@ -378,10 +396,15 @@ export const ROOMS = deepFreeze([
     rects: [[4.1, 4.9, 8.9, 9.7]],
     note: 'new (owner)',
   },
-  // The slab runs 0.10 wider than drawn at each end so the kitchen and laundry
-  // doors, which the owner drew hard against x 12.70 and 16.20, keep a 0.10 m
-  // jamb to the railing at the slab edge instead of opening onto it. The two
-  // joins are zero-thickness (one continuous strip), so nothing else moves.
+  // The slab runs x 11.65–15.35 and carries both side-B doors: the kitchen's at
+  // x 12.70–13.60 and the laundry's at x 14.30–15.20. Each door keeps slab to walk
+  // out onto rather than opening straight onto the railed edge, but the margins are
+  // deliberately uneven — 1.05 west of the kitchen door, 0.15 east of the laundry
+  // one — because each door is placed by the room behind it, not by the slab. (An
+  // earlier version of this note said both doors were drawn hard against x 12.70
+  // and 16.20 with a 0.10 margin each; neither number survived the redraw.) The two
+  // joins to the void are zero-thickness — one continuous strip — so nothing else
+  // moves when the slab does.
   //
   // The strip is 0.80 deep, not the 1.00 first drawn: the owner set 1.00 as a
   // starting value, and its real job fixes the number. It carries the water, gas
@@ -389,7 +412,9 @@ export const ROOMS = deepFreeze([
   // to service and safer to isolate; a laundry line is strung across it; and a
   // plumber needs to stand in it occasionally. Risers take about 0.15 off the
   // wall, so 0.80 leaves about 0.65 to work in. The 0.20 saved goes to the
-  // kitchen, laundry and main sanitair, which are now 3.00 deep.
+  // kitchen, laundry and main sanitair: the kitchen's east rect and the laundry are
+  // 2.80 deep (z 5.80–8.60) and the main sanitair 1.50 (z 5.80–7.30), the rest of
+  // its depth having gone to the bath and shower cubicles.
   {
     n: 16,
     id: 'balconySlabB',
@@ -475,7 +500,16 @@ export const JOIN_OVERRIDES = deepFreeze([
   {
     between: ['stairs', 'corridor'],
     thickness: 0,
-    why: 'The corridor is the top landing of the stair, no wall (brief §4.2).',
+    // Stays 0, and the zero is NOT a mistake to be tidied away later. The owner
+    // will separate the landing from the corridor with a demountable aluminium /
+    // sandwich panel carrying a wide door — removable in about five minutes — and
+    // asked that it not be drawn: it exists in the building, not in the geometry.
+    // Modelling it was tried and reverted, because masonry here costs 0.15 that
+    // the floor does not have: the stair needs its full 1.00 landing to turn a
+    // 180°, so the corridor would have had to pay all of it and the master
+    // bedroom's door would have dropped from 0.90 to 0.75. A demountable panel
+    // takes none of that, which is exactly why the owner chose one.
+    why: 'The corridor is the top landing of the stair, no wall (brief §4.2). A demountable panel with a wide door will stand here in the building; it is deliberately not modelled (owner, 2026-09-12).',
   },
   {
     between: ['voidWest', 'ccBalcony'],
@@ -527,7 +561,7 @@ export interface PlanPort {
 }
 
 /**
- * Every port: 16 doors and the single living-room opening.
+ * Every port: 19 doors and the single living-room opening.
  *
  * Gone from v1: the five `linkCorridor` doors, and the guest-room ↔ kitchen
  * door, which the owner replaced with the food-pass window. Doors sit near a
@@ -598,8 +632,8 @@ export const PORTS = deepFreeze([
     between: ['controlCenter', 'guestRoom'],
     along: 'x',
     spanMin: 1.7,
-    width: 0.9,
-    why: 'The old east-wall door, moved to the north wall: the guest-room strip above is now the only side the control center can be entered from.',
+    width: 1.2,
+    why: 'The old east-wall door, moved to the north wall: the guest-room strip above is now the only side the control center can be entered from. Widened from 0.90 to 1.20 (owner), "for any some usage" — the control center holds the water, gas and electricity risers, so a water heater or a gas bottle has to pass. 1.20 is the owner\'s choice and not a geometric limit: the wall runs x 1.60–3.80, so with a 0.05 jamb at each end it could take 2.10. The door sits 1.70–2.90, leaving 0.10 of wall west of it and 0.90 east.',
   },
   {
     kind: 'door',
@@ -653,7 +687,7 @@ export const PORTS = deepFreeze([
     spanMin: 7.4,
     width: 0.7,
     swing: 'slide',
-    why: 'Sliding, and 0.70 not 0.90. The room is 1.35 deep with a 0.65 wet block and its screen, leaving 0.60 of free depth against the 0.70 a swinging leaf needs — the widest inward leaf that would clear is 0.55, too narrow for a bathroom. A sliding leaf needs no floor to open into.',
+    why: 'Sliding, and 0.70 not 0.90. The suite is 1.40 deep, and the 0.70 wet block with its 0.15 screen leaves the open part only 0.55 (z 7.20–7.75) against the 0.70 a swinging leaf needs — the widest inward leaf that would clear is 0.55, too narrow for a bathroom. A sliding leaf needs no floor to open into.',
   },
   { kind: 'door', between: ['kitchen', 'balconySlabB'], along: 'x', spanMin: 12.7, width: 0.9 },
   {
@@ -829,7 +863,7 @@ export interface PlanFixture {
  *
  * The television is here for the same reason the corridor was widened: it hangs
  * on the stair-hall wall facing the living room across the corridor, and that run
- * had to reach x 11.80 so the viewing area is not cut in two.
+ * had to reach x 11.90 so the viewing area is not cut in two.
  */
 export const FIXTURES = deepFreeze([
   // A basin stands in the open part of each bathroom; the bath and the shower
@@ -849,7 +883,12 @@ export const FIXTURES = deepFreeze([
   { kind: 'bath', room: 'guestBathCubicle', rect: [7.1, 8.65, 7.95, 8.55] },
   { kind: 'shower', room: 'guestShowerCubicle', rect: [8.95, 9.8, 7.95, 8.55] },
   // The television wall, facing the living room opening across the corridor.
-  { kind: 'tv', room: 'corridor', rect: [7.5, 11.0, 5.82, 5.9] },
+  // Flush against the corridor's south face at z 6.00, not the 5.90 of the
+  // corridor before the stair bay deepened. `tvPanel.ts` derives the panel from
+  // that face and ignores this z on purpose, so a stale value here does not move
+  // the model — it moves the DRAWING, which reads the fixture, and would have
+  // shown the television hanging 0.10 clear of the wall it is mounted on.
+  { kind: 'tv', room: 'corridor', rect: [7.5, 11.0, 5.92, 6.0] },
 ] as const satisfies readonly PlanFixture[]);
 
 /** One wall face the owner named off the register as built for isolation. */
@@ -878,9 +917,12 @@ export interface InsulatedWall {
  * walls, so if the numbering ever shifts under the owner's list, the check fails
  * instead of silently insulating a different wall.
  *
- * Isolation does not change a wall's thickness. Building a wall heavy is a
- * question of how it is made, and moving thicknesses here would ripple through
- * every dimension chain on the floor.
+ * Isolation IS the wall's thickness: a named wall is built `WALLS.insulated`
+ * (0.30) and every other separator `WALLS.partition` (0.15) — the owner's
+ * "widther 30cm, widthless 15cm". An earlier version of this block said the
+ * opposite, that isolation was a matter of how a wall is made and not of its
+ * width; that was reversed, and the rooms were re-laid out so every dimension
+ * chain still closes on 22.50 and 10.00 with the wider walls in place.
  */
 export const INSULATED_WALLS = deepFreeze([
   // The master bedroom, all four sides (owner).
@@ -896,18 +938,15 @@ export const INSULATED_WALLS = deepFreeze([
   // The female kids' bedroom is the corner room: side C, side D and the utility
   // wall (owner). The utility side is already named below as F1-R14-UTL-W1.
   { matricule: 'F1-R05-BED-W2', length: 3.55 },
-  // The corridor's north wall runs thick for its whole length, not just past the
-  // master bedroom (owner). Isolating only the master would have made that wall
-  // 0.30 for one metre and 0.15 for the other thirteen, stepping the corridor
-  // edge and throwing the stairs bay out of line with it. The other three rooms
-  // gain isolation from the corridor as a consequence.
   // The living room and both kids' bedrooms keep a plain wall to the corridor
   // (owner), so only the master bedroom's 1.00 m stretch of that wall is hard.
   // All three are 3.55 deep rather than 3.40, which is what lets the corridor's
   // north face still run straight at z 4.00: the 0.15 each thin wall frees goes
-  // into the room instead of stepping the corridor. The female bedroom's wall to
-  // the utility room stays hard, carried by F1-R14-UTL-W1 below.
-  // Named one by one off the register (owner), with his own quoted lengths.
+  // into the room instead of stepping the corridor, rather than the wall being
+  // thickened end to end to avoid that step. The female bedroom's wall to the
+  // utility room stays hard, carried by F1-R14-UTL-W1 below.
+  //
+  // The rest, named one by one off the register (owner), with his own lengths.
   { matricule: 'F1-R14-UTL-W1', length: 1.7 },
   { matricule: 'F1-R07-COR-W2', length: 1.5 },
   { matricule: 'F1-R13-BTH-W1', length: 2.65 },
@@ -951,6 +990,47 @@ export interface PlanSides {
   /** Side D: x 22.50. */
   readonly D: string;
 }
+
+/** A wall built lower than a storey, with the height it actually stands at. */
+export interface ParapetWall {
+  /** The wall, by matricule. */
+  readonly matricule: string;
+  /** How high it stands above the finished floor, in metres. */
+  readonly height: number;
+  /**
+   * The wall's length as the owner reads it off the register, in metres.
+   *
+   * A tripwire, not data: nothing derives from it, and the check fails if it
+   * stops matching the derived wall. A matricule can slide onto a different
+   * wall when the numbering moves, and here that would silently build a
+   * balustrade to full height — so the list is worth pinning to a second fact.
+   */
+  readonly length?: number;
+  /** Why it is not full height. */
+  readonly why: string;
+}
+
+/**
+ * Walls that stop below the ceiling.
+ *
+ * Every other wall on the floor runs to `HEIGHTS.wall`. This list is the
+ * exception, and it is short on purpose: a wall that stops low is a thing you
+ * can see over and fall past, so it has to be stated rather than inferred.
+ *
+ * It used to be inferred. The model classified a wall as a parapet by testing
+ * whether its top happened to equal the railing height, which worked only while
+ * side B was open air — once side B became a normal exterior wall that heuristic
+ * found nothing at all, and a real balustrade would have been built as a
+ * full-height wall closing the balcony in.
+ */
+export const PARAPET_WALLS = deepFreeze([
+  {
+    matricule: 'F1-R01-BAL-W4',
+    height: HEIGHTS.railing,
+    length: 9.4,
+    why: "The side-A balcony's outer edge (owner). It is a balustrade you look over, not a wall: the balcony is the floor's open side and its 9.40 m face is what makes it one. The owner first gave 1.00 and, shown that HEIGHTS.railing is 1.10 and that 1.10 is the usual minimum for a 9.40 m edge one storey up, chose 1.10 (ADR-011). It is written as the constant, not as a second literal 1.1: two numbers for one balustrade is what went wrong the first time.",
+  },
+] as const satisfies readonly ParapetWall[]);
 
 /** The side labels of the drawing. Side B is no longer open air. */
 export const SIDES = deepFreeze({

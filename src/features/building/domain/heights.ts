@@ -2,13 +2,21 @@
  * Vertical sizes of a floor.
  *
  * This module is the single source of truth for every vertical building
- * dimension: floor-to-floor height, wall height, door height, railing height
- * and the window sill and head. Every such dimension must be read from
+ * dimension shared by the whole floor: floor-to-floor height, wall height, door
+ * height and railing height. Every such dimension must be read from
  * {@link FLOOR_HEIGHTS} rather
  * than redeclared, so that geometry, navigation and camera placement always
  * agree. Presentation offsets, such as anti-z-fighting lifts, light placement
  * or camera framing, are not building dimensions and are not covered by this
  * rule.
+ *
+ * Window sills and heads are NOT here. They were, while every window was the
+ * same 1.20 × 1.20 m hole derived one per room per glazeable face. Windows are
+ * now chosen per purpose and declared as data in `sourceOfTruth/plan.ts` — an
+ * air vent high in a bathroom, a food pass at counter height, a hand-level
+ * kitchen window, two big laundry windows — so each one carries its own sill
+ * and head and no single pair of constants could describe them. See
+ * `windows.ts`.
  *
  * Body sizes of the explorer, including the eye height the cameras use, are
  * not building dimensions: they live in `PERSON_SPEC` (`person.ts`).
@@ -26,19 +34,6 @@ export interface FloorHeights {
   readonly door: number;
   /** Height of a guard railing, from the finished floor to the handrail. */
   readonly railing: number;
-  /**
-   * Height of a window sill above the finished floor: the bottom of the glazed
-   * opening. Windows are 1.20 × 1.20 m everywhere (owner answer, ADR-006).
-   */
-  readonly windowSill: number;
-  /**
-   * Height of the top of a window opening above the finished floor, i.e. the
-   * sill plus the 1.20 m window height (owner answer, ADR-006). It happens to
-   * equal {@link FloorHeights.door}, but it means the head of a window, not of
-   * a door: both are kept as separate fields so that changing one window
-   * dimension never moves a door.
-   */
-  readonly windowHead: number;
 }
 
 /** The vertical sizes shared by the whole floor, confirmed by the owner, in metres. Frozen. */
@@ -47,6 +42,4 @@ export const FLOOR_HEIGHTS: FloorHeights = Object.freeze({
   wall: 2.7,
   door: 2.1,
   railing: 1.1,
-  windowSill: 0.9,
-  windowHead: 2.1,
 });

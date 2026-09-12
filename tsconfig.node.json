@@ -8,6 +8,13 @@
 
     "module": "nodenext",
     "allowImportingTsExtensions": true,
+
+    // `scripts/` is hand-written `.mjs` that Node 22.18 runs directly, type
+    // stripping the `.ts` it imports. There is no build step to hide behind, so
+    // the JSDoc in those files is the only type annotation they get — `checkJs`
+    // is what makes the checker read it instead of ignoring the whole folder.
+    "allowJs": true,
+    "checkJs": true,
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
     "noEmit": true,
@@ -18,5 +25,5 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["vite.config.ts", "playwright.config.ts", "tooling", "tests"]
+  "include": ["vite.config.ts", "playwright.config.ts", "tooling", "tests", "scripts"]
 }

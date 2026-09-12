@@ -1,6 +1,63 @@
+/**
+ * What this file used to assert, and why the figures moved.
+ *
+ * The floor was rebuilt from the single source of truth
+ * (`sourceOfTruth/plan.ts`): 18 spaces became 22 — each bathroom grew a walled
+ * bath and a walled shower, each with its own door — `linkCorridor` was deleted,
+ * and the ports went 19 → 20 and the windows 8 → 9, so 24 openings became 29.
+ * Three totals this file pinned came from the superseded plan and are
+ * re-measured here:
+ *
+ * - `WALL_FOOTPRINT_AREA` was 42.52 m² and is 44.125 m²;
+ * - `FLOOR_AREA_TOTAL` was 167.38 m² and is 165.515 m²: the source of truth's
+ *   FLOOR total of 163.515 m², which excludes the stair bay, plus the 2.00 m²
+ *   arrival landing, the only part of the bay that is floor at this storey;
+ * - the "15.10 m² void" was the old side-B strip. The plan's two `'void'`
+ *   spaces measure 9.36 m², and the bay adds a second unpaved area: 6.00 m² of
+ *   open shaft, which the old plan did not have.
+ *
+ * The plot closure is therefore in four parts rather than three —
+ * FLOOR + VOID + WALLS + SHAFT = 225.00 m² — and it is asserted from the parts
+ * the modules produce, so it holds whatever the wall rule does next.
+ *
+ * Behaviour changed in two places, and the old assertions were not merely
+ * mis-numbered but wrong:
+ *
+ * - windows no longer take their sill and head from `FloorHeights`. Each one
+ *   declares its own in the schedule, because they differ by purpose: an `air`
+ *   window vents a shower at 1.90–2.30, a `pass` window hands coffee through at
+ *   1.00–1.80, a `light` window sits at 0.90–2.10. So the old "the windows get
+ *   `heights.windowSill` and `heights.windowHead`" is replaced by "each window
+ *   gets the sill and head the schedule declares", and the injected-heights
+ *   guard no longer forbids 0.90 and 2.10: those levels now come from the plan
+ *   and must survive a change of heights. A new case pins that directly;
+ * - `heights.wall` is not the top of every wall any more. The spec names the
+ *   side-A balustrade in `PARAPET_WALLS` and states 1.10 m for it (1.00 m until
+ *   ADR-011, where the owner chose 1.10 and the entry was rewritten to carry
+ *   `HEIGHTS.railing` itself rather than a second literal), so one block is a
+ *   parapet whose top no injected height moves. That is also why the wall
+ *   BLOCK COUNT is not height-independent: it is 237 at production heights and
+ *   235 at the injected ones, because a parapet that stays put merges with its
+ *   neighbours differently. The old `keeps the plan figures` case asserted the
+ *   count was unchanged; it now asserts what really cannot change — the
+ *   footprint area, the floor area and the opening counts — and pins the count
+ *   difference as the fact it is.
+ *
+ * Two assertions were strengthened because they could no longer fail:
+ *
+ * - `stands each railing on the balcony slab it guards` asserted every railing
+ *   stood on `balconySlabB`. The rebuilt plan has three railings, one of them on
+ *   the control-centre balcony, so the case is now "each railing stands on the
+ *   slab of the floored space it guards", read off the railing's own pair;
+ * - the port hole table built its cases from `openings.slice(0, 19)` against a
+ *   20-port schedule, so the last port's opening was `undefined` and the case
+ *   threw inside a helper instead of checking anything. The count is pinned
+ *   against `PORT_SCHEDULE.length` before the table is built.
+ */
+
 import { describe, expect, it } from 'vitest';
 import { getBuiltFloor } from './builtFloor.ts';
-import { FLOOR_PLAN, PLOT_RECT, getSpaceArea } from './floorPlan/index.ts';
+import { FLOOR_PLAN, PLOT_RECT, getSpace, getSpaceArea } from './floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from './heights.ts';
 import type { FloorHeights } from './heights.ts';
 import type { PlanBox } from './planBox.ts';
@@ -14,6 +71,8 @@ import {
 import type { PlanPoint, PlanRect } from './planGeometry.ts';
 import { PORT_SCHEDULE, getPortOpening } from './ports/index.ts';
 import type { Port } from './ports/index.ts';
+import { PARAPET_WALLS, WINDOWS } from './sourceOfTruth/plan.ts';
+import { STAIRS_SPEC } from './stairs.ts';
 import { getWallFootprintArea, getWallPieces } from './walls.ts';
 import type { FloorWindow } from './windows.ts';
 
@@ -21,6 +80,7 @@ const PRECISION_DIGITS = 9;
 const HALF = 0.5;
 const NONE = 0;
 const ONE = 1;
+const TWO = 2;
 
 /** Level of the finished floor: the datum every vertical size is measured from. */
 const FLOOR_LEVEL = 0;
@@ -36,36 +96,56 @@ const SLAB_BOTTOM = -toPlanLength(FLOOR_HEIGHTS.floorToFloor - FLOOR_HEIGHTS.wal
  * Composed counts of the typical floor.
  * ------------------------------------------------------------------ */
 
-/** Ports of the door schedule, brief §6 as amended by ADR-006. */
-const PORT_COUNT = 19;
-/** Windows the rule of ADR-006 places on the side-A and side-B faces. */
-const WINDOW_COUNT = 8;
+/** Ports of the declared schedule: one per door of the source of truth. */
+const PORT_COUNT = 20;
+/** Windows of the declared schedule: the owner's air, pass and light openings. */
+const WINDOW_COUNT = 9;
 /** Holes fed to the wall generator: every port opening, then every window opening. */
 const OPENING_COUNT = PORT_COUNT + WINDOW_COUNT;
-/** Wall blocks left once the 27 openings are punched out. */
-const WALL_PIECE_COUNT = 218;
-/** Blocks that start at the underside of the slab. */
-const BASE_PIECE_COUNT = 172;
-/** Blocks that start at the head of an opening: the lintels. */
-const HEAD_PIECE_COUNT = 46;
-/** One slab per clear rect of every space that has a floor. */
-const SLAB_COUNT = 18;
-/** Guard railings on the two balcony-slab/void edges of the side-B strip. */
-const RAILING_COUNT = 2;
-/** Steps of the dog-leg: 8 treads, the half-landing, 8 treads. */
-const STEP_COUNT = 17;
+/**
+ * Wall blocks left once the 29 openings are punched out.
+ *
+ * PROVISIONAL: a defect in the isolation rule of `walls.ts` is under
+ * investigation, and a change to which stretches are built heavy changes how the
+ * cells merge. The footprint area below moves with it. The plot closure
+ * (FLOOR + VOID + WALLS + SHAFT = 225.00 m²) does not, which is why it is
+ * asserted from the parts rather than from these literals.
+ */
+const WALL_PIECE_COUNT = 237;
+/** Blocks that start at the underside of the slab. PROVISIONAL, see above. */
+const BASE_PIECE_COUNT = 201;
+/** Blocks that start at the head of an opening: the lintels. PROVISIONAL, see above. */
+const HEAD_PIECE_COUNT = 36;
+/** One slab per clear rect of every floored space, the bay floored only at its landing. */
+const SLAB_COUNT = 23;
+/** Guard railings: the two fall edges of the side-B voids, plus the balcony one. */
+const RAILING_COUNT = 3;
+/** Step boxes of the half-turn stair: nine risers each side of this floor. */
+const STEP_COUNT = 18;
+/** Risers of one full storey, as the stair spec declares them. */
+const RISER_COUNT = STAIRS_SPEC.riserCount;
+/** Risers between this floor and a half-landing: half of them. */
+const RISERS_PER_FLIGHT = RISER_COUNT / TWO;
 
 /* ------------------------------------------------------------------ *
- * Areas of brief §8.
+ * Areas, in square metres.
  * ------------------------------------------------------------------ */
 
-/** Wall footprint of the typical floor, brief §8, in square metres. */
-const WALL_FOOTPRINT_AREA = 42.52;
-/** Floor total of the typical floor, brief §8, in square metres. */
-const FLOOR_AREA_TOTAL = 167.38;
-/** The side-B void, in square metres: the plot less the walls and the floors. */
-const VOID_AREA = 15.1;
-/** The 22.50 × 10.00 m plot of brief §1, in square metres. */
+/**
+ * Wall footprint of the typical floor, in square metres.
+ *
+ * PROVISIONAL: this is the figure the code measures today, 44.125, and it is the
+ * one under review by the isolation-rule investigation. It is also the number
+ * behind the published "WALLS 44.13" — the same area rounded to two decimals.
+ */
+const WALL_FOOTPRINT_AREA = 44.125;
+/** Floor total: what the slabs cover, the bay counted only at its landing. */
+const FLOOR_AREA_TOTAL = 165.515;
+/** The two `'void'` spaces of the plan: the side-B holes. */
+const VOID_AREA = 9.36;
+/** The open stair shaft: the bay less its arrival landing. */
+const SHAFT_AREA = 6;
+/** The 22.50 × 10.00 m plot. */
 const PLOT_AREA = 225;
 
 /* ------------------------------------------------------------------ *
@@ -75,40 +155,95 @@ const PLOT_AREA = 225;
 /**
  * Vertical sizes with every field changed, to prove that no level of a
  * {@link BuiltFloor} is hard-coded. No value is a real one, and neither the slab
- * thickness they imply (4.44 − 3.33 = 1.11) nor any of the 17 tread tops
- * (k · 4.44 / 17) lands on a real level.
+ * thickness they imply (4.44 − 3.33 = 1.11) nor any riser line
+ * (k · 4.44 / 18) lands on a real level.
+ *
+ * There are no window fields to set: `FloorHeights` carries no sill or head, the
+ * windows carry their own. That is asserted below rather than assumed.
  */
 const OTHER_HEIGHTS: FloorHeights = Object.freeze({
   floorToFloor: 4.44,
   wall: 3.33,
   door: 2.22,
   railing: 1.55,
-  windowSill: 1.11,
-  windowHead: 2.22,
 });
 
+/** Levels every window declares for itself: plan data, not vertical sizes. */
+const WINDOW_STATED_LEVELS: readonly number[] = Object.freeze(
+  WINDOWS.flatMap((window) => [window.sill, window.head]),
+);
+
 /**
- * Levels that must never appear once {@link OTHER_HEIGHTS} is injected: every
- * production height, the slab underside it implies, and the riser of the real
- * floor-to-floor height.
+ * Heights the spec states for the parapets: plan data too, and 1.10 m since
+ * ADR-011 — the same number as `FLOOR_HEIGHTS.railing`, because the entry carries
+ * the constant itself rather than a second literal.
  */
-const FORBIDDEN_LEVELS: readonly number[] = [
-  FLOOR_HEIGHTS.floorToFloor,
-  FLOOR_HEIGHTS.wall,
-  FLOOR_HEIGHTS.door,
-  FLOOR_HEIGHTS.railing,
-  FLOOR_HEIGHTS.windowSill,
-  SLAB_BOTTOM,
-  -SLAB_BOTTOM,
-  FLOOR_HEIGHTS.floorToFloor / STEP_COUNT,
-];
+const PARAPET_STATED_LEVELS: readonly number[] = Object.freeze(
+  PARAPET_WALLS.map((parapet) => parapet.height),
+);
+
+/**
+ * Levels the source of truth states, which therefore survive a change of
+ * heights: every declared window sill and head, and the stated height of every
+ * parapet. They are plan data, not vertical sizes.
+ */
+const PLAN_STATED_LEVELS: readonly number[] = Object.freeze([
+  ...WINDOW_STATED_LEVELS,
+  ...PARAPET_STATED_LEVELS,
+]);
+
+/**
+ * Tells whether a level equals one of a set of levels.
+ *
+ * @param level - The level to test, in metres.
+ * @param levels - The levels to match against.
+ * @returns `true` when one of them is within {@link LENGTH_TOLERANCE} of `level`.
+ */
+function isOneOf(level: number, levels: readonly number[]): boolean {
+  return levels.some((candidate) => Math.abs(level - candidate) <= LENGTH_TOLERANCE);
+}
+
+/**
+ * Production levels that must vanish once {@link OTHER_HEIGHTS} is injected.
+ *
+ * The wall height, the railing height, the slab underside and the riser of the
+ * real storey. `door` (2.10) is deliberately absent: it coincides with a level
+ * the WINDOW SCHEDULE declares — the head of every `light` window is 2.10, and
+ * its sill is 0.90 — so it goes on appearing whatever the heights say, and
+ * forbidding it would fail for the plan's reason rather than for a leaked
+ * height. `floorToFloor` is absent because nothing is ever
+ * built at it. Every level left here is checked to appear on the real floor
+ * below, so the guard is known to be able to fail.
+ *
+ * Only the WINDOW levels are filtered out, not every plan-stated level. Since
+ * ADR-011 the parapet states 1.10 m, which is `FLOOR_HEIGHTS.railing` exactly, so
+ * filtering against all plan-stated levels silently deleted the railing height
+ * from this list — and with it the only thing that would catch a hard-coded 1.10
+ * on the railings or the television panel of an injected floor. The parapet is
+ * kept honest instead by measuring the floor WITHOUT its stated parapets
+ * ({@link everyLevelButStatedParapets}): a 1.10 anywhere else is still a leak.
+ */
+const FORBIDDEN_LEVELS: readonly number[] = Object.freeze(
+  [
+    FLOOR_HEIGHTS.wall,
+    FLOOR_HEIGHTS.railing,
+    SLAB_BOTTOM,
+    FLOOR_HEIGHTS.floorToFloor / RISER_COUNT,
+  ].filter((level) => !isOneOf(level, WINDOW_STATED_LEVELS)),
+);
 
 /* ------------------------------------------------------------------ *
  * Mutation-guard figures.
  * ------------------------------------------------------------------ */
 
-/** Wall blocks when only the 19 port openings are punched out. */
-const PORT_ONLY_PIECE_COUNT = 173;
+/** Wall blocks when only the 20 port openings are punched out. PROVISIONAL, see above. */
+const PORT_ONLY_PIECE_COUNT = 198;
+/**
+ * Wall blocks at the injected heights: two fewer than at production heights,
+ * because the stated 1.10 m parapet does not move with `heights.wall` and so
+ * merges with its neighbours differently. PROVISIONAL, see above.
+ */
+const INJECTED_WALL_PIECE_COUNT = 235;
 /** Blocks covering a window centre when the windows are dropped: the wall is solid. */
 const SOLID_PIECES_AT_WINDOW = 1;
 
@@ -119,9 +254,10 @@ const SOLID_PIECES_AT_WINDOW = 1;
 const DOOR_WIDTH = PORT_SCHEDULE[0].width;
 
 /**
- * A port across the stairs/corridor join, which brief §4.2 leaves without a wall.
- * `validatePorts` must reject it, so `getBuiltFloor` never reaches the wall
- * generator with a hole that cuts nothing.
+ * A port across the stairs/corridor join, which the plan leaves without a wall:
+ * the arrival landing is continuous with the corridor. `validatePorts` must
+ * reject it, so `getBuiltFloor` never reaches the wall generator with a hole
+ * that cuts nothing.
  */
 const ZERO_WALL_PORT: Port = Object.freeze({
   spaces: Object.freeze(['stairs', 'corridor'] as const),
@@ -133,7 +269,7 @@ const ZERO_WALL_PORT: Port = Object.freeze({
 
 const FLOOR = getBuiltFloor();
 
-/** The 19 port openings of {@link FLOOR}, in schedule order. */
+/** The port openings of {@link FLOOR}, in schedule order. */
 const PORT_OPENINGS = FLOOR.openings.slice(0, PORT_COUNT);
 
 /**
@@ -154,7 +290,7 @@ const PORT_CASES: readonly (readonly [string, PlanBox])[] = PORT_SCHEDULE.map(
 
 /** Every window with its name, for the hole table. */
 const WINDOW_CASES: readonly (readonly [string, FloorWindow])[] = FLOOR.windows.map(
-  (window) => [`${window.spaceId} ${window.side}`, window] as const,
+  (window) => [`${window.kind} window of ${window.spaceId} (${window.side})`, window] as const,
 );
 
 /**
@@ -251,18 +387,7 @@ function totalRectArea(boxes: readonly { readonly rect: PlanRect }[]): number {
 }
 
 /**
- * Tells whether a level equals one of a set of levels.
- *
- * @param level - The level to test, in metres.
- * @param levels - The levels to match against.
- * @returns `true` when one of them is within {@link LENGTH_TOLERANCE} of `level`.
- */
-function isOneOf(level: number, levels: readonly number[]): boolean {
-  return levels.some((candidate) => Math.abs(level - candidate) <= LENGTH_TOLERANCE);
-}
-
-/**
- * Returns the area of the plan that has no floor: the side-B void.
+ * Returns the area of the plan that has no floor because it is a void.
  *
  * Derived from the plan rather than written down, so the 225.00 m² total is a
  * check on the plan and not on a copied number.
@@ -274,6 +399,20 @@ function voidArea(plan: typeof FLOOR_PLAN): number {
   return plan.spaces
     .filter((space) => space.kind === 'void')
     .reduce((sum, space) => sum + getSpaceArea(space), 0);
+}
+
+/**
+ * Returns the area of the stair bay that is not floor at this storey.
+ *
+ * The stair runs through the floor, so the bay is a hole everywhere but the
+ * arrival landing. Read off the layout, not named, so a plan that declares
+ * another landing moves this figure with it.
+ *
+ * @param floor - The built floor to measure.
+ * @returns The bay less its arrival landing, in square metres.
+ */
+function shaftArea(floor: ReturnType<typeof getBuiltFloor>): number {
+  return rectArea(floor.stairs.bay) - rectArea(floor.stairs.landingRect);
 }
 
 /**
@@ -294,6 +433,21 @@ function everyLevel(floor: ReturnType<typeof getBuiltFloor>): readonly number[] 
     ...floor.windows.flatMap((window) => [window.opening.bottom, window.opening.top]),
     ...floor.openings.flatMap((opening) => [opening.bottom, opening.top]),
   ];
+}
+
+/**
+ * Lists every level of a built floor except the tops of its stated parapets.
+ *
+ * A parapet's top is plan data: `PARAPET_WALLS` states 1.10 m and no height may
+ * move it. Every OTHER level is a vertical size, so this is the set a change of
+ * heights must sweep clean — and keeping the parapet out of it is what lets the
+ * railing height stay forbidden even though the plan now states the same number.
+ *
+ * @param floor - The built floor to read.
+ * @returns Every level of {@link everyLevel} bar those of the parapet blocks.
+ */
+function everyLevelButStatedParapets(floor: ReturnType<typeof getBuiltFloor>): readonly number[] {
+  return everyLevel({ ...floor, walls: floor.walls.filter((piece) => piece.kind !== 'parapet') });
 }
 
 /**
@@ -323,6 +477,18 @@ describe('the composed floor', () => {
     expect(FLOOR.openings).toHaveLength(OPENING_COUNT);
   });
 
+  it('takes every port and every window of the declared schedules', () => {
+    // The two counts the hole tables below are sliced with: pinned against the
+    // schedules, so a table can never be built over a missing opening.
+    expect(PORT_SCHEDULE).toHaveLength(PORT_COUNT);
+    expect(WINDOWS).toHaveLength(WINDOW_COUNT);
+    expect(PORT_CASES).toHaveLength(PORT_COUNT);
+    expect(WINDOW_CASES).toHaveLength(WINDOW_COUNT);
+    PORT_OPENINGS.forEach((opening) => {
+      expect(opening).toBeDefined();
+    });
+  });
+
   it('defaults to the real plan, the real schedule and the real heights', () => {
     expect(getBuiltFloor()).toEqual(getBuiltFloor(FLOOR_PLAN, PORT_SCHEDULE, FLOOR_HEIGHTS));
   });
@@ -336,15 +502,23 @@ describe('the composed floor', () => {
     });
   });
 
-  it('gives the doors a door head and the windows a sill and a head', () => {
+  it('gives the doors a door head and every window the sill and head it declares', () => {
     PORT_OPENINGS.forEach((opening) => {
       expect(opening.bottom).toBeCloseTo(FLOOR_LEVEL, PRECISION_DIGITS);
       expect(opening.top).toBeCloseTo(FLOOR_HEIGHTS.door, PRECISION_DIGITS);
     });
-    FLOOR.windows.forEach((window) => {
-      expect(window.opening.bottom).toBeCloseTo(FLOOR_HEIGHTS.windowSill, PRECISION_DIGITS);
-      expect(window.opening.top).toBeCloseTo(FLOOR_HEIGHTS.windowHead, PRECISION_DIGITS);
+    FLOOR.windows.forEach((window, index) => {
+      // The schedule, not the heights: an air window vents high and a pass
+      // window sits at counter height (`sourceOfTruth/plan.ts`).
+      expect(window.sill).toBeCloseTo(WINDOWS[index].sill, PRECISION_DIGITS);
+      expect(window.head).toBeCloseTo(WINDOWS[index].head, PRECISION_DIGITS);
+      expect(window.opening.bottom).toBeCloseTo(window.sill, PRECISION_DIGITS);
+      expect(window.opening.top).toBeCloseTo(window.head, PRECISION_DIGITS);
     });
+    // And they are not all one size: a single sill would make the case above
+    // pass while proving nothing about reading the schedule.
+    expect(new Set(FLOOR.windows.map((window) => window.sill)).size).toBeGreaterThan(ONE);
+    expect(new Set(FLOOR.windows.map((window) => window.head)).size).toBeGreaterThan(ONE);
   });
 
   it('splits the walls into bases on the slab and lintels over the openings', () => {
@@ -400,23 +574,36 @@ describe('the composed floor', () => {
   });
 });
 
-describe('the areas of brief §8', () => {
-  it('walls 42.52 m² of the plot', () => {
+describe('the four parts of the plot', () => {
+  it('walls 44.125 m² of the plot', () => {
     expect(getWallFootprintArea(FLOOR.walls)).toBeCloseTo(WALL_FOOTPRINT_AREA, PRECISION_DIGITS);
   });
 
-  it('floors 167.38 m² of the plot', () => {
+  it('floors 165.515 m² of the plot', () => {
     expect(totalRectArea(FLOOR.slabs)).toBeCloseTo(FLOOR_AREA_TOTAL, PRECISION_DIGITS);
   });
 
-  it('leaves 15.10 m² of void, and the three make the 225.00 m² plot', () => {
+  it('leaves 9.36 m² of void and a 6.00 m² stair shaft unbuilt', () => {
+    expect(voidArea(FLOOR_PLAN)).toBeCloseTo(VOID_AREA, PRECISION_DIGITS);
+    expect(shaftArea(FLOOR)).toBeCloseTo(SHAFT_AREA, PRECISION_DIGITS);
+    // The bay is a hole everywhere but its landing, and the landing is slab.
+    expect(rectArea(FLOOR.stairs.landingRect)).toBeCloseTo(
+      rectArea(getSpace(FLOOR_PLAN, 'stairs').rects[0]) - SHAFT_AREA,
+      PRECISION_DIGITS,
+    );
+  });
+
+  it('closes FLOOR + VOID + WALLS + SHAFT on the whole 225.00 m² plot', () => {
+    // Every part is measured from the module that builds it, so this holds
+    // whatever the wall rule decides: a square metre that leaves the walls has
+    // to arrive in the floor, the voids or the shaft.
     const walls = getWallFootprintArea(FLOOR.walls);
     const floors = totalRectArea(FLOOR.slabs);
     const voids = voidArea(FLOOR_PLAN);
+    const shaft = shaftArea(FLOOR);
 
-    expect(voids).toBeCloseTo(VOID_AREA, PRECISION_DIGITS);
-    expect(walls + floors + voids).toBeCloseTo(PLOT_AREA, PRECISION_DIGITS);
-    expect(walls + floors + voids).toBeCloseTo(rectArea(PLOT_RECT), PRECISION_DIGITS);
+    expect(floors + voids + walls + shaft).toBeCloseTo(PLOT_AREA, PRECISION_DIGITS);
+    expect(floors + voids + walls + shaft).toBeCloseTo(rectArea(PLOT_RECT), PRECISION_DIGITS);
   });
 });
 
@@ -440,7 +627,7 @@ describe('every port of the real schedule holes its wall', () => {
 });
 
 describe('every window of the real floor holes its wall', () => {
-  it.each(WINDOW_CASES)('glazes %s between a sill and a head', (_label, window) => {
+  it.each(WINDOW_CASES)('glazes the %s between its own sill and head', (_label, window) => {
     expect(coveringPieces(FLOOR.walls, window.opening)).toEqual([]);
 
     const above = piecesAbove(FLOOR.walls, window.opening);
@@ -448,13 +635,13 @@ describe('every window of the real floor holes its wall', () => {
 
     expect(above.length).toBeGreaterThan(NONE);
     above.forEach((piece) => {
-      expect(piece.bottom).toBeCloseTo(FLOOR_HEIGHTS.windowHead, PRECISION_DIGITS);
+      expect(piece.bottom).toBeCloseTo(window.head, PRECISION_DIGITS);
       expect(piece.top).toBeCloseTo(FLOOR_HEIGHTS.wall, PRECISION_DIGITS);
     });
     expect(below.length).toBeGreaterThan(NONE);
     below.forEach((piece) => {
       expect(piece.bottom).toBeCloseTo(SLAB_BOTTOM, PRECISION_DIGITS);
-      expect(piece.top).toBeCloseTo(FLOOR_HEIGHTS.windowSill, PRECISION_DIGITS);
+      expect(piece.top).toBeCloseTo(window.sill, PRECISION_DIGITS);
     });
   });
 });
@@ -502,6 +689,7 @@ describe('nothing intersects in three dimensions', () => {
       .filter((step) => rectsOverlap(step.rect, FLOOR.stairs.landingRect))
       .map((step) => footprintKey(step.rect));
 
+    expect(FLOOR.stairs.steps).toHaveLength(STEP_COUNT);
     expect(stepOffenders).toEqual([]);
     expect(onLanding).toEqual([]);
   });
@@ -524,16 +712,23 @@ describe('nothing intersects in three dimensions', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('stands each railing on the balcony slab it guards', () => {
+  it('stands each railing on the slab of the floored space it guards', () => {
     // A railing straddles the slab/void edge by design (`railings.ts`): it is a
-    // rail on floor area already counted in the 167.38 m², not a wall, so this
+    // rail on floor area already counted in the 165.515 m², not a wall, so this
     // one footprint overlap is the documented behaviour rather than a clash.
+    // The floored side is read off the railing's own pair — the void first, then
+    // the space it guards — so the three railings of the plan check three
+    // different slabs instead of all being asserted against the balcony.
+    expect(FLOOR.railings).toHaveLength(RAILING_COUNT);
     FLOOR.railings.forEach((railing) => {
+      const [voidId, flooredId] = railing.spaces;
       const carried = FLOOR.slabs.filter((slab) => rectsOverlap(railing.rect, slab.rect));
 
+      expect(getSpace(FLOOR_PLAN, voidId).kind).toBe('void');
       expect(carried).toHaveLength(ONE);
-      expect(carried[0].spaceId).toBe('balconySlabB');
+      expect(carried[0].spaceId).toBe(flooredId);
     });
+    expect(new Set(FLOOR.railings.map((railing) => railing.spaces[1])).size).toBeGreaterThan(ONE);
   });
 });
 
@@ -543,40 +738,68 @@ describe('injected heights', () => {
 
   /** Underside of the slab the injected sizes imply: 4.44 − 3.33. */
   const otherSlabBottom = -toPlanLength(OTHER_HEIGHTS.floorToFloor - OTHER_HEIGHTS.wall);
-  /** Top of each of the 17 treads the injected floor-to-floor height implies. */
-  const otherTreadTops = Array.from(
-    { length: STEP_COUNT },
-    (_unused, offset) => ((offset + ONE) * OTHER_HEIGHTS.floorToFloor) / STEP_COUNT,
+  /** Height of one riser at the injected storey height. */
+  const otherRiser = OTHER_HEIGHTS.floorToFloor / RISER_COUNT;
+  /** Half a storey, where the stair hands the walker over: nine risers. */
+  const otherHalfStorey = RISERS_PER_FLIGHT * otherRiser;
+  /**
+   * Every riser line the stair can touch: the step boxes run from one riser
+   * below the half-landing beneath this floor up to the half-landing above it.
+   */
+  const otherRiserLines = Array.from(
+    { length: RISER_COUNT + TWO },
+    (_unused, offset) => (offset - RISERS_PER_FLIGHT - ONE) * otherRiser,
   );
   const allowedLevels: readonly number[] = [
     otherSlabBottom,
     FLOOR_LEVEL,
-    OTHER_HEIGHTS.windowSill,
     OTHER_HEIGHTS.railing,
     OTHER_HEIGHTS.door,
     OTHER_HEIGHTS.wall,
-    ...otherTreadTops,
+    ...PLAN_STATED_LEVELS,
+    ...otherRiserLines,
   ];
 
+  it('has a forbidden list that the real floor really carries', () => {
+    // Without this the guard below could pass by forbidding levels nothing ever
+    // builds at. Every level it forbids is on the real floor, and on the parts of
+    // it the guard actually measures — the railing height is on the railings and
+    // the television panel, not only on the balustrade whose height the plan
+    // states, so excluding the parapets does not empty the guard.
+    expect(FORBIDDEN_LEVELS.length).toBeGreaterThan(NONE);
+    expect(FORBIDDEN_LEVELS).toContain(FLOOR_HEIGHTS.railing);
+    FORBIDDEN_LEVELS.forEach((level) => {
+      expect(isOneOf(level, everyLevelButStatedParapets(FLOOR)), String(level)).toBe(true);
+    });
+  });
+
   it('keeps no production height anywhere in the built floor', () => {
-    const survivors = [...new Set(levels.filter((level) => isOneOf(level, FORBIDDEN_LEVELS)))];
+    const survivors = [
+      ...new Set(
+        everyLevelButStatedParapets(injected).filter((level) => isOneOf(level, FORBIDDEN_LEVELS)),
+      ),
+    ];
 
     expect(survivors).toEqual([]);
   });
 
-  it('takes every level from the injected sizes alone', () => {
+  it('takes every level from the injected sizes and the plan alone', () => {
     const strangers = [...new Set(levels.filter((level) => !isOneOf(level, allowedLevels)))];
 
     expect(strangers).toEqual([]);
-    expect(Math.min(...levels)).toBeCloseTo(otherSlabBottom, PRECISION_DIGITS);
-    expect(Math.max(...levels)).toBeCloseTo(OTHER_HEIGHTS.floorToFloor, PRECISION_DIGITS);
+    // The lowest thing built is the step below the half-landing beneath this
+    // floor, not the slab: the stair passes through the storey.
+    expect(Math.min(...levels)).toBeCloseTo(-otherHalfStorey - otherRiser, PRECISION_DIGITS);
+    expect(Math.min(...levels)).toBeLessThan(otherSlabBottom);
+    // And the highest is the top of the walls, which outreach the flight.
+    expect(Math.max(...levels)).toBeCloseTo(OTHER_HEIGHTS.wall, PRECISION_DIGITS);
+    expect(Math.max(...levels)).toBeGreaterThan(otherHalfStorey);
   });
 
   it('moves the stairs, the railings and the TV panel with the heights', () => {
-    expect(injected.stairs.riser).toBeCloseTo(
-      OTHER_HEIGHTS.floorToFloor / STEP_COUNT,
-      PRECISION_DIGITS,
-    );
+    expect(injected.stairs.riser).toBeCloseTo(otherRiser, PRECISION_DIGITS);
+    expect(injected.stairs.highestLevel).toBeCloseTo(otherHalfStorey, PRECISION_DIGITS);
+    expect(injected.stairs.lowestLevel).toBeCloseTo(-otherHalfStorey, PRECISION_DIGITS);
     injected.railings.forEach((railing) => {
       expect(railing.top).toBeCloseTo(OTHER_HEIGHTS.railing, PRECISION_DIGITS);
     });
@@ -588,6 +811,40 @@ describe('injected heights', () => {
     });
   });
 
+  it('leaves the windows and the parapet where the plan states them', () => {
+    // These are the levels a change of heights must NOT move: each window's own
+    // sill and head, and the stated height of the balustrade. `FloorHeights` has
+    // no window sill or head at all, so there is nothing for these to come from
+    // but the schedule.
+    injected.windows.forEach((window, index) => {
+      expect(window.sill).toBeCloseTo(WINDOWS[index].sill, PRECISION_DIGITS);
+      expect(window.head).toBeCloseTo(WINDOWS[index].head, PRECISION_DIGITS);
+      expect(window.opening.bottom).toBeCloseTo(
+        FLOOR.windows[index].opening.bottom,
+        PRECISION_DIGITS,
+      );
+      expect(window.opening.top).toBeCloseTo(FLOOR.windows[index].opening.top, PRECISION_DIGITS);
+      // Two assertions deleted here. They proved each sill and head differed
+      // from `OTHER_HEIGHTS.windowSill` / `.windowHead` (1.11 and 2.22), the
+      // injected floor-wide pair. Those fields are gone, so no window could take
+      // a level from them; the four assertions above pin each window to the level
+      // the plan states, which is what the deleted pair was approximating.
+    });
+    const parapets = injected.walls.filter((piece) => piece.kind === 'parapet');
+
+    expect(parapets.length).toBeGreaterThan(NONE);
+    parapets.forEach((piece) => {
+      expect(isOneOf(piece.top, PARAPET_STATED_LEVELS)).toBe(true);
+      expect(piece.top).not.toBeCloseTo(OTHER_HEIGHTS.wall, PRECISION_DIGITS);
+      // And not the injected RAILING either. Since ADR-011 the plan states the
+      // balustrade at `HEIGHTS.railing`, so at production heights a module reading
+      // `heights.railing` for it would look right; here the two differ (1.10
+      // stated against 1.55 injected) and only the stated one may win.
+      expect(piece.top).not.toBeCloseTo(OTHER_HEIGHTS.railing, PRECISION_DIGITS);
+      expect(OTHER_HEIGHTS.railing).not.toBeCloseTo(FLOOR_HEIGHTS.railing, PRECISION_DIGITS);
+    });
+  });
+
   it('stands the walls on exactly the level the slabs end at, at any height', () => {
     const { slab, wall } = undersides(injected);
 
@@ -596,11 +853,22 @@ describe('injected heights', () => {
   });
 
   it('keeps the plan figures, which no height can change', () => {
-    expect(injected.walls).toHaveLength(WALL_PIECE_COUNT);
     expect(injected.openings).toHaveLength(OPENING_COUNT);
     expect(injected.windows).toHaveLength(WINDOW_COUNT);
+    expect(injected.slabs).toHaveLength(SLAB_COUNT);
+    expect(injected.railings).toHaveLength(RAILING_COUNT);
     expect(getWallFootprintArea(injected.walls)).toBeCloseTo(WALL_FOOTPRINT_AREA, PRECISION_DIGITS);
     expect(totalRectArea(injected.slabs)).toBeCloseTo(FLOOR_AREA_TOTAL, PRECISION_DIGITS);
+    expect(shaftArea(injected)).toBeCloseTo(SHAFT_AREA, PRECISION_DIGITS);
+  });
+
+  it('cuts the walls into fewer blocks, because the parapet does not move', () => {
+    // The wall COUNT is not a plan figure. The stated 1.10 m balustrade keeps
+    // its height while every other wall rises to 3.33, so the cells merge
+    // differently and two blocks fewer come out. The footprint area, asserted
+    // above, is what stays fixed.
+    expect(injected.walls).toHaveLength(INJECTED_WALL_PIECE_COUNT);
+    expect(injected.walls.length).not.toBe(WALL_PIECE_COUNT);
   });
 });
 
