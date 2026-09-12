@@ -3,14 +3,16 @@ import {
   FLOOR_PLAN,
   findSpaceAt,
   getNeighbours,
+  getSpace,
   hasFloor,
   validateFloorPlan,
 } from './floorPlan/index.ts';
 import type { FloorPlan, SpaceId } from './floorPlan/index.ts';
 import { LENGTH_TOLERANCE, makeRect } from './planGeometry.ts';
 import type { PlanPoint } from './planGeometry.ts';
-import { PORT_SCHEDULE, validatePorts } from './ports/index.ts';
-import { getReachableSpaceIds } from './reachability.ts';
+import { PORT_SCHEDULE, getPortPartners, validatePorts } from './ports/index.ts';
+import type { Port } from './ports/index.ts';
+import { findSpaceRoute, getReachableSpaceIds } from './reachability.ts';
 
 /** Where the stairs deliver the explorer onto this floor: the east landing. */
 const STAIRS_ARRIVAL: PlanPoint = Object.freeze({ x: 4.65, z: 4.65 });
@@ -23,6 +25,58 @@ const INSIDE_VOID_WEST: PlanPoint = Object.freeze({ x: 6.0, z: 9.2 });
 
 /** A point on the walkable side-B balcony slab. */
 const ON_BALCONY_SLAB: PlanPoint = Object.freeze({ x: 14.45, z: 9.2 });
+
+/** A point on the stair landing, east of flight B (stairs x 1.60–5.60, z 4.00–6.00). */
+const STAIRS_LANDING: PlanPoint = Object.freeze({ x: 5.1, z: 5.0 });
+
+/** A point in the corridor's main run (x 5.60–20.20, z 4.00–5.50). */
+const IN_CORRIDOR: PlanPoint = Object.freeze({ x: 8.0, z: 4.65 });
+
+/** A point in the guest room's north strip (x 1.60–9.70, z 6.30–7.05). */
+const IN_GUEST_ROOM: PlanPoint = Object.freeze({ x: 9.0, z: 6.8 });
+
+/** An id no space of the plan carries, to prove an unknown target throws. */
+const UNKNOWN_SPACE_ID = 'nowhere' as SpaceId;
+
+/**
+ * The three routes of this floor, written out by hand.
+ *
+ * Every one of them crosses the stair landing, and that is the floor and not the
+ * algorithm: no port joins the corridor to the guest room, and the kitchen's
+ * opening onto the guest room is a `pass` window of the source of truth, not a
+ * port, so it is no way through. The test below asserts both of those facts, so
+ * this list cannot quietly become wrong.
+ */
+const STAIRS_TO_KITCHEN: readonly SpaceId[] = ['stairs', 'corridor', 'kitchen'];
+const CORRIDOR_TO_GUEST_ROOM: readonly SpaceId[] = ['corridor', 'stairs', 'guestRoom'];
+const GUEST_ROOM_TO_KITCHEN: readonly SpaceId[] = ['guestRoom', 'stairs', 'corridor', 'kitchen'];
+
+/** Length of the route to the space the explorer already stands in: the target alone. */
+const ROUTE_TO_HERE_LENGTH = 1;
+
+/** Length of both tied routes from the stair landing to the kitchen: two steps, three spaces. */
+const TIED_ROUTE_LENGTH = 3;
+
+/**
+ * A door this floor does not have, from the guest room straight into the kitchen.
+ *
+ * It exists to make the equal-hop tie the real floor has none of: with it, the
+ * kitchen sits two steps from the stair landing both through the corridor and
+ * through the guest room, so which one is returned pins the tie-break rule
+ * rather than the hop count.
+ *
+ * Only `spaces` is read on this walk — the step rule asks `getPortPartners` for
+ * the access graph and never looks at port geometry — so this port is never
+ * checked against the plan and must not be handed to anything that cuts an
+ * opening.
+ */
+const GUEST_ROOM_TO_KITCHEN_DOOR: Port = Object.freeze({
+  spaces: Object.freeze(['guestRoom', 'kitchen'] as const),
+  kind: 'door',
+  along: 'z',
+  spanMin: 6.3,
+  width: 0.9,
+});
 
 /**
  * New east face of the stairs in the variant that breaks the corridor join, in
@@ -251,6 +305,174 @@ describe('getReachableSpaceIds', () => {
         RangeError,
       );
       expect(() => getReachableSpaceIds(FLOOR_PLAN, PORT_SCHEDULE, INSIDE_VOID_WEST)).toThrow(
+        /no floor to walk on/,
+      );
+    });
+  });
+});
+
+/**
+ * Tells whether a port of a schedule connects two spaces.
+ *
+ * Re-derived here from the schedule itself rather than read off the walk, so a
+ * broken predecessor walk cannot certify its own route.
+ *
+ * @param ports - The port schedule to search.
+ * @param id - One space.
+ * @param neighbourId - The other space.
+ * @returns `true` when some port names both spaces.
+ */
+function joinedByPort(ports: readonly Port[], id: SpaceId, neighbourId: SpaceId): boolean {
+  return ports.some((port) => port.spaces.includes(id) && port.spaces.includes(neighbourId));
+}
+
+describe('findSpaceRoute', () => {
+  it('resolves each start point to the space that holds it', () => {
+    expect(findSpaceAt(FLOOR_PLAN, STAIRS_LANDING)?.id).toBe('stairs');
+    expect(findSpaceAt(FLOOR_PLAN, IN_CORRIDOR)?.id).toBe('corridor');
+    expect(findSpaceAt(FLOOR_PLAN, IN_GUEST_ROOM)?.id).toBe('guestRoom');
+  });
+
+  it('walks the stair landing to the kitchen through the corridor', () => {
+    expect(findSpaceRoute(FLOOR_PLAN, PORT_SCHEDULE, STAIRS_LANDING, 'kitchen')).toEqual(
+      STAIRS_TO_KITCHEN,
+    );
+  });
+
+  it('walks the corridor to the guest room across the stair landing', () => {
+    expect(findSpaceRoute(FLOOR_PLAN, PORT_SCHEDULE, IN_CORRIDOR, 'guestRoom')).toEqual(
+      CORRIDOR_TO_GUEST_ROOM,
+    );
+  });
+
+  it('walks the guest room to the kitchen across the stair landing', () => {
+    expect(findSpaceRoute(FLOOR_PLAN, PORT_SCHEDULE, IN_GUEST_ROOM, 'kitchen')).toEqual(
+      GUEST_ROOM_TO_KITCHEN,
+    );
+  });
+
+  it('crosses the landing because the two shortcuts do not exist', () => {
+    expect(joinedByPort(PORT_SCHEDULE, 'corridor', 'guestRoom')).toBe(false);
+    expect(joinsWithNoWall(FLOOR_PLAN, 'corridor', 'guestRoom')).toBe(false);
+    expect(joinedByPort(PORT_SCHEDULE, 'guestRoom', 'kitchen')).toBe(false);
+    expect(joinsWithNoWall(FLOOR_PLAN, 'guestRoom', 'kitchen')).toBe(false);
+  });
+
+  it('freezes the returned route', () => {
+    expect(
+      Object.isFrozen(findSpaceRoute(FLOOR_PLAN, PORT_SCHEDULE, STAIRS_LANDING, 'kitchen')),
+    ).toBe(true);
+  });
+
+  it('returns the target alone when the explorer already stands in it', () => {
+    const here = findSpaceRoute(FLOOR_PLAN, PORT_SCHEDULE, STAIRS_LANDING, 'stairs');
+
+    expect(here).toEqual(['stairs']);
+    expect(here).toHaveLength(ROUTE_TO_HERE_LENGTH);
+    expect(findSpaceRoute(FLOOR_PLAN, PORT_SCHEDULE, IN_CORRIDOR, 'corridor')).toEqual([
+      'corridor',
+    ]);
+  });
+
+  it('steps only along real edges, for every space reachable from the landing', () => {
+    const reachable = [...getReachableSpaceIds(FLOOR_PLAN, PORT_SCHEDULE, STAIRS_LANDING)];
+    const broken = reachable.filter((id) => {
+      const route = findSpaceRoute(FLOOR_PLAN, PORT_SCHEDULE, STAIRS_LANDING, id);
+      const endsRight = route[0] === 'stairs' && route[route.length - 1] === id;
+      const visitsEachOnce = new Set(route).size === route.length;
+      const everyStepIsAnEdge = route.every(
+        (step, index) =>
+          hasFloor(getSpace(FLOOR_PLAN, step).kind) &&
+          (index === 0 ||
+            joinedByPort(PORT_SCHEDULE, route[index - 1], step) ||
+            joinsWithNoWall(FLOOR_PLAN, route[index - 1], step)),
+      );
+      return !(endsRight && visitsEachOnce && everyStepIsAnEdge);
+    });
+
+    expect(broken).toEqual([]);
+    expect(reachable).toHaveLength(EXPECTED_REACHABLE_COUNT);
+  });
+
+  it('returns the same route every time it is asked', () => {
+    const first = findSpaceRoute(FLOOR_PLAN, PORT_SCHEDULE, IN_GUEST_ROOM, 'kitchen');
+    const second = findSpaceRoute(FLOOR_PLAN, PORT_SCHEDULE, IN_GUEST_ROOM, 'kitchen');
+
+    expect(first).toEqual(second);
+    expect(first).toEqual(GUEST_ROOM_TO_KITCHEN);
+  });
+
+  describe('when two routes are the same length', () => {
+    const withExtraDoor: readonly Port[] = [...PORT_SCHEDULE, GUEST_ROOM_TO_KITCHEN_DOOR];
+
+    it('really makes a tie: the kitchen stays two steps from the landing', () => {
+      expect(findSpaceRoute(FLOOR_PLAN, PORT_SCHEDULE, STAIRS_LANDING, 'kitchen')).toHaveLength(
+        TIED_ROUTE_LENGTH,
+      );
+      expect(findSpaceRoute(FLOOR_PLAN, withExtraDoor, STAIRS_LANDING, 'kitchen')).toHaveLength(
+        TIED_ROUTE_LENGTH,
+      );
+    });
+
+    it('keeps the predecessor discovered first: the stairs list their port before their join', () => {
+      expect(getPortPartners(PORT_SCHEDULE, 'stairs')).toEqual(['guestRoom']);
+      expect(joinsWithNoWall(FLOOR_PLAN, 'stairs', 'corridor')).toBe(true);
+      expect(findSpaceRoute(FLOOR_PLAN, withExtraDoor, STAIRS_LANDING, 'kitchen')).toEqual([
+        'stairs',
+        'guestRoom',
+        'kitchen',
+      ]);
+    });
+  });
+
+  it.each(VOID_IDS)('finds no route to %s, which has no floor to stand on', (id) => {
+    expect(findSpaceRoute(FLOOR_PLAN, PORT_SCHEDULE, STAIRS_LANDING, id)).toEqual([]);
+  });
+
+  describe('when the explorer is shut in the stairwell', () => {
+    const variant = withStairsShortened(FLOOR_PLAN, SHORTENED_STAIRS_MAX_X);
+    const withoutStairsPort = PORT_SCHEDULE.filter((port) => !port.spaces.includes('stairs'));
+
+    it('finds no route to anything outside it', () => {
+      const outside = EXPECTED_REACHABLE_IDS.filter((id) => id !== 'stairs');
+      const routed = outside.filter(
+        (id) => findSpaceRoute(variant, withoutStairsPort, STAIRS_LANDING, id).length !== 0,
+      );
+
+      expect(routed).toEqual([]);
+    });
+
+    it('still routes to the stairwell the explorer stands in', () => {
+      expect(findSpaceRoute(variant, withoutStairsPort, STAIRS_LANDING, 'stairs')).toEqual([
+        'stairs',
+      ]);
+    });
+  });
+
+  describe('rejected arguments', () => {
+    it('throws when the target is not a space of the plan', () => {
+      expect(() =>
+        findSpaceRoute(FLOOR_PLAN, PORT_SCHEDULE, STAIRS_LANDING, UNKNOWN_SPACE_ID),
+      ).toThrow(RangeError);
+      expect(() =>
+        findSpaceRoute(FLOOR_PLAN, PORT_SCHEDULE, STAIRS_LANDING, UNKNOWN_SPACE_ID),
+      ).toThrow(/no space with id/);
+    });
+
+    it('throws when the start point lies inside a wall', () => {
+      expect(() => findSpaceRoute(FLOOR_PLAN, PORT_SCHEDULE, INSIDE_A_WALL, 'kitchen')).toThrow(
+        RangeError,
+      );
+      expect(() => findSpaceRoute(FLOOR_PLAN, PORT_SCHEDULE, INSIDE_A_WALL, 'kitchen')).toThrow(
+        /lies in no space/,
+      );
+    });
+
+    it('throws when the start point lies in a void', () => {
+      expect(() => findSpaceRoute(FLOOR_PLAN, PORT_SCHEDULE, INSIDE_VOID_WEST, 'kitchen')).toThrow(
+        RangeError,
+      );
+      expect(() => findSpaceRoute(FLOOR_PLAN, PORT_SCHEDULE, INSIDE_VOID_WEST, 'kitchen')).toThrow(
         /no floor to walk on/,
       );
     });
