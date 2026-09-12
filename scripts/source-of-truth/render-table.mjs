@@ -417,23 +417,29 @@ function buildRoomsTable(spec, walls) {
 const COORD_EPSILON = 5e-4;
 
 /**
- * Whether two walls are the two faces of one physical wall.
+ * State a wall's thickness, and say so when it is not one number.
  *
- * Isolation belongs to the wall, not to one room's face, so the register has to
- * know which rows are the same piece of building seen from either side. Two faces
- * qualify when they run along the same axis, stand no further apart than the
- * solid between them, and actually overlap along their run — a wall on the same
- * line but further down the floor is a different wall.
+ * `thickness` on a derived wall is the THICKEST contact, kept for quantities and
+ * takeoff, so printing it alone would claim a uniform wall where there is none:
+ * the utility room's west face is 0.30 where it backs the corridor, 0.15 against
+ * the main sanitair and 0.20 along the void, and 0.30 is true of its first
+ * stretch only. A varying face therefore lists every thickness it is actually
+ * built at, in the same qualifier-first shape the ISOLATION column uses for a
+ * partial wall, so neither column can be read as a whole-wall number.
  *
- * @param {object} a - A derived wall.
- * @param {object} b - Another derived wall.
- * @returns {boolean} True when they are opposite faces of one wall.
+ * Every distinct value is named rather than a range: no face carries more than
+ * three, and a range would hide the 0.20 stretch that sits between the extremes
+ * of that very wall. `varies` decides which rows need it, so a face the
+ * derivation calls uniform is still reported as a single number.
+ *
+ * @param {object} wall - The derived wall, with `contacts` and `varies`.
+ * @returns {string} `'0.20'`, or `'varies 0.15 · 0.20 · 0.30'`.
  */
-function areOppositeFaces(a, b) {
-  if (a === b || a.axis !== b.axis) return false;
-  const solid = Math.max(a.thickness ?? 0, b.thickness ?? 0);
-  if (Math.abs(a.at - b.at) > solid + COORD_EPSILON) return false;
-  return Math.min(a.spanMax, b.spanMax) - Math.max(a.spanMin, b.spanMin) > COORD_EPSILON;
+function describeThickness(wall) {
+  const contacts = Array.isArray(wall.contacts) ? wall.contacts : [];
+  if (!wall.varies || contacts.length === 0) return metres(wall.thickness);
+  const distinct = [...new Set(contacts.map((contact) => metres(contact.thickness)))].sort();
+  return `varies ${distinct.join(' · ')}`;
 }
 
 /**
@@ -467,16 +473,27 @@ function unionLength(intervals) {
 /**
  * How much of each wall is built for isolation.
  *
- * `INSULATED_WALLS` names faces, and naming a face insulates the wall behind it,
- * so each wall collects its own run when it is named plus the overlapping run of
- * every named face that backs onto it. The result is per wall and in metres,
- * because the backing is usually partial: the owner named three room walls of
- * 2.00, 3.20 and 2.60 that meet one 8.40 m corridor face, and the corridor is
- * heavy for 7.80 of its length, not for all of it and not for three separate
- * walls' worth.
+ * Read from the derivation, not worked out again here. Each wall's `contacts`
+ * tile its whole face span and carry the rule behind every stretch, so a stretch
+ * counts as heavy when its `reason` is `'isolation'`. That is the same predicate
+ * the plan page paints red on, which is the point: the register, the drawing and
+ * the checks agree by construction instead of by coincidence.
  *
- * The quoted length in the spec is a tripwire checked by the verifier, so it is
- * not re-derived here; what this needs from an entry is only which face it names.
+ * This module used to pair opposite faces itself and union the backing spans. It
+ * was right when written and then fell behind the spec twice — a junction rule
+ * making a thick corner heavy, and a fix letting isolation reach a weather-exposed
+ * far face — and reported 3.90 m less than the drawing. Deriving the same fact
+ * twice is what allowed that gap, so the second derivation is gone.
+ *
+ * A face named in `INSULATED_WALLS` counts entirely, and that half is not
+ * redundant: an exterior face's stretches read `'exterior'` however heavily the
+ * owner insulated it, so the whole side-C heat boundary carries no `'isolation'`
+ * contact at all. Keying on `reason` alone reports 98.80 m against the true
+ * 123.35 m — it would quietly call his envelope plain.
+ *
+ * The quoted length beside each matricule is a tripwire checked by the verifier,
+ * so it is not re-derived here; what this needs from an entry is which face it
+ * names.
  *
  * @param {object} spec - The plan-v2 namespace.
  * @param {readonly object[]} walls - The derived walls.
@@ -486,16 +503,13 @@ function buildInsulationIndex(spec, walls) {
   const named = new Set((spec.INSULATED_WALLS ?? []).map((entry) => entry.matricule));
   const index = new Map();
   for (const wall of walls) {
+    const contacts = Array.isArray(wall.contacts) ? wall.contacts : [];
     /** @type {Array<[number, number]>} */
-    const intervals = [];
-    if (named.has(wall.matricule)) intervals.push([wall.spanMin, wall.spanMax]);
-    for (const other of walls) {
-      if (!named.has(other.matricule) || !areOppositeFaces(wall, other)) continue;
-      intervals.push([
-        Math.max(wall.spanMin, other.spanMin),
-        Math.min(wall.spanMax, other.spanMax),
-      ]);
-    }
+    const intervals = named.has(wall.matricule)
+      ? [[wall.spanMin, wall.spanMax]]
+      : contacts
+          .filter((contact) => contact.reason === 'isolation')
+          .map((contact) => [contact.spanMin, contact.spanMax]);
     const insulated = unionLength(intervals);
     index.set(wall.matricule, {
       insulated,
@@ -612,7 +626,7 @@ function buildWallsTable(spec, walls) {
         describeRun(wall),
         metres(wall.length),
         describeIsolation(wall, isolation),
-        metres(wall.thickness),
+        describeThickness(wall),
         describeFaces(names, wall.faces),
       ],
     });
@@ -641,7 +655,7 @@ function buildWallsTable(spec, walls) {
       { head: 'RUNS', align: 'left' },
       { head: 'LENGTH m', align: 'right' },
       { head: 'ISOLATION', align: 'left' },
-      { head: 'THICK m', align: 'right' },
+      { head: 'THICK m', align: 'left' },
       { head: 'FACES', align: 'left' },
     ],
     rows,

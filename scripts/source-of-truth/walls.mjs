@@ -398,9 +398,95 @@ function assignIsolationReasons(walls, spec) {
     const heavy = mergeSpans(spans.get(wall.matricule));
     if (heavy.length === 0) continue;
     for (const contact of wall.contacts) {
-      if (contact.reason !== 'plain separator') continue;
+      // 'plain separator' and 'weather-exposed' both give way to isolation;
+      // 'exterior' and 'join override' do not.
+      //
+      // WHY weather-exposed has to give way: naming a face insulates the wall,
+      // and a wall has two faces. The master bedroom's west face is named, so
+      // that wall is built heavy — but its other face is the side-A balcony
+      // spine, which is weather-exposed and unnamed, so refusing the upgrade
+      // left one face of one wall reading heavy and the other plain, and the
+      // drawing painted them different colours. Nothing is lost by the upgrade:
+      // weather-exposed and isolation are both 0.30, so the depth is the same
+      // number either way and only the explanation changes.
+      //
+      // WHY exterior does not: an envelope face has no far side to carry
+      // anything onto, and the renderer relies on it still reading 'exterior'.
+      // WHY a join override does not: its depth is forced and often not 0.30 —
+      // calling the 0.20 utility join an isolation wall would be a lie.
+      if (contact.reason !== 'plain separator' && contact.reason !== 'weather-exposed') continue;
       const inside = heavy.some(([lo, hi]) => contact.spanMin >= lo - EPS && contact.spanMax <= hi + EPS);
       if (inside) contact.reason = 'isolation';
+    }
+  }
+}
+
+/**
+ * Fourth pass: the junction rule. The owner's words were "in thick wall when X
+ * wall meet Y wall and both this the XY point is RED thick win".
+ *
+ * A stretch that backs onto nothing is a corner — the block of masonry where a
+ * perpendicular wall lands. It already takes the THICKER of what it runs into
+ * for its width; this gives it the STRONGER reason too. Without it an isolated
+ * run reads as plain exactly where it turns a corner, which is the one place a
+ * sound or heat barrier cannot afford a gap: the drawing would say the isolation
+ * stops at the corner when it does not.
+ *
+ * Isolated here means what the drawing means by red: the face is named, or the
+ * backing pass labelled that stretch 'isolation'. Both halves are needed. Ten
+ * named faces carry no 'isolation' contact at all, because an exterior or
+ * weather-exposed stretch keeps the reason that explains its depth — so reading
+ * `reason` alone would miss every junction with the side-C envelope or the
+ * balcony spine.
+ *
+ * Two ways to adjoin, because a corner is where two faces turn:
+ *   - the contact beside it along the same face, so an isolated run carries
+ *     through the corner instead of stopping at it; and
+ *   - the face that lands in it, taking that face's NEAREST contact, since a long
+ *     wall can be isolated at one end and plain at the other — the kitchen's west
+ *     face is isolation where it wraps the guest room and plain 0.15 at the end
+ *     that turns into the void, and it is the end that turns which matters.
+ *
+ * Read off a snapshot taken before anything changes, so isolation crosses one
+ * junction rather than travelling down a chain of them.
+ */
+function assignJunctionReasons(walls, spec) {
+  const named = new Set((spec.INSULATED_WALLS ?? []).map((entry) => entry.matricule));
+  const maxGap = spec.WALLS.exterior;
+  const before = new Map(
+    walls.map((w) => [
+      w.matricule,
+      w.contacts.map((c) => named.has(w.matricule) || c.reason === 'isolation'),
+    ]),
+  );
+  const distanceTo = (at, lo, hi) => (at < lo ? lo - at : at > hi ? at - hi : 0);
+
+  for (const wall of walls) {
+    for (const [i, contact] of wall.contacts.entries()) {
+      if (contact.reason !== 'no facing space') continue;
+
+      const flags = before.get(wall.matricule);
+      const alongIsolated = [i - 1, i + 1].some((j) => wall.contacts[j] && flags[j]);
+
+      const turningIsolated =
+        !alongIsolated &&
+        walls.some((other) => {
+          if (other.axis === wall.axis) return false;
+          if (other.at < contact.spanMin - EPS || other.at > contact.spanMax + EPS) return false;
+          if (distanceTo(wall.at, other.spanMin, other.spanMax) > maxGap + EPS) return false;
+          let nearest = -1;
+          let nearestDistance = Infinity;
+          for (const [j, c] of other.contacts.entries()) {
+            const d = distanceTo(wall.at, c.spanMin, c.spanMax);
+            if (d < nearestDistance) {
+              nearestDistance = d;
+              nearest = j;
+            }
+          }
+          return nearest >= 0 && before.get(other.matricule)[nearest];
+        });
+
+      if (alongIsolated || turningIsolated) contact.reason = 'isolation';
     }
   }
 }
@@ -495,6 +581,7 @@ export function deriveWalls(spec = planV2) {
 
   placeOpenings(walls, spec);
   assignIsolationReasons(walls, spec);
+  assignJunctionReasons(walls, spec);
   for (const wall of walls) delete wall._facing;
   return walls;
 }

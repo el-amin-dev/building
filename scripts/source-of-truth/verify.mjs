@@ -818,6 +818,45 @@ check('8. Wall thickness, per contact: every stretch built what the rules ask');
 
   line(`${contactCount} contact stretches across ${walls.filter((w) => !w.exterior).length} interior faces`);
   line(`contacts[] tiles all ${walls.length} faces and agrees with the measured gaps`);
+
+  /**
+   * The two faces of one wall have to agree about isolation over the stretch
+   * they share. A wall built heavy as seen from one room and plain as seen from
+   * the other is not a thing that can exist, and the junction rule is the first
+   * pass able to invent one: it spreads along a face and around a corner rather
+   * than straight across the wall, so the two faces are no longer reached by the
+   * same route.
+   */
+  const namedFaces = new Set(INSULATED_WALLS.map((entry) => entry.matricule));
+  const heavyOver = (wall, lo, hi) => {
+    if (namedFaces.has(wall.matricule)) return cm(hi - lo);
+    const spans = mergeSpans(
+      (wall.contacts ?? []).filter((c) => c.reason === 'isolation').map((c) => [c.spanMin, c.spanMax]),
+    );
+    return cm(spans.reduce((sum, [a, b]) => sum + Math.max(0, Math.min(b, hi) - Math.max(a, lo)), 0));
+  };
+  let lopsided = 0;
+  for (const a of walls) {
+    for (const b of walls) {
+      if (a.matricule >= b.matricule || !facesEachOther(a, b)) continue;
+      const lo = Math.max(a.spanMin, b.spanMin);
+      const hi = Math.min(a.spanMax, b.spanMax);
+      if (hi - lo <= EPS) continue;
+      const heavyA = heavyOver(a, lo, hi);
+      const heavyB = heavyOver(b, lo, hi);
+      if (Math.abs(heavyA - heavyB) <= EPS) continue;
+      lopsided += 1;
+      fail(
+        `${a.matricule} and ${b.matricule} are the two faces of one wall but disagree about isolation over ` +
+          `${m(lo)}–${m(hi)}: ${m(heavyA)} heavy from ${a.roomId}, ${m(heavyB)} from ${b.roomId}`,
+      );
+    }
+  }
+  line(
+    lopsided
+      ? `${lopsided} wall(s) isolated on one face and plain on the other`
+      : 'no wall is isolated on one face and plain on the other',
+  );
   // Two numbers, because one of them is a trap. The contact figure counts only
   // stretches that look at another room, so it leaves out the whole exterior
   // envelope — quoting it as "how much of the floor is heavy" would lose every
@@ -1019,9 +1058,20 @@ check("10. Insulated walls: the owner's list, and the physical walls it actually
     listed.push(wall);
   }
 
+  // Sourced from `contacts` — the same field the plan renderer draws from — so
+  // the register and the drawing cannot disagree about what is built heavy. That
+  // includes the junction returns, which are isolation because the run carries
+  // through the corner. Heavy is `reason === 'isolation'` OR the face being
+  // named, the same both-halves rule the renderer paints red on: an exterior or
+  // weather-exposed stretch keeps the reason that explains its depth, so the
+  // named list is the only record that the owner wants it isolated.
+  const namedFaces = new Set(INSULATED_WALLS.map((entry) => entry.matricule));
   const register = [];
   for (const w of walls) {
-    const spans = INSULATED_SPANS.get(w.matricule) ?? [];
+    const heavy = namedFaces.has(w.matricule)
+      ? [[w.spanMin, w.spanMax]]
+      : (w.contacts ?? []).filter((c) => c.reason === 'isolation').map((c) => [c.spanMin, c.spanMax]);
+    const spans = mergeSpans(heavy);
     if (spans.length === 0) continue;
     const insulated = cm(spans.reduce((sum, [lo, hi]) => sum + (hi - lo), 0));
     register.push({ wall: w, spans, insulated, partial: insulated < w.length - EPS });
