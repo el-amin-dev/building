@@ -10,7 +10,7 @@
  *   adding or removing a light when the view toggles recompiles every program in the
  *   scene. That is a visible hitch, and it also destabilises the end-to-end tests,
  *   which wait for the canvas to settle before taking their measurements.
- * - a point light per room (13 of them) would be the dominant per-fragment cost in the
+ * - a point light per room (16 of them) would be the dominant per-fragment cost in the
  *   headless software WebGL the end-to-end tests run on.
  *
  * The interior and the exterior therefore differ by uniform values only — intensities

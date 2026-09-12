@@ -3,12 +3,16 @@
  *
  * Owner answer (2026-09-11, in the line of the ADR-006 owner answers): wherever a
  * walkable surface meets the void with no wall between the two, a railing closes
- * the fall edge at `FLOOR_HEIGHTS.railing` (1.10 m). On the typical floor that is
- * the side-B strip: the balcony slab sits between the west and the east void, and
- * both of those joins are explicit zero-wall overrides, because slab and void are
- * the same open-air strip (brief §5.2, `floorPlan/floorPlanData.ts`). Every other
- * void edge already has a 0.30 m weather-facing wall in front of it — the kitchen,
- * the guest room, the laundry — and needs no rail.
+ * the fall edge at `FLOOR_HEIGHTS.railing` (1.10 m). On the redrawn floor that is
+ * the side-B strip, which now reads west to east as control-center balcony · void
+ * (west) · balcony slab · void (east) · utility room. Three of those four joins
+ * are explicit zero-wall overrides, because balcony and void are the same open-air
+ * strip (brief §5.2, `sourceOfTruth/plan.ts`), and each one is railed: the
+ * 0.80 m edge at x 4.90, and the 0.80 m edges at x 11.65 and x 15.35. The fourth,
+ * void (east) ↔ utility room, keeps the drawn 0.20 m wall (owner, ADR-006), so it
+ * is a wall to lean on rather than an edge to fall over. Every other void edge
+ * already has a 0.30 m weather-facing wall in front of it — the guest room, the
+ * kitchen, the two bathrooms, the laundry — and needs no rail.
  *
  * The rule is derived from the plan rather than drawn: a railing appears on a
  * contact with no gap where exactly one of the two spaces is a `'void'` and the
@@ -16,11 +20,29 @@
  * plan, stairs ↔ corridor (brief §4.2): both are circulation with a floor, so
  * there is nothing to fall into.
  *
+ * **The stairwell adds no railing, and that is a finding rather than an
+ * oversight.** Opening the bay (`slabs.ts`) leaves only the arrival landing as
+ * floor at this storey, so the question had to be asked again. The landing,
+ * x 4.60–5.60 × z 4.00–6.00, is closed on three sides by 0.30 m walls (the
+ * balcony spine, the master bedroom, the guest room) and open on two: east to the
+ * corridor, at the same level through the zero join, and west to the bay. That
+ * west face is 2.00 m long and the two flights tile it exactly — flight A over
+ * z 4.00–5.00, flight B over z 5.00–6.00 — and **both meet it at this storey's
+ * level**: flight A rises out of this floor, so its low end is level 0 at the
+ * edge, and flight B arrives at this floor, so its top tread sits one 0.1667 m
+ * riser below the landing. Stepping west is a step up or a step down onto a
+ * stair, which is a doorway, not a drop. A rail there would be a fence across the
+ * stairs. The rule that would find a real one — a piece meeting the arrival
+ * landing whose surface at that edge is NOT at this storey's level, which is what
+ * the head of a flight passing a landing looks like — selects nothing on this
+ * plan, so it is written here rather than coded: `stairs.ts` already publishes
+ * `atThisLevel` and the surfaces to derive it from, the day a plan needs it.
+ *
  * A railing is a rendered guard rail, not structure: its {@link RAILING_THICKNESS}
  * is a rail profile, and it is **not** part of the wall footprint of the floor, so
- * it is excluded from the 42.52 m² of walls in brief §8 (that figure counts walls
- * only, and the railings stand on floor area that is already counted in the
- * 167.38 m² floor total).
+ * it is excluded from the wall area the source of truth reports (44.12 m² on the
+ * redrawn floor). The railings stand on floor area that is already counted in the
+ * floor total.
  *
  * Pure geometry, in metres, with the plan conventions of `floorPlan/types.ts`
  * (ADR-005): no rendering, no scene objects, nothing mutated.

@@ -16,7 +16,7 @@ export default defineConfig([
     'playwright/.cache/',
   ]),
   {
-    files: ['**/*.{js,ts,tsx}'],
+    files: ['**/*.{js,mjs,ts,tsx}'],
     extends: [js.configs.recommended, tseslint.configs.recommended],
     rules: {
       'no-console': 'error',
@@ -31,9 +31,22 @@ export default defineConfig([
     },
   },
   {
-    files: ['*.{js,ts}', 'tooling/**/*.ts', 'tests/**/*.ts'],
+    files: ['*.{js,ts}', 'tooling/**/*.ts', 'tests/**/*.ts', 'scripts/**/*.mjs'],
     languageOptions: {
       globals: globals.node,
+    },
+  },
+  {
+    // `scripts/` holds command-line tools whose product IS their stdout:
+    // `verify.mjs` prints the 12-check report a human reads and `build.mjs`
+    // prints what it rewrote. `no-console` earns its keep by keeping stray
+    // debug output out of the shipped browser bundle, and nothing under
+    // `scripts/` is ever bundled — so it is off for these files only. Every
+    // other rule, including the unused-variable and warning-comment rules,
+    // still applies.
+    files: ['scripts/**/*.mjs'],
+    rules: {
+      'no-console': 'off',
     },
   },
   eslintConfigPrettier,

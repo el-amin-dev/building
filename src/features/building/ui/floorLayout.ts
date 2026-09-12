@@ -8,7 +8,7 @@
  * (`mergeBoxes.ts`, `MergedBoxesMesh.tsx`). This module is that transposition and nothing
  * more: it invents no coordinate, so a geometry rule still changes only in the domain.
  *
- * Two functions, because the two groups have different sources and different lifetimes:
+ * Three functions, because the three groups have different sources and different lifetimes:
  *
  * - {@link getFloorLayout} buckets the solids that are always drawn. They all come from a
  *   {@link BuiltFloor}, so the function takes one.
@@ -17,6 +17,13 @@
  *   ceiling is the underside of the slab above, which belongs to the next storey, and a
  *   light panel is a luminaire, not structure. Both are derived from the plan and the
  *   heights alone.
+ * - {@link getFixtureLayout} builds the sanitary ware: the basins, baths and shower trays
+ *   the spec stands in the bathrooms. They are not part of a `BuiltFloor` either, and for
+ *   the same reason a light panel is not: a bath is a thing standing in a room, not a piece
+ *   of building fabric. That is exactly the precedent this module already set for the light
+ *   panels, so a fitting is derived here rather than pushed into the domain's floor —
+ *   until Part 4 gives fixtures a domain module of their own, at which point the levels
+ *   below move there and this function takes them from a `BuiltFloor` like everything else.
  *
  * Every vertical level comes from the `heights` argument and every plan coordinate from the
  * `plan` argument or from the built floor, so injecting other sizes moves the whole layout
@@ -35,14 +42,9 @@ import { FLOOR_HEIGHTS } from '../domain/heights.ts';
 import type { FloorHeights } from '../domain/heights.ts';
 import { makeBox } from '../domain/planBox.ts';
 import type { PlanBox } from '../domain/planBox.ts';
-import {
-  LENGTH_TOLERANCE,
-  makeRect,
-  rectArea,
-  rectDepth,
-  rectWidth,
-} from '../domain/planGeometry.ts';
+import { makeRect, rectArea, rectDepth, rectWidth } from '../domain/planGeometry.ts';
 import type { PlanRect } from '../domain/planGeometry.ts';
+import { FIXTURES } from '../domain/sourceOfTruth/plan.ts';
 import { getSlabMaterialKey, MATERIAL_PALETTE } from './floorMaterials.ts';
 import type { FloorMaterialKey } from './floorMaterials.ts';
 
@@ -58,6 +60,12 @@ const FINISHED_FLOOR_LEVEL = 0;
  * It is the one roofed space that gets no ceiling: the dog-leg rises through the opening in
  * the slab above, so putting a ceiling over it would cap the stairwell (`stairs.ts`, brief
  * §4.2).
+ *
+ * This id is the one fixed identifier in this module, and it stands in for a property the
+ * plan model does not carry. The redrawn plan calls the stairwell a kind of its own rather
+ * than a circulation space; the day `SpaceKind` gains that kind, this constant and its use
+ * in {@link isRoofed} should give way to it, which would let a second stairwell roof itself
+ * correctly without being named here.
  */
 const STAIRS_SPACE_ID: SpaceId = 'stairs';
 
@@ -76,6 +84,56 @@ const LIGHT_PANEL_RECT_FRACTION = 0.3;
 const LIGHT_PANEL_THICKNESS = 0.04;
 
 /**
+ * One fixture of the source-of-truth spec: an object standing in a room.
+ *
+ * Declared structurally rather than imported as a named type, so that this layer keeps
+ * working whatever the spec module calls its own type, and reads only the three fields it
+ * actually needs. `rect` is the spec's `[minX, maxX, minZ, maxZ]` tuple, in metres.
+ */
+export interface SpecFixture {
+  /** What the fixture is: `sink`, `bath`, `shower`, `tv`, `partition`. */
+  readonly kind: string;
+  /** Identifier of the space the fixture stands in. */
+  readonly room: string;
+  /** Footprint of the fixture as `[minX, maxX, minZ, maxZ]`, in metres. */
+  readonly rect: readonly number[];
+}
+
+/** Number of coordinates of a spec fixture rect: `[minX, maxX, minZ, maxZ]`. */
+const FIXTURE_RECT_LENGTH = 4;
+
+/** The vertical span of one fixture, in metres above the finished floor. */
+interface FixtureLevels {
+  /** Level of the underside. */
+  readonly bottom: number;
+  /** Level of the top. */
+  readonly top: number;
+}
+
+/**
+ * How tall each piece of sanitary ware stands, in metres above the finished floor.
+ *
+ * These are fitting sizes, not building dimensions, so they are not in `heights.ts`
+ * (ADR-006 covers the building's vertical dimensions; a rail profile in `railings.ts` and
+ * the panel depth in `tvPanel.ts` are the existing precedent for a fitting carrying its own
+ * size). The spec gives every fixture a footprint and no height at all, so the heights are
+ * ordinary domestic ones: a basin as the counter slab it sits in, a bath as its tub, a
+ * shower as its tray.
+ *
+ * This record is also the list of what counts as sanitary ware: a kind that is absent is
+ * not drawn here and does not make its room wet. `tv` is deliberately absent — the
+ * television already has a domain module (`tvPanel.ts`) that derives it from the corridor
+ * wall rather than from a written rect, and drawing the spec's `tv` fixture too would put
+ * two televisions on the same wall. `partition` is absent because it is a screen, and the
+ * spec itself says it is a fixture only so that it stays out of the wall derivation.
+ */
+const SANITARY_FIXTURE_LEVELS: Readonly<Record<string, FixtureLevels>> = Object.freeze({
+  sink: Object.freeze({ bottom: 0.72, top: 0.88 }),
+  bath: Object.freeze({ bottom: FINISHED_FLOOR_LEVEL, top: 0.55 }),
+  shower: Object.freeze({ bottom: FINISHED_FLOOR_LEVEL, top: 0.1 }),
+});
+
+/**
  * Every solid of the floor, grouped by the material it is drawn with.
  *
  * Every key of the palette is present, with an empty array where the floor has nothing of
@@ -86,6 +144,9 @@ export type FloorLayout = Readonly<Record<FloorMaterialKey, readonly PlanBox[]>>
 
 /** The two buckets that exist only while the interior is shown. */
 export type CeilingLayout = Readonly<Pick<FloorLayout, 'ceiling' | 'lightPanel'>>;
+
+/** The one bucket the fixtures fill: the sanitary ware standing in the bathrooms. */
+export type FixtureLayout = Readonly<Pick<FloorLayout, 'sanitaryWare'>>;
 
 /**
  * Every material key, in palette order.
@@ -116,11 +177,13 @@ function emptyLayout(): MutableLayout {
     slabRoom: [],
     slabCirculation: [],
     slabOpenAir: [],
+    slabWet: [],
     ceiling: [],
     lightPanel: [],
     railing: [],
     stairs: [],
     tvPanel: [],
+    sanitaryWare: [],
   };
 }
 
@@ -138,35 +201,44 @@ function freezeLayout(layout: MutableLayout): FloorLayout {
 }
 
 /**
- * Tells whether a wall piece is a parapet rather than a full-height wall.
+ * Names the spaces that are wet rooms: the ones holding sanitary ware.
  *
- * `getWallPieces` gives a cell the height of a wall where it faces a room or a circulation
- * space, and the height of a railing where every side it faces is open air, the void or the
- * outside (`walls.ts`, ADR-006). A parapet is therefore recognised by its top standing at
- * `heights.railing`, and both heights are read from the argument so no building dimension
- * is repeated here.
+ * A wet room is not a space kind. The two bathrooms and the four bath and shower cubicles
+ * inside them are all ordinary `room` spaces, so `getSlabMaterialKey`, which maps a *kind*
+ * to a slab material, cannot tell them from a bedroom. Nor is there a list of ids to read:
+ * the plan model carries no "wet" flag.
  *
- * The test is equality with the railing height, not "below the wall height", because an
- * opening splits its cell: the threshold under a door and the sill under a window are
- * pieces of a full-height wall whose own top is *lower* than a parapet's. They are plaster,
- * so they stay in the `wall` bucket. The one case this cannot tell apart is a parapet that
- * an opening has cut down — the floor has none, since every wall an opening crosses faces a
- * room or a circulation space and is full height.
+ * What does distinguish them is already in the spec — a room with a basin, a bath or a
+ * shower tray in it is a wet room, and one without is not. Deriving the set that way means
+ * a cubicle added to the spec is tiled without anything here being edited, and that no id
+ * of the new plan is written down in this layer.
  *
- * @param piece - A wall block of a built floor.
- * @param heights - The vertical sizes the floor was built with.
- * @returns `true` when the piece rises exactly to `heights.railing`.
+ * @param fixtures - The fixtures of the spec. Not mutated.
+ * @returns The ids of the spaces holding at least one piece of sanitary ware.
  */
-function isParapet(piece: PlanBox, heights: FloorHeights): boolean {
-  return Math.abs(piece.top - heights.railing) <= LENGTH_TOLERANCE;
+function getWetSpaceIds(fixtures: readonly SpecFixture[]): ReadonlySet<string> {
+  return new Set(
+    fixtures
+      .filter((fixture) => SANITARY_FIXTURE_LEVELS[fixture.kind] !== undefined)
+      .map((fixture) => fixture.room),
+  );
 }
 
 /**
  * Groups every always-drawn solid of a built floor by material.
  *
- * - the wall blocks split into `wall` and `parapet` by their top (see {@link isParapet});
+ * - the wall blocks split into `wall` and `parapet` by the `kind` the wall generator put on
+ *   each of them (`WallPiece`, `walls.ts`). A parapet is *stated* in the spec's
+ *   `PARAPET_WALLS` and derived there, never inferred here. Since ADR-011 the stated
+ *   balustrade and `heights.railing` are the same 1.10, which is exactly why a top
+ *   comparison looks right and is not: the stated height is plan data and the railing is
+ *   an argument, so they coincide at the production heights and part company under any
+ *   others. An opening also cuts a full-height wall into blocks lower than either, so a
+ *   top cannot tell the two apart even before the heights change;
  * - each slab into `slabRoom`, `slabCirculation` or `slabOpenAir`, after the kind of the
- *   space it carries (`getSlabMaterialKey`);
+ *   space it carries (`getSlabMaterialKey`) — or into `slabWet` when that space holds
+ *   sanitary ware, which is the one slab material a space *kind* cannot choose (see
+ *   {@link getWetSpaceIds});
  * - the steps of the dog-leg into `stairs`;
  * - each railing into `railing`, as a box from the finished floor up to its handrail — a
  *   `Railing` carries a rect and a top rather than a box (`railings.ts`);
@@ -181,25 +253,35 @@ function isParapet(piece: PlanBox, heights: FloorHeights): boolean {
  * @param builtFloor - The floor to group. Not mutated.
  * @param plan - The plan it was built from, used to read the kind of each slab's space;
  *   defaults to `FLOOR_PLAN`. Not mutated.
- * @param heights - The vertical sizes it was built with, used to tell a parapet from a
- *   wall; defaults to `FLOOR_HEIGHTS`.
+ * @param fixtures - The fixtures of the spec, used only to tell which spaces are wet rooms;
+ *   defaults to `FIXTURES`. Not mutated.
  * @returns A frozen {@link FloorLayout} carrying every material key. Equal inputs always
  *   give an equal result, so a caller may build it once and memoise it.
- * @throws RangeError when a slab names a space the plan does not hold (`getSpace`), when a
- *   slab's space is a `void` and so has no slab material (`getSlabMaterialKey`), or when a
- *   railing height leaves no box to draw (`makeBox`).
+ * @throws RangeError when `fixtures` is not an array, when a slab names a space the plan does
+ *   not hold (`getSpace`), when a slab's space is a `void` and so has no slab material
+ *   (`getSlabMaterialKey`), or when a railing height leaves no box to draw (`makeBox`).
  */
 export function getFloorLayout(
   builtFloor: BuiltFloor,
   plan: FloorPlan = FLOOR_PLAN,
-  heights: FloorHeights = FLOOR_HEIGHTS,
+  fixtures: readonly SpecFixture[] = FIXTURES,
 ): FloorLayout {
+  // A layout takes every level from the floor it is handed, so this parameter is
+  // easy to mistake for the heights — and a `FloorHeights` passed here used to
+  // die as `fixtures.filter is not a function` deep inside `getWetSpaceIds`.
+  // That threw at module load in one test file and silently took all 24 of its
+  // assertions with it, so the file reported green while testing nothing.
+  if (!Array.isArray(fixtures)) {
+    throw new RangeError(`fixtures must be an array of spec fixtures, got ${typeof fixtures}`);
+  }
   const layout = emptyLayout();
+  const wetSpaceIds = getWetSpaceIds(fixtures);
   for (const piece of builtFloor.walls) {
-    layout[isParapet(piece, heights) ? 'parapet' : 'wall'].push(piece);
+    layout[piece.kind === 'parapet' ? 'parapet' : 'wall'].push(piece);
   }
   for (const slab of builtFloor.slabs) {
-    layout[getSlabMaterialKey(getSpace(plan, slab.spaceId).kind)].push(slab);
+    const space = getSpace(plan, slab.spaceId);
+    layout[wetSpaceIds.has(space.id) ? 'slabWet' : getSlabMaterialKey(space.kind)].push(slab);
   }
   for (const step of builtFloor.stairs.steps) {
     layout.stairs.push(step);
@@ -314,4 +396,44 @@ export function getCeilingLayout(
     ),
   );
   return Object.freeze({ ceiling, lightPanel });
+}
+
+/**
+ * Builds the sanitary ware of the floor: one box per basin, bath and shower tray.
+ *
+ * The spec gives each fixture a footprint and the room it stands in, and nothing vertical;
+ * the levels come from {@link SANITARY_FIXTURE_LEVELS}, which is also what decides that a
+ * fixture is sanitary ware at all. A fixture of any other kind is skipped rather than
+ * rejected, so the spec may carry a television and a screen — as it does — without this
+ * layer having to know what to do with them.
+ *
+ * These boxes are always drawn, not interior-only. A ceiling is hidden from outside so that
+ * the floor can be seen from above at all; a bath is one of the things worth seeing when it
+ * is, so hiding it would defeat the roof-off view. They are also one bucket, not one per
+ * kind: a basin, a bath and a tray are the same glazed white ceramic, so they merge into a
+ * single mesh and cost one draw call between them.
+ *
+ * @param fixtures - The fixtures of the spec; defaults to `FIXTURES`. Not mutated.
+ * @returns A frozen {@link FixtureLayout} with its one frozen bucket, in spec order.
+ * @throws RangeError naming the fixture when its rect does not carry exactly the four
+ *   coordinates `[minX, maxX, minZ, maxZ]`, or when its footprint or levels leave no box to
+ *   draw (`makeRect`, `makeBox`).
+ */
+export function getFixtureLayout(fixtures: readonly SpecFixture[] = FIXTURES): FixtureLayout {
+  const sanitaryWare: readonly PlanBox[] = Object.freeze(
+    fixtures.flatMap((fixture) => {
+      const levels = SANITARY_FIXTURE_LEVELS[fixture.kind];
+      if (levels === undefined) {
+        return [];
+      }
+      if (fixture.rect.length !== FIXTURE_RECT_LENGTH) {
+        throw new RangeError(
+          `the ${fixture.kind} of space "${fixture.room}" needs ${String(FIXTURE_RECT_LENGTH)} rect coordinates, got ${String(fixture.rect.length)}`,
+        );
+      }
+      const [minX, maxX, minZ, maxZ] = fixture.rect;
+      return [makeBox(makeRect(minX, maxX, minZ, maxZ), levels.bottom, levels.top)];
+    }),
+  );
+  return Object.freeze({ sanitaryWare });
 }

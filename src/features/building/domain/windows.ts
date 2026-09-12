@@ -1,90 +1,127 @@
 /**
- * The windows of the typical floor: where the floor plan is glazed, and how big
- * each opening is.
+ * The windows of the typical floor: the declared schedule, validated and turned
+ * into holes in the walls.
  *
- * Windows are not drawn one by one in the brief: ADR-006 and the owner answer of
- * 2026-09-11 give a rule instead. Every window is 1.20 m wide and 1.20 m tall,
- * from `FloorHeights.windowSill` (0.90 m) to `FloorHeights.windowHead` (2.10 m),
- * and glazing is allowed only where a room looks at open air on side A (the
- * `minX` faces, brief §5.1) or side B (the `maxZ` faces, brief §5.2). Sides C
- * and D are the neighbouring plots: the rooms that face only those sides — the
- * living room and the two kids bedrooms — get electric light instead of a window
- * (ADR-006).
+ * v1 derived the windows: one 1.20 × 1.20 opening per room per glazeable face,
+ * centred in the longest run the doors left free (ADR-006). That rule could only
+ * ever produce one kind of window, and it cannot say what the owner now wants —
+ * a hand-through to the guests at counter height, ventilation slots above eye
+ * level in the wet cubicles, a 1.70 m tall run of glazing in the laundry, and
+ * deliberately nothing at all in the master bedroom. So the schedule is declared
+ * in `WINDOWS` (`sourceOfTruth/plan.ts`), each window carrying its own `kind`,
+ * `sill` and `head`, and this module no longer chooses positions.
  *
- * This module derives the whole window list from the plan, the wall thicknesses
- * and the port schedule, so a room that moves, a wall that changes thickness or
- * a door that slides along a facade moves or drops its window with no edit here.
- * Nothing is hard-coded per room.
+ * What it does instead is check the schedule against the plan and realise it:
+ *
+ * - each window must sit in a real wall shared by the two spaces it names: a
+ *   face-to-face contact between them, on the axis the window runs along, with
+ *   solid wall between the two rooms rather than a continuous floor;
+ * - it must lie inside that shared stretch with a jamb of at least
+ *   {@link WINDOW_SPEC}'s `minJamb` at each end, and keep `minClearance` of wall
+ *   between itself and any door or other window in the same face. Those are the
+ *   0.05 and 0.10 of check 4 of the reference verifier
+ *   (`scripts/source-of-truth/verify.mjs`);
+ * - a window for daylight or for air must face open air — a balcony or a void.
+ *   That is what is left of the old exposed-face rule: it no longer picks where
+ *   glazing goes, but it still refuses a window that would look into another
+ *   room. A `pass` window is the exception and is interior by nature: the
+ *   owner's tunnel from the guest room to the kitchen is a hole between two
+ *   rooms on purpose;
+ * - the opening itself is the old geometry, unchanged: the window span across the
+ *   full thickness of the wall it pierces, from its sill up to its head.
+ *
+ * Sill and head are per window now, not one pair of constants for the floor.
+ * `FloorHeights` therefore carries no window sill or head at all: those fields
+ * existed only for the old uniform windows and have been removed. The heights
+ * are still taken as an argument, and still used: a window must fit under
+ * `heights.wall`.
  *
  * Coordinates are in metres, with the plan conventions of `floorPlan/types.ts`.
  */
 
-import { getJoinThickness, getNeighbours, getSpace } from './floorPlan/index.ts';
-import type { FloorPlan, Space, SpaceId, SpaceKind } from './floorPlan/index.ts';
+import { getNeighbours } from './floorPlan/index.ts';
+import type { FloorPlan, Space, SpaceContact, SpaceId, SpaceKind } from './floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from './heights.ts';
 import type { FloorHeights } from './heights.ts';
 import { makeBox } from './planBox.ts';
 import type { PlanBox } from './planBox.ts';
-import { CENTIMETRES_PER_METRE, LENGTH_TOLERANCE, makeRect, toPlanLength } from './planGeometry.ts';
-import type { PlanRect } from './planGeometry.ts';
-import type { Port } from './ports/types.ts';
-import { WALL_SPEC } from './wallSpec.ts';
+import { LENGTH_TOLERANCE, makeRect, toPlanLength } from './planGeometry.ts';
+import type { PlanRect, RectSide } from './planGeometry.ts';
+import type { Port, PortAxis } from './ports/types.ts';
+import { WINDOWS } from './sourceOfTruth/plan.ts';
+import type { PlanWindow, PlanWindowKind } from './sourceOfTruth/plan.ts';
 
-const HALF = 0.5;
+/** What a window is for, which fixes its sill and its head (`sourceOfTruth/plan.ts`). */
+export type WindowKind = PlanWindowKind;
 
-/** Plan size of every window opening, in metres (ADR-006, owner answer 2026-09-11). */
+/**
+ * The face of a room a window sits in.
+ *
+ * Any of the four, unlike v1's `'minX' | 'maxZ'`: the declared schedule glazes
+ * the wet cubicles toward the side-B voids, the utility room through its west
+ * wall and the guest room through its east one, so the side is read off the
+ * contact the window is found in rather than restricted up front.
+ */
+export type WindowSide = RectSide;
+
+/** The wall a window must keep around itself, in metres. */
 export interface WindowSpec {
-  /** Clear width of a window along its wall, in metres. */
-  readonly width: 1.2;
   /**
-   * Smallest solid wall a window keeps between itself and a door in the same
-   * face, in metres: a door span is widened by this much on both sides before
-   * the remaining wall is offered to a window.
+   * Smallest solid wall between a window and the end of the stretch of wall it
+   * sits in, in metres (check 4: 0.05).
    */
-  readonly minJamb: 0.1;
+  readonly minJamb: 0.05;
+  /**
+   * Smallest solid wall between a window and another opening of the same face,
+   * in metres (check 4: 0.10).
+   */
+  readonly minClearance: 0.1;
 }
 
 /**
- * The one window size of the floor: 1.20 m wide, with a 0.10 m jamb against any
- * door in the same wall (ADR-006, owner answer 2026-09-11). Frozen.
+ * The wall a window keeps around itself (check 4 of the reference verifier).
+ * Frozen.
  *
- * The height is not repeated here: it is `FloorHeights.windowSill` to
- * `FloorHeights.windowHead`, read from `heights.ts` like every other vertical
- * building size.
+ * No width and no height here any more: every window declares its own `width`,
+ * `sill` and `head` in the schedule, because they differ by kind.
  */
-export const WINDOW_SPEC: WindowSpec = Object.freeze({ width: 1.2, minJamb: 0.1 });
+export const WINDOW_SPEC: WindowSpec = Object.freeze({ minJamb: 0.05, minClearance: 0.1 });
 
-/**
- * A face of a room that may be glazed: `minX` looks toward side A, `maxZ` toward
- * side B (brief §5.1, §5.2).
- *
- * The `minZ` and `maxX` faces — sides C and D — are deliberately absent: they
- * look at the neighbouring plots and are never glazed (ADR-006).
- */
-export type WindowSide = 'minX' | 'maxZ';
-
-/** The glazeable faces, in the order `getWindows` reports them. Frozen. */
-const WINDOW_SIDES: readonly WindowSide[] = Object.freeze(['minX', 'maxZ']);
-
-/** The kinds of space a wall may be glazed against: both are open to the weather. */
+/** The kinds of space a window may look out onto: both are open to the weather. */
 const OPEN_AIR_KINDS: readonly SpaceKind[] = Object.freeze(['openAir', 'void']);
 
-/** One window of the floor. */
+/**
+ * The kind of window that is allowed to look into another room rather than at
+ * open air: the owner's tunnel for food and coffee.
+ */
+const INTERIOR_WINDOW_KIND: WindowKind = 'pass';
+
+/** One window of the floor, as the schedule declares it and the plan places it. */
 export interface FloorWindow {
-  /** The room the window belongs to; always a space of kind `'room'`. */
+  /** What the window is for. */
+  readonly kind: WindowKind;
+  /** The space the window is measured from: the first of the schedule's pair. */
   readonly spaceId: SpaceId;
-  /** Which face of the room is glazed. */
+  /** The space on the other side of the wall. */
+  readonly neighbourId: SpaceId;
+  /** Which face of {@link FloorWindow.spaceId} the window sits in. */
   readonly side: WindowSide;
+  /** The plan axis the window's width runs along. */
+  readonly along: PortAxis;
   /**
-   * Start of the window along its face, in metres: a z coordinate on a `minX`
-   * face, an x coordinate on a `maxZ` face.
+   * Start of the window along its face, in metres: a z coordinate in a `minX` or
+   * `maxX` face, an x coordinate in a `minZ` or `maxZ` face.
    */
   readonly spanMin: number;
-  /** End of the window along its face, `spanMin + WINDOW_SPEC.width`, in metres. */
+  /** End of the window along its face, `spanMin + width`, in metres. */
   readonly spanMax: number;
+  /** Height of the sill above the finished floor, in metres. */
+  readonly sill: number;
+  /** Height of the head above the finished floor, in metres. */
+  readonly head: number;
   /**
    * The hole in the wall: the window span across the full thickness of the wall
-   * it pierces, from `heights.windowSill` up to `heights.windowHead`.
+   * it pierces, from its own sill up to its own head.
    */
   readonly opening: PlanBox;
 }
@@ -97,218 +134,245 @@ interface Span {
   readonly max: number;
 }
 
-/** A stretch of one face that fronts open air, with the wall it would pierce. */
-interface ExposedRun extends Span {
-  /** Coordinate of the face itself: an x for a `minX` face, a z for a `maxZ` face. */
-  readonly faceAt: number;
-  /** Thickness of the wall across that face, in metres. */
-  readonly thickness: number;
+/** The schedule, in the order the windows are reported. */
+const DECLARED_WINDOWS: readonly PlanWindow[] = WINDOWS;
+
+/**
+ * Returns the faces a window running along an axis can sit in.
+ *
+ * A window whose width runs along x pierces a wall that faces z, and the other
+ * way round.
+ *
+ * @param along - The axis the window's width runs along.
+ * @returns The two faces of a rect that such a window can sit in.
+ */
+function facesForAxis(along: PortAxis): readonly RectSide[] {
+  return along === 'x' ? ['minZ', 'maxZ'] : ['minX', 'maxX'];
 }
 
 /**
- * Returns the coordinate of one face of a rect.
+ * Returns the coordinate of one face of a rectangle.
  *
  * @param rect - The rectangle.
  * @param side - Which face to locate.
- * @returns `rect.minX` for a `minX` face, `rect.maxZ` for a `maxZ` face, in metres.
+ * @returns The x of a `minX`/`maxX` face, the z of a `minZ`/`maxZ` face, in metres.
  */
-function faceCoordinate(rect: PlanRect, side: WindowSide): number {
-  return side === 'minX' ? rect.minX : rect.maxZ;
+function faceCoordinate(rect: PlanRect, side: RectSide): number {
+  switch (side) {
+    case 'minX':
+      return rect.minX;
+    case 'maxX':
+      return rect.maxX;
+    case 'minZ':
+      return rect.minZ;
+    default:
+      return rect.maxZ;
+  }
 }
 
 /**
- * Returns the extent of one face of a rect, along the face.
+ * Returns the space with the given id, looked up by its written id.
  *
- * @param rect - The rectangle.
- * @param side - Which face to measure.
- * @returns The z extent of a `minX` face, the x extent of a `maxZ` face, in metres.
+ * The schedule's ids are the source of truth's room ids, which are the same
+ * strings as the plan's `SpaceId`s but a type of their own; the lookup compares
+ * the strings so neither module has to know the other's union.
+ *
+ * @param plan - The floor plan to search.
+ * @param id - Identifier of the space, as the schedule writes it.
+ * @returns The space of the plan.
+ * @throws RangeError naming the id when the plan has no such space.
  */
-function faceExtent(rect: PlanRect, side: WindowSide): Span {
-  return side === 'minX' ? { min: rect.minZ, max: rect.maxZ } : { min: rect.minX, max: rect.maxX };
+function findSpace(plan: FloorPlan, id: string): Space {
+  const space = plan.spaces.find((candidate) => candidate.id === id);
+  if (space === undefined) {
+    throw new RangeError(`the floor plan has no space with id "${id}" to glaze`);
+  }
+  return space;
 }
 
 /**
- * Tells whether a face of a rect lies on the exterior envelope of the floor.
+ * Finds the stretch of wall a declared window sits in.
  *
- * A `minX` face is on side A when nothing of the plan lies west of it, i.e. it
- * sits at the west edge of the clear interior; a `maxZ` face is on side B when
- * it sits at the south edge. Both are read from `plan.interior`, never from a
- * coordinate written here.
- *
- * @param plan - The floor plan, for its clear interior.
- * @param faceAt - Coordinate of the face, in metres.
- * @param side - Which face it is.
- * @returns `true` when the face is the inside of an exterior wall on side A or B.
- */
-function isExteriorFace(plan: FloorPlan, faceAt: number, side: WindowSide): boolean {
-  return side === 'minX'
-    ? faceAt <= plan.interior.minX + LENGTH_TOLERANCE
-    : faceAt >= plan.interior.maxZ - LENGTH_TOLERANCE;
-}
-
-/**
- * Lists the stretches of one face of a room that front open air or the exterior.
- *
- * A stretch is exposed when what lies across the wall is a space of kind
- * `'openAir'` or `'void'` (a balcony or the void over the side-B strip), or the
- * exterior wall of side A or B. Everything else — another room, a corridor, the
- * blind corner between two spaces — is not glazeable.
+ * The window must lie inside one face-to-face contact between its two spaces,
+ * with a jamb at each end, and that contact must have a wall in it: two floors
+ * meeting with no wall between them (a zero join, such as the stair landing and
+ * the corridor) have nothing to glaze.
  *
  * @param plan - The floor plan.
- * @param space - The room whose face is inspected.
- * @param side - Which face of the room to inspect.
- * @returns One run per exposed stretch, in no particular order; empty when the
- *   face never fronts open air.
+ * @param space - The space the window is measured from.
+ * @param neighbour - The space on the other side.
+ * @param along - The axis the window's width runs along.
+ * @param span - The window span along its face, in metres.
+ * @returns The contact the window sits in.
+ * @throws RangeError naming the window's spaces and span when no contact holds
+ *   it, when the only contact that does has no wall, or when the jambs are too
+ *   small.
  */
-function findExposedRuns(plan: FloorPlan, space: Space, side: WindowSide): ExposedRun[] {
-  const contacts = getNeighbours(plan, space.id);
-  return space.rects.flatMap((rect, rectIndex) => {
-    const faceAt = faceCoordinate(rect, side);
-    if (isExteriorFace(plan, faceAt, side)) {
-      const extent = faceExtent(rect, side);
-      return [{ ...extent, faceAt, thickness: WALL_SPEC.exterior }];
-    }
-    return contacts
-      .filter(
-        (contact) =>
-          contact.side === side &&
-          contact.rectIndex === rectIndex &&
-          OPEN_AIR_KINDS.includes(getSpace(plan, contact.neighbourId).kind),
-      )
-      .map((contact) => ({
-        min: contact.spanMin,
-        max: contact.spanMax,
-        faceAt,
-        thickness: getJoinThickness(plan, space, getSpace(plan, contact.neighbourId)),
-      }));
-  });
-}
-
-/**
- * Joins the exposed runs that continue one another into single runs.
- *
- * Two runs merge when they lie in the same wall — the same face coordinate and
- * the same thickness — and touch or overlap. The kitchen's side-B face, for
- * example, fronts the west void up to x 12.70 and the balcony slab beyond it,
- * which is one 4.00 m stretch of wall rather than two.
- *
- * @param runs - The exposed runs of one face.
- * @returns The merged runs, sorted within each wall by `min`.
- */
-function mergeRuns(runs: readonly ExposedRun[]): ExposedRun[] {
-  const merged: ExposedRun[] = [];
-  [...runs]
-    .sort((a, b) => a.faceAt - b.faceAt || a.thickness - b.thickness || a.min - b.min)
-    .forEach((run) => {
-      const last = merged.at(-1);
-      const sameWall =
-        last !== undefined &&
-        Math.abs(last.faceAt - run.faceAt) <= LENGTH_TOLERANCE &&
-        Math.abs(last.thickness - run.thickness) <= LENGTH_TOLERANCE;
-      if (sameWall && run.min <= last.max + LENGTH_TOLERANCE) {
-        merged[merged.length - 1] = { ...last, max: Math.max(last.max, run.max) };
-        return;
-      }
-      merged.push(run);
-    });
-  return merged;
-}
-
-/**
- * Lists the spans of one face of a room that a passage already occupies.
- *
- * A port lies in the inspected face when it connects the room to a space that
- * touches that very face, and its width runs along the face. Openings with no
- * leaf count as well as doors: both interrupt the wall the window would need.
- * Each span is widened by `WINDOW_SPEC.minJamb` on both sides, so the wall a
- * window is offered already includes its jambs.
- *
- * @param plan - The floor plan.
- * @param space - The room whose face is inspected.
- * @param side - Which face of the room to inspect.
- * @param ports - The port schedule of the floor.
- * @returns The blocked spans along the face, jambs included, in schedule order.
- */
-function findBlockedSpans(
+function findHostContact(
   plan: FloorPlan,
   space: Space,
-  side: WindowSide,
+  neighbour: Space,
+  along: PortAxis,
+  span: Span,
+): SpaceContact {
+  const faces = facesForAxis(along);
+  const between = `${space.id} ↔ ${neighbour.id} ${String(span.min)}–${String(span.max)}`;
+  const candidates = getNeighbours(plan, space.id).filter(
+    (contact) => contact.neighbourId === neighbour.id && faces.includes(contact.side),
+  );
+  if (candidates.length === 0) {
+    throw new RangeError(
+      `window ${between} names no wall: "${space.id}" and "${neighbour.id}" do not face each other along ${along}`,
+    );
+  }
+
+  const holding = candidates.filter(
+    (contact) =>
+      span.min >= contact.spanMin + WINDOW_SPEC.minJamb - LENGTH_TOLERANCE &&
+      span.max <= contact.spanMax - WINDOW_SPEC.minJamb + LENGTH_TOLERANCE,
+  );
+  const [host] = holding.filter((contact) => contact.gap > LENGTH_TOLERANCE);
+  if (host !== undefined) {
+    return host;
+  }
+  if (holding.length > 0) {
+    throw new RangeError(
+      `window ${between} sits in a join of no thickness: "${space.id}" and "${neighbour.id}" meet with no wall to glaze`,
+    );
+  }
+  const reach = candidates
+    .map((contact) => `${String(contact.spanMin)}–${String(contact.spanMax)}`)
+    .join(', ');
+  throw new RangeError(
+    `window ${between} does not fit in the wall "${space.id}" shares with "${neighbour.id}" (${reach}) with a ${String(WINDOW_SPEC.minJamb)} jamb at each end`,
+  );
+}
+
+/**
+ * Checks that a window of the given kind may look at what is across its wall.
+ *
+ * @param kind - What the window is for.
+ * @param space - The space the window is measured from.
+ * @param neighbour - The space on the other side.
+ * @throws RangeError naming the two spaces when a window for daylight or air
+ *   would look into another room instead of at open air.
+ */
+function validateExposure(kind: WindowKind, space: Space, neighbour: Space): void {
+  if (kind === INTERIOR_WINDOW_KIND || OPEN_AIR_KINDS.includes(neighbour.kind)) {
+    return;
+  }
+  throw new RangeError(
+    `the "${kind}" window between "${space.id}" and "${neighbour.id}" faces a space of kind "${neighbour.kind}", not open air; only a "${INTERIOR_WINDOW_KIND}" window may look into another room`,
+  );
+}
+
+/**
+ * Checks that a window fits between the finished floor and the top of its wall.
+ *
+ * @param declared - The declared window.
+ * @param heights - Vertical sizes of the floor.
+ * @throws RangeError naming the offending level when the sill is below the floor,
+ *   the head is not above the sill, or the head is above the wall.
+ */
+function validateLevels(declared: PlanWindow, heights: FloorHeights): void {
+  const where = `${declared.between[0]} ↔ ${declared.between[1]}`;
+  if (!Number.isFinite(declared.sill) || declared.sill < -LENGTH_TOLERANCE) {
+    throw new RangeError(`window ${where} has a sill of ${String(declared.sill)}, below the floor`);
+  }
+  if (declared.head - declared.sill <= LENGTH_TOLERANCE) {
+    throw new RangeError(
+      `window ${where} has a head of ${String(declared.head)} that is not above its sill of ${String(declared.sill)}`,
+    );
+  }
+  if (declared.head > heights.wall + LENGTH_TOLERANCE) {
+    throw new RangeError(
+      `window ${where} has a head of ${String(declared.head)}, above the ${String(heights.wall)} wall it pierces`,
+    );
+  }
+}
+
+/**
+ * Lists the spans of one face of a space that another opening already occupies.
+ *
+ * Only openings in the same face count, which is what keeps the guest room's
+ * balcony door out of the way of its kitchen tunnel: the two run along the same
+ * axis over the very same z, but they are in opposite walls of the room. A port
+ * is in the face when it runs along the same axis and its other space is a
+ * neighbour across that face; a window when the schedule puts it in the same
+ * space and the same face.
+ *
+ * @param plan - The floor plan.
+ * @param space - The space whose face is inspected.
+ * @param side - Which face of the space.
+ * @param along - The axis openings in that face run along.
+ * @param ports - The port schedule of the floor.
+ * @param others - The other declared windows, with the window itself left out.
+ * @returns The occupied spans, each labelled for the error message.
+ */
+function findFaceOpenings(
+  plan: FloorPlan,
+  space: Space,
+  side: RectSide,
+  along: PortAxis,
   ports: readonly Port[],
-): Span[] {
-  const faceAxis = side === 'minX' ? 'z' : 'x';
+  others: readonly PlanWindow[],
+): readonly { readonly label: string; readonly span: Span }[] {
   const faceNeighbours = new Set(
     getNeighbours(plan, space.id)
       .filter((contact) => contact.side === side)
       .map((contact) => contact.neighbourId),
   );
-  return ports
-    .filter((port) => {
-      if (port.along !== faceAxis || !port.spaces.includes(space.id)) {
-        return false;
-      }
-      const [first, second] = port.spaces;
-      return faceNeighbours.has(first === space.id ? second : first);
-    })
-    .map((port) => ({
-      min: port.spanMin - WINDOW_SPEC.minJamb,
-      max: port.spanMin + port.width + WINDOW_SPEC.minJamb,
-    }));
-}
-
-/**
- * Removes the blocked spans from a run, leaving the free stretches of wall.
- *
- * @param run - The exposed run to cut.
- * @param blocked - The spans a passage occupies, jambs included.
- * @returns The remaining stretches, in order along the face; empty when the
- *   passages cover the whole run.
- */
-function subtractBlocked(run: Span, blocked: readonly Span[]): Span[] {
-  let free: Span[] = [{ min: run.min, max: run.max }];
-  blocked.forEach((block) => {
-    free = free.flatMap((span) => {
-      if (block.max <= span.min + LENGTH_TOLERANCE || block.min >= span.max - LENGTH_TOLERANCE) {
-        return [span];
-      }
-      const parts: Span[] = [];
-      if (block.min - span.min > LENGTH_TOLERANCE) {
-        parts.push({ min: span.min, max: block.min });
-      }
-      if (span.max - block.max > LENGTH_TOLERANCE) {
-        parts.push({ min: block.max, max: span.max });
-      }
-      return parts;
-    });
+  const fromPorts = ports.flatMap((port) => {
+    const [first, second] = port.spaces;
+    const other = first === space.id ? second : first;
+    if (port.along !== along || !port.spaces.includes(space.id) || !faceNeighbours.has(other)) {
+      return [];
+    }
+    return [
+      {
+        label: `the ${port.kind} to ${other}`,
+        span: { min: port.spanMin, max: toPlanLength(port.spanMin + port.width) },
+      },
+    ];
   });
-  return free;
+  const fromWindows = others.flatMap((other) => {
+    const [first, second] = other.between;
+    const across = first === space.id ? second : first;
+    if (other.along !== along || !other.between.includes(space.id) || !faceNeighbours.has(across)) {
+      return [];
+    }
+    return [
+      {
+        label: `the ${other.kind} window to ${across}`,
+        span: { min: other.spanMin, max: toPlanLength(other.spanMin + other.width) },
+      },
+    ];
+  });
+  return [...fromPorts, ...fromWindows];
 }
 
 /**
- * Centres a span of a given width in a run, on the centimetre plan grid.
+ * Checks that a window keeps its clearance from every other opening of its face.
  *
- * The arithmetic is done in whole centimetres rather than in metres because the
- * centre of a run often falls on a half-centimetre — the master bedroom's free
- * run z 0.30–1.75 centres a 1.20 m window at exactly 0.425 — and in metres the
- * floating-point noise of that sum decides the rounding instead of the
- * documented rule of `toPlanLength`. Every input lies on the centimetre grid
- * (plan data, port spans and `WINDOW_SPEC` all do), so scaling by
- * `CENTIMETRES_PER_METRE` and rounding recovers the exact grid value. The half
- * is then rounded up, which for the non-negative slack of a run that fits is the
- * same "halves away from zero" rule `toPlanLength` follows.
- *
- * @param run - The free stretch of wall, in metres.
- * @param width - Width of the span to place, in metres.
- * @returns The centred span, on the centimetre grid, in metres.
+ * @param space - The space the window is measured from.
+ * @param span - The window span along its face, in metres.
+ * @param openings - The other openings of the same face.
+ * @throws RangeError naming both openings when they overlap or come closer than
+ *   {@link WINDOW_SPEC}'s `minClearance`.
  */
-function centreSpan(run: Span, width: number): Span {
-  const startCm = Math.round(run.min * CENTIMETRES_PER_METRE);
-  const runCm = Math.round(run.max * CENTIMETRES_PER_METRE) - startCm;
-  const widthCm = Math.round(width * CENTIMETRES_PER_METRE);
-  const minCm = startCm + Math.round((runCm - widthCm) * HALF);
-  return {
-    min: minCm / CENTIMETRES_PER_METRE,
-    max: (minCm + widthCm) / CENTIMETRES_PER_METRE,
-  };
+function validateClearance(
+  space: Space,
+  span: Span,
+  openings: readonly { readonly label: string; readonly span: Span }[],
+): void {
+  openings.forEach((opening) => {
+    const gap = Math.max(opening.span.min - span.max, span.min - opening.span.max);
+    if (gap < WINDOW_SPEC.minClearance - LENGTH_TOLERANCE) {
+      throw new RangeError(
+        `the window at ${String(span.min)}–${String(span.max)} in the "${space.id}" wall leaves ${String(toPlanLength(gap))} to ${opening.label} at ${String(opening.span.min)}–${String(opening.span.max)}, less than the ${String(WINDOW_SPEC.minClearance)} needed`,
+      );
+    }
+  });
 }
 
 /**
@@ -318,94 +382,130 @@ function centreSpan(run: Span, width: number): Span {
  * @param faceAt - Coordinate of that face, in metres.
  * @param thickness - Thickness of the wall the window pierces, in metres.
  * @param span - The window span along the face, in metres.
- * @param heights - Vertical sizes of the floor.
+ * @param sill - Level of the bottom of the opening, in metres.
+ * @param head - Level of its top, in metres.
  * @returns A frozen box: the span across the whole wall thickness, from the sill
  *   to the head.
  */
 function makeOpening(
-  side: WindowSide,
+  side: RectSide,
   faceAt: number,
   thickness: number,
   span: Span,
-  heights: FloorHeights,
+  sill: number,
+  head: number,
 ): PlanBox {
+  const near = toPlanLength(faceAt - thickness);
+  const far = toPlanLength(faceAt + thickness);
   const rect =
     side === 'minX'
-      ? makeRect(toPlanLength(faceAt - thickness), faceAt, span.min, span.max)
-      : makeRect(span.min, span.max, faceAt, toPlanLength(faceAt + thickness));
-  return makeBox(rect, heights.windowSill, heights.windowHead);
+      ? makeRect(near, faceAt, span.min, span.max)
+      : side === 'maxX'
+        ? makeRect(faceAt, far, span.min, span.max)
+        : side === 'minZ'
+          ? makeRect(span.min, span.max, near, faceAt)
+          : makeRect(span.min, span.max, faceAt, far);
+  return makeBox(rect, sill, head);
 }
 
 /**
- * Places the window of one face of a room, if the face can take one.
- *
- * The longest free stretch of the face wins; a tie keeps the first one found,
- * walking the rects of the room in plan order. The window is centred in that
- * stretch and snapped onto the centimetre plan grid, so its span stays
- * comparable with the drawn plan data.
+ * Places one declared window in the plan.
  *
  * @param plan - The floor plan.
- * @param space - The room to glaze.
- * @param side - Which face of the room to glaze.
+ * @param declared - The window as the schedule declares it.
  * @param ports - The port schedule of the floor.
+ * @param others - The other declared windows.
  * @param heights - Vertical sizes of the floor.
- * @returns The window, or `undefined` when no free stretch of the face is at
- *   least `WINDOW_SPEC.width` long.
+ * @returns The frozen window, with the hole it cuts.
+ * @throws RangeError naming the window when the plan cannot host it (see
+ *   `findHostContact`, `validateExposure`, `validateLevels` and
+ *   `validateClearance`).
  */
 function placeWindow(
   plan: FloorPlan,
-  space: Space,
-  side: WindowSide,
+  declared: PlanWindow,
   ports: readonly Port[],
+  others: readonly PlanWindow[],
   heights: FloorHeights,
-): FloorWindow | undefined {
-  const blocked = findBlockedSpans(plan, space, side, ports);
-  let best: ExposedRun | undefined;
-  mergeRuns(findExposedRuns(plan, space, side)).forEach((run) => {
-    subtractBlocked(run, blocked).forEach((free) => {
-      if (best === undefined || free.max - free.min > best.max - best.min + LENGTH_TOLERANCE) {
-        best = { ...run, min: free.min, max: free.max };
-      }
-    });
-  });
-  if (best === undefined || best.max - best.min < WINDOW_SPEC.width - LENGTH_TOLERANCE) {
-    return undefined;
+): FloorWindow {
+  const [spaceId, neighbourId] = declared.between;
+  const space = findSpace(plan, spaceId);
+  const neighbour = findSpace(plan, neighbourId);
+  const span: Span = {
+    min: declared.spanMin,
+    max: toPlanLength(declared.spanMin + declared.width),
+  };
+
+  validateLevels(declared, heights);
+  validateExposure(declared.kind, space, neighbour);
+  const host = findHostContact(plan, space, neighbour, declared.along, span);
+  validateClearance(
+    space,
+    span,
+    findFaceOpenings(plan, space, host.side, declared.along, ports, others),
+  );
+
+  const rect = space.rects[host.rectIndex];
+  if (rect === undefined) {
+    throw new RangeError(
+      `the "${space.id}" space has no rect ${String(host.rectIndex)} to carry its window`,
+    );
   }
-  const span = centreSpan(best, WINDOW_SPEC.width);
   return Object.freeze({
+    kind: declared.kind,
     spaceId: space.id,
-    side,
+    neighbourId: neighbour.id,
+    side: host.side,
+    along: declared.along,
     spanMin: span.min,
     spanMax: span.max,
-    opening: makeOpening(side, best.faceAt, best.thickness, span, heights),
+    sill: declared.sill,
+    head: declared.head,
+    opening: makeOpening(
+      host.side,
+      faceCoordinate(rect, host.side),
+      host.gap,
+      span,
+      declared.sill,
+      declared.head,
+    ),
   });
 }
 
 /**
- * Derives every window of a floor.
+ * Realises every window of the floor from the declared schedule.
  *
- * Only spaces of kind `'room'` are glazed: a balcony, the void and the
- * circulation spaces never carry a window, however much open air they front.
- * Each room is offered its `minX` face (toward side A) and its `maxZ` face
- * (toward side B), and gets at most one window per face — a room facing both
- * gets two.
+ * Nothing is derived and nothing is skipped: every window of `WINDOWS` is placed
+ * or the call fails. A room has as many windows as the owner asked for — two in
+ * the kitchen, one in each wet cubicle, none at all in the master bedroom
+ * (owner) — and the result follows the schedule's order.
  *
  * @param plan - The floor plan to read. Not mutated.
- * @param ports - The port schedule of the floor, whose doors and openings the
- *   windows keep clear of. Not mutated.
+ * @param ports - The port schedule of the floor, whose doors the windows keep
+ *   their clearance from. Not mutated.
  * @param heights - Vertical sizes of the floor; defaults to `FLOOR_HEIGHTS`.
- * @returns A frozen array of frozen windows, in the plan order of the spaces and
- *   with the `minX` window of a room before its `maxZ` one.
+ *   Only `wall` is read: each window carries its own sill and head.
+ * @returns A frozen array of frozen windows, in schedule order.
+ * @throws RangeError naming the offending window when the plan cannot host it:
+ *   an unknown space, no shared wall on the declared axis, a wall too short for
+ *   the window and its jambs, a join with no wall in it, a daylight or air
+ *   window facing another room, an opening too close to a door or another
+ *   window, or a sill and head that do not fit under the wall.
  */
 export function getWindows(
   plan: FloorPlan,
   ports: readonly Port[],
   heights: FloorHeights = FLOOR_HEIGHTS,
 ): readonly FloorWindow[] {
-  const windows = plan.spaces
-    .filter((space) => space.kind === 'room')
-    .flatMap((space) =>
-      WINDOW_SIDES.flatMap((side) => placeWindow(plan, space, side, ports, heights) ?? []),
-    );
-  return Object.freeze(windows);
+  return Object.freeze(
+    DECLARED_WINDOWS.map((declared, index) =>
+      placeWindow(
+        plan,
+        declared,
+        ports,
+        DECLARED_WINDOWS.filter((_other, otherIndex) => otherIndex !== index),
+        heights,
+      ),
+    ),
+  );
 }

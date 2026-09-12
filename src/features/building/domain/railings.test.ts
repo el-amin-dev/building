@@ -15,8 +15,8 @@ import { RAILING_THICKNESS, getRailings } from './railings.ts';
 const PRECISION_DIGITS = 9;
 const HALF = 0.5;
 
-/** Both open edges of the side-B balcony slab, and nothing else (brief §5.2). */
-const EXPECTED_RAILING_COUNT = 2;
+/** Every open edge of the side-B strip, and nothing else (brief §5.2). */
+const EXPECTED_RAILING_COUNT = 3;
 
 /** Height of the handrail of the typical floor, in metres. */
 const REAL_RAILING_TOP = 1.1;
@@ -41,26 +41,46 @@ interface ExpectedRailing {
 }
 
 /**
- * The two fall edges of the side-B strip: the balcony slab spans x 12.70–16.20,
- * z 8.70–9.70, with the west void up to x 12.70 and the east void from x 16.20.
- * Both joins are zero-wall overrides, so each railing is the 0.05 m strip centred
- * on the shared edge (±0.025) over the full 1.00 m depth of the strip.
+ * The three fall edges of the side-B strip, measured off the clear rects of the
+ * redrawn floor. The strip runs west to east over z 8.90–9.70 as ccBalcony
+ * 4.10–4.90 · voidWest 4.90–11.65 · balconySlabB 11.65–15.35 · voidEast
+ * 15.35–20.30 · utilityRoom, and three of those four joins are zero-wall
+ * overrides, so each railing is the 0.05 m strip centred on the shared edge
+ * (±0.025) over the full 0.80 m depth of the strip.
+ *
+ * The order is the derivation's: `plan.spaces` order, then contact order. voidWest
+ * comes before voidEast, so the control-center balcony's rail is index 0 — it is
+ * new, and correct, because that balcony is a 0.80 × 0.80 walkable slab abutting
+ * the void through a zero-wall override.
+ *
+ * The fourth join, voidEast ↔ utilityRoom, keeps its drawn 0.20 m wall and is
+ * therefore absent. So is the side-A balcony's balustrade: that is a stated 1.10 m
+ * `PARAPET_WALLS` entry rather than a railing, and `getRailings` walks `void`
+ * spaces only, so an `openAir` balcony cannot pick up a second one.
  */
 const EXPECTED_RAILINGS: readonly ExpectedRailing[] = [
   {
     voidId: 'voidWest',
+    flooredId: 'ccBalcony',
+    minX: 4.875,
+    maxX: 4.925,
+    minZ: 8.9,
+    maxZ: 9.7,
+  },
+  {
+    voidId: 'voidWest',
     flooredId: 'balconySlabB',
-    minX: 12.675,
-    maxX: 12.725,
-    minZ: 8.7,
+    minX: 11.625,
+    maxX: 11.675,
+    minZ: 8.9,
     maxZ: 9.7,
   },
   {
     voidId: 'voidEast',
     flooredId: 'balconySlabB',
-    minX: 16.175,
-    maxX: 16.225,
-    minZ: 8.7,
+    minX: 15.325,
+    maxX: 15.375,
+    minZ: 8.9,
     maxZ: 9.7,
   },
 ];
@@ -107,7 +127,7 @@ const RAILINGS = getRailings(FLOOR_PLAN);
 
 describe('void railings', () => {
   describe('the fall edges of the typical floor', () => {
-    it('guards exactly the two open edges of the side-B balcony slab', () => {
+    it('guards exactly the three open edges of the side-B strip', () => {
       expect(RAILINGS).toHaveLength(EXPECTED_RAILING_COUNT);
       expect(RAILINGS.map((railing) => [...railing.spaces])).toEqual(
         EXPECTED_RAILINGS.map((expected) => [expected.voidId, expected.flooredId]),
@@ -244,16 +264,28 @@ describe('void railings', () => {
       expect(countZeroGapJoins(FLOOR_PLAN)).toBeGreaterThan(EXPECTED_RAILING_COUNT);
     });
 
-    it('drops a railing when the void beside the slab gains a floor', () => {
+    it('drops both railings of the west void when it gains a floor', () => {
       const paved = withSpaceKind(FLOOR_PLAN, 'voidWest', 'openAir');
+      const railings = getRailings(paved);
 
-      expect(getRailings(paved)).toHaveLength(EXPECTED_RAILING_COUNT - 1);
+      // Two of the three rails are the west void's — to the control-center
+      // balcony and to the slab — so paving it leaves only the east one. Spelled
+      // out rather than as EXPECTED_RAILING_COUNT − 1, which was the same number
+      // by coincidence while the plan had two railings and stopped being so.
+      expect(railings.map((railing) => [...railing.spaces])).toEqual([
+        ['voidEast', 'balconySlabB'],
+      ]);
     });
 
-    it('drops both railings when the slab itself becomes a void', () => {
+    it('drops the slab railings when the slab itself becomes a void, keeping the balcony rail', () => {
       const holed = withSpaceKind(FLOOR_PLAN, 'balconySlabB', 'void');
+      const railings = getRailings(holed);
 
-      expect(getRailings(holed)).toHaveLength(0);
+      // A void↔void contact has no floored side, so both of the slab's rails go.
+      // The control-center balcony is still a floor beside the west void, so its
+      // rail must survive: the old name said "both" and expected none, which was
+      // true of a two-railing floor and would now hide a rail going missing.
+      expect(railings.map((railing) => [...railing.spaces])).toEqual([['voidWest', 'ccBalcony']]);
     });
   });
 });

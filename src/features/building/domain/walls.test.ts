@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FLOOR_PLAN } from './floorPlan/index.ts';
-import type { FloorPlan, Space, SpaceId, SpaceKind } from './floorPlan/index.ts';
+import type { FloorPlan } from './floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from './heights.ts';
 import type { FloorHeights } from './heights.ts';
 import { boxVolume, makeBox } from './planBox.ts';
@@ -10,12 +10,56 @@ import {
   makeRect,
   rectArea,
   rectContainsPoint,
+  rectContainsRect,
   rectsOverlap,
 } from './planGeometry.ts';
 import type { PlanPoint, PlanRect } from './planGeometry.ts';
 import { getSlabThickness } from './slabs.ts';
-import { getWallCells, getWallFootprintArea, getWallPieces } from './walls.ts';
-import type { WallCell, WallHeightKind } from './walls.ts';
+import { INSULATED_WALLS, PARAPET_WALLS, PLOT, ROOMS, WALLS } from './sourceOfTruth/plan.ts';
+import {
+  deriveWalls,
+  getWallCells,
+  getWallFootprintArea,
+  getWallPieces,
+  getWallSolids,
+} from './walls.ts';
+import type { ContactReason, DerivedWall, WallCell, WallHeightKind, WallPiece } from './walls.ts';
+
+/**
+ * What this file used to assert, and why those assertions are deleted rather
+ * than renumbered.
+ *
+ * The old file pinned the floor of ADR-008: a 42.52 m² wall footprint, 486 cells
+ * over 218 blocks, and a parapet INFERRED wherever a stretch of wall had open air
+ * on both sides — 82 cells and 9.57 m² of it, most of that the side-B edge. All
+ * of it is gone with the floor it described:
+ *
+ * - the parapet counts and areas are not renumbered, they are replaced. Side B is
+ *   a normal 0.30 exterior wall now, so nothing is inferred from what a wall
+ *   faces; a parapet is DECLARED, in `PARAPET_WALLS`, and this floor declares
+ *   exactly one — the side-A balcony's balustrade, 1.10 m over its own 9.40 m
+ *   face (1.00 m until ADR-011, where the owner chose 1.10 and the plan entry
+ *   was rewritten to carry `HEIGHTS.railing` itself). The six balcony-slab and
+ *   void joins that are open air on both sides carry no masonry at all (they are
+ *   zero-thickness overrides), so they cannot be parapets: `railings.ts` owns
+ *   those edges;
+ * - the hand-written strips (the z 3.70–3.90 corridor wall listed block by block,
+ *   and two more like it) are gone. They were three tables of about sixty
+ *   coordinates each, they broke on every plan edit, and every fact in them is
+ *   covered here by an invariant: the contacts tile each face, the blocks close on
+ *   the footprint, and the volume closes on the openings punched out of it;
+ * - the synthetic-plan suite (a tiny 5.00 × 4.00 plot with one room, one balcony,
+ *   one void) is gone, and so is `refuses a plan whose walls are all junctions`.
+ *   Those tests injected spaces, and the spaces are no longer read from the
+ *   argument — see the last describe block. A synthetic plot now yields the real
+ *   floor's walls clipped to it, which tests nothing about walls;
+ * - `DOOR_FOOTPRINTS` / `WINDOW_FOOTPRINTS` shrink from 19 + 8 hand-measured
+ *   footprints to the seven of {@link OPENINGS}. They stay local fixtures on
+ *   purpose (the port and window models own the real schedule, and an integration
+ *   test will join them up), and seven is enough to cover what this module does
+ *   with a hole: one in a 0.30 wall, one in a 0.15 partition, one in the 0.20
+ *   join, a leafless 3.50 m opening, and two windows with a sill.
+ */
 
 const PRECISION_DIGITS = 9;
 const HALF = 0.5;
@@ -32,210 +76,211 @@ const FLOOR_LEVEL = 0;
 const SLAB_BOTTOM = -getSlabThickness();
 
 /* ------------------------------------------------------------------ *
- * Openings of the typical floor: local fixtures.
- * ------------------------------------------------------------------ */
-
-/** Footprint of an opening as `[minX, maxX, minZ, maxZ]`, in metres. */
-type OpeningFootprint = readonly [minX: number, maxX: number, minZ: number, maxZ: number];
-
-/**
- * The 19 door and opening footprints of the typical floor, taken from the door
- * schedule (brief §6 as amended by ADR-006), grouped by the wall they sit in.
- *
- * These are local fixtures: the port and window models are built in their own
- * modules, and an integration test will later replace this table and
- * {@link WINDOW_FOOTPRINTS} with the generated schedule. Keeping them here lets
- * the wall generator be checked against the real geometry without waiting for
- * those modules.
- */
-const DOOR_FOOTPRINTS: readonly OpeningFootprint[] = [
-  // Wall x 1.30–1.60, the side-A balcony wall.
-  [1.3, 1.6, 1.85, 2.75],
-  [1.3, 1.6, 5.65, 6.45],
-  // Wall z 3.70–3.90, between the top row and the corridor.
-  [5.65, 6.55, 3.7, 3.9],
-  [7.5, 11.0, 3.7, 3.9],
-  [14.05, 14.95, 3.7, 3.9],
-  [18.55, 19.45, 3.7, 3.9],
-  // Wall x 20.20–20.40, into the utility room.
-  [20.2, 20.4, 4.2, 5.1],
-  // Wall z 5.40–5.60, between the corridor and the service row.
-  [4.0, 4.9, 5.4, 5.6],
-  [5.67, 6.57, 5.4, 5.6],
-  [11.55, 12.45, 5.4, 5.6],
-  [18.45, 19.35, 5.4, 5.6],
-  // Wall x 9.80–10.00, guest room to kitchen.
-  [9.8, 10.0, 6.0, 6.9],
-  // Wall x 14.00–14.20, kitchen to laundry.
-  [14.0, 14.2, 6.15, 7.05],
-  // Wall x 17.40–17.60, laundry to main sanitair.
-  [17.4, 17.6, 6.15, 7.05],
-  // Wall z 6.50–6.70, link corridor to the control center and the guest room.
-  [2.3, 3.2, 6.5, 6.7],
-  [4.4, 5.3, 6.5, 6.7],
-  // Wall x 8.00–8.20, into the guest sanitair.
-  [8.0, 8.2, 7.1, 8.0],
-  // Wall z 8.40–8.70, onto the side-B balcony slab.
-  [12.7, 13.6, 8.4, 8.7],
-  [15.3, 16.2, 8.4, 8.7],
-];
-
-/**
- * The 8 window footprints of the typical floor (brief §6, ADR-006), grouped by
- * the wall they sit in; every window is 1.20 m wide. Local fixture, see
- * {@link DOOR_FOOTPRINTS}.
- */
-const WINDOW_FOOTPRINTS: readonly OpeningFootprint[] = [
-  // Wall x 1.30–1.60: the master bedroom and the control center.
-  [1.3, 1.6, 0.43, 1.63],
-  [1.3, 1.6, 6.95, 8.15],
-  // Wall z 8.40–8.70, the void-facing wall of the service row.
-  [2.1, 3.3, 8.4, 8.7],
-  [5.4, 6.6, 8.4, 8.7],
-  [8.4, 9.6, 8.4, 8.7],
-  [10.7, 11.9, 8.4, 8.7],
-  [18.3, 19.5, 8.4, 8.7],
-  // Wall z 9.70–10.00, side B at the utility room.
-  [20.7, 21.9, 9.7, 10.0],
-];
-
-/**
- * Builds the opening boxes of the fixtures: doors run from the finished floor to
- * the door head, windows from the sill to the window head.
- *
- * @param heights - Vertical sizes to use.
- * @returns The 19 doors followed by the 8 windows, as boxes.
- */
-function fixtureOpenings(heights: FloorHeights): readonly PlanBox[] {
-  return [
-    ...DOOR_FOOTPRINTS.map(([minX, maxX, minZ, maxZ]) =>
-      makeBox(makeRect(minX, maxX, minZ, maxZ), FLOOR_LEVEL, heights.door),
-    ),
-    ...WINDOW_FOOTPRINTS.map(([minX, maxX, minZ, maxZ]) =>
-      makeBox(makeRect(minX, maxX, minZ, maxZ), heights.windowSill, heights.windowHead),
-    ),
-  ];
-}
-
-const OPENINGS = fixtureOpenings(FLOOR_HEIGHTS);
-const DOOR_COUNT = 19;
-const WINDOW_COUNT = 8;
-const OPENING_COUNT = DOOR_COUNT + WINDOW_COUNT;
-
-/* ------------------------------------------------------------------ *
  * Measured figures of the typical floor.
  * ------------------------------------------------------------------ */
 
-/** Wall footprint of the typical floor, brief §8, in square metres. */
-const WALL_FOOTPRINT_AREA = 42.52;
-/** Cells of the grid cut by the plan and the 27 openings that carry a wall. */
-const WALL_CELL_COUNT = 486;
+/** Faces the plan's 22 spaces have between them. */
+const FACE_COUNT = 96;
+/** Contact stretches those faces are tiled by. */
+const CONTACT_COUNT = 166;
+/**
+ * Faces that are more than one thickness along their length.
+ *
+ * Six, not four: the two guest-suite corners where a 0.30 wall lands in a 0.15
+ * one are now widened to 0.30 by the junction rule, so those two faces read
+ * 0.15 along their neighbour and 0.30 at the corner. See the junction tests.
+ */
+const VARYING_FACE_COUNT = 6;
+/** Faces sitting on the exterior envelope. */
+const ENVELOPE_FACE_COUNT = 15;
+/**
+ * Contacts with no masonry: the stair landing to the corridor, and the six joins
+ * between the side-B slab, the two voids and the control-center balcony, counted
+ * from both faces where both faces exist.
+ */
+const ZERO_JOIN_COUNT = 8;
+/** Built solids: one per contact bar the zero joins, which are not built. */
+const SOLID_COUNT = CONTACT_COUNT - ZERO_JOIN_COUNT;
+/** Solids the owner wants built heavy for sound and heat. */
+const INSULATED_SOLID_COUNT = 63;
+
+/** Wall footprint of the floor, in square metres (TASKS.md: WALLS 44.13). */
+const WALL_FOOTPRINT_AREA = 44.125;
+/** Clear floor of every space, in square metres: 225.00 − 44.125. */
+const CLEAR_FLOOR_AREA = 180.875;
+/** The 22.50 × 10.00 plot, in square metres. */
+const PLOT_AREA = 225;
+
 /** Cells of the grid cut by the plan alone that carry a wall. */
-const COARSE_WALL_CELL_COUNT = 198;
-const FULL_HEIGHT_CELL_COUNT = 404;
-const FULL_HEIGHT_AREA = 32.95;
-const PARAPET_CELL_COUNT = 82;
-const PARAPET_AREA = 9.57;
-const PIECE_COUNT = 218;
-/** Pieces that start at the underside of the slab. */
-const BASE_PIECE_COUNT = 172;
-/** Pieces that start at an opening head: the lintels. */
-const HEAD_PIECE_COUNT = 46;
-const DISTINCT_FOOTPRINT_COUNT = 180;
-/** Volume of solid wall with every door and window punched out, in cubic metres. */
-const WALL_VOLUME = 99.825;
-/** Volume of solid wall before any opening is punched out, in cubic metres. */
-const SOLID_WALL_VOLUME = 112.248;
-const SOLID_PIECE_COUNT = 57;
+const CELL_COUNT = 296;
+/** Of those, the ones at full wall height. */
+const FULL_HEIGHT_CELL_COUNT = 279;
+/** Of those, the ones inside the one face declared a parapet. */
+const PARAPET_CELL_COUNT = 17;
+/** Footprint of the balustrade, in square metres: 9.40 × 0.30. */
+const PARAPET_AREA = 2.82;
+/**
+ * Height the spec states for it, in metres, read from `PARAPET_WALLS` rather than copied.
+ *
+ * 1.10 since ADR-011: the owner chose 1.10 for the side-A balustrade, and the plan
+ * entry carries `HEIGHTS.railing` itself instead of a second literal, so the one
+ * balustrade has one number. It was 1.00, and a transcribed copy here would have
+ * had to be renumbered — which is exactly how the two numbers drifted apart the
+ * first time. The footprint below does not move with it: a height cannot change
+ * what a wall covers in plan.
+ */
+const PARAPET_HEIGHT = PARAPET_WALLS[0].height;
+/** The balustrade's footprint: the side-A face, x 0–0.30 over z 0.30–9.70. */
+const PARAPET_STRIP: PlanRect = makeRect(0, 0.3, 0.3, 9.7);
 
-/** Shift and shrink used by the mutation guards, in metres. */
-const KITCHEN_SHIFT_X = 0.05;
-const SHIFTED_PIECE_COUNT = 223;
-const SHRUNK_FOOTPRINT_AREA = 42.66;
-/** Pieces of the real plan whose footprint is the guest-room/kitchen wall. */
-const KITCHEN_WEST_WALL_PIECE_COUNT = 15;
-/** The wall between the guest room and the kitchen, x 9.80–10.00. */
-const KITCHEN_WEST_WALL: readonly [number, number] = [9.8, 10.0];
-/** West face of the kitchen in the untouched plan, in metres. */
-const KITCHEN_MIN_X = 10.0;
+/** Blocks the plan alone merges to, before any opening is punched. */
+const PIECE_COUNT = 93;
+/** Of those, the single parapet block: the whole balustrade in one box. */
+const PARAPET_PIECE_COUNT = 1;
 
-/** The three walls listed piece by piece, as the two faces across the thickness. */
-const CORRIDOR_TOP_BAND: readonly [number, number] = [3.7, 3.9];
-const BALCONY_BAND: readonly [number, number] = [1.3, 1.6];
-const VOID_BAND: readonly [number, number] = [8.4, 8.7];
+/** Cells once the seven fixture openings cut the grid too. */
+const FINE_CELL_COUNT = 374;
+/** Blocks once those openings are punched out. */
+const FINE_PIECE_COUNT = 131;
 
-/** Every vertical level a piece of the real plan may start or end at. */
-const REAL_LEVELS: readonly number[] = [
-  SLAB_BOTTOM,
-  FLOOR_LEVEL,
-  FLOOR_HEIGHTS.windowSill,
-  FLOOR_HEIGHTS.railing,
-  FLOOR_HEIGHTS.door,
-  FLOOR_HEIGHTS.wall,
-];
+/* ------------------------------------------------------------------ *
+ * Openings of the typical floor: local fixtures.
+ * ------------------------------------------------------------------ */
 
-/** Tops a piece of the real plan may have: a sill, a parapet or a wall head. */
-const REAL_TOPS: readonly number[] = [
-  FLOOR_LEVEL,
-  FLOOR_HEIGHTS.windowSill,
-  FLOOR_HEIGHTS.railing,
-  FLOOR_HEIGHTS.wall,
+/** One fixture opening: what it is, its footprint, and the wall it pierces. */
+interface OpeningFixture {
+  /** What the opening is, for the test name. */
+  readonly label: string;
+  /** Footprint of the hole, as `[minX, maxX, minZ, maxZ]`, in metres. */
+  readonly rect: readonly [number, number, number, number];
+  /** Whether the hole starts at the floor (a door) or at a sill (a window). */
+  readonly kind: 'door' | 'window';
+}
+
+/**
+ * Seven openings of the floor, measured off the plan's `PORTS` and `WINDOWS` and
+ * the walls they sit in. Local fixtures, chosen to cover every way this module
+ * has to treat a hole rather than to be the whole schedule: the 0.30 balcony
+ * spine, a 0.30 corridor wall, a 0.15 partition, the leafless 3.50 m living-room
+ * opening, the 0.30 void-facing wall, and the 0.20 utility join.
+ */
+const OPENINGS: readonly OpeningFixture[] = [
+  { label: 'balcony door into the master bedroom', rect: [1.3, 1.6, 1.55, 2.45], kind: 'door' },
+  { label: 'master bedroom door to the corridor', rect: [5.65, 6.55, 3.7, 4], kind: 'door' },
+  { label: 'male kids door in the 0.15 corridor wall', rect: [12.3, 13.2, 3.85, 4], kind: 'door' },
+  { label: 'leafless living-room opening', rect: [7.5, 11, 3.85, 4], kind: 'door' },
+  { label: 'laundry door onto the side-B slab', rect: [14.3, 15.2, 8.6, 8.9], kind: 'door' },
+  { label: 'kitchen window over the sink', rect: [10.1, 11.5, 8.6, 8.9], kind: 'window' },
+  { label: 'utility window in the 0.20 join', rect: [20.3, 20.5, 8.95, 9.65], kind: 'window' },
 ];
 
 /**
- * Vertical sizes with every value changed, to prove no height is hard-coded.
- * No value is a real one, and no sum or difference of two of them is either.
+ * Vertical sizes with every value changed, to prove no height is hard-coded. No
+ * value is a real one, and no sum or difference of two of them is either.
  */
 const OTHER_HEIGHTS: FloorHeights = Object.freeze({
   floorToFloor: 4.44,
   wall: 3.33,
   door: 2.22,
   railing: 1.55,
-  windowSill: 1.11,
-  windowHead: 2.22,
 });
 
-/** Levels that must never appear when {@link OTHER_HEIGHTS} is injected. */
-const FORBIDDEN_LEVELS: readonly number[] = [
+/**
+ * Sill and head of the two fixture windows at production heights, in metres.
+ *
+ * These are fixture data of this file, not building dimensions: a window carries
+ * its own sill and head in the WINDOW SCHEDULE, and `FloorHeights` has no window
+ * fields to read them from. They keep the values the floor-wide constants used to
+ * hold (0.90 and 2.10) so that the block and cell counts below still describe the
+ * same seven holes.
+ */
+const FIXTURE_WINDOW_SILL = 0.9;
+const FIXTURE_WINDOW_HEAD = 2.1;
+
+/**
+ * Sill and head of the fixture windows for the injected-heights run, in metres.
+ *
+ * Deliberately different from {@link FIXTURE_WINDOW_SILL} and
+ * {@link FIXTURE_WINDOW_HEAD}, and sharing no value with `FLOOR_HEIGHTS`, so that
+ * a level leaked out of the production heights stays visible: no sum or
+ * difference of the injected values lands on a real level either.
+ */
+const OTHER_WINDOW_SILL = 1.11;
+const OTHER_WINDOW_HEAD = 2.22;
+
+/**
+ * Levels that must never appear when {@link OTHER_HEIGHTS} and the injected
+ * window levels are used.
+ *
+ * {@link FIXTURE_WINDOW_SILL} is here for the reason the floor-wide window sill
+ * used to be: 0.90 is a level of the production run only, so seeing it in the
+ * injected run means a window level was taken from somewhere it should not be.
+ * `FLOOR_HEIGHTS.door` (2.10) covers {@link FIXTURE_WINDOW_HEAD}, which is the
+ * same number.
+ */
+const WITNESSED_FORBIDDEN_LEVELS: readonly number[] = [
   FLOOR_HEIGHTS.wall,
   FLOOR_HEIGHTS.door,
-  FLOOR_HEIGHTS.railing,
-  FLOOR_HEIGHTS.windowSill,
+  FIXTURE_WINDOW_SILL,
   SLAB_BOTTOM,
-  -SLAB_BOTTOM,
 ];
+
+/**
+ * Forbidden levels that no block of the real floor stands at, kept as tripwires.
+ *
+ * They cannot fail today, and that is stated rather than hidden. `-SLAB_BOTTOM`
+ * would catch a sign flip in the slab arithmetic, which the exact-equality case
+ * below already covers. `FLOOR_HEIGHTS.railing` is the level the deleted parapet
+ * heuristic compared against: no ORDINARY wall block is built at it — that was
+ * already true when the balustrade stood at 1.00 — and since ADR-011 the stated
+ * balustrade stands at exactly 1.10, so the one thing on the floor that reaches
+ * this level is the parapet, whose top is plan data. It is therefore checked
+ * against the blocks that are NOT parapets, where a 1.10 can only mean a railing
+ * height leaked into the wall generator.
+ */
+const TRIPWIRE_FORBIDDEN_LEVELS: readonly number[] = [FLOOR_HEIGHTS.railing, -SLAB_BOTTOM];
+
+const FORBIDDEN_LEVELS: readonly number[] = [
+  ...WITNESSED_FORBIDDEN_LEVELS,
+  ...TRIPWIRE_FORBIDDEN_LEVELS,
+];
+
+/** Shift and shrink used by the plan-argument guards, in metres. */
+const KITCHEN_SHIFT_X = 0.05;
+/** How much the plot grows by in the guard below, in metres. */
+const PLOT_GROWTH = 0.1;
+/** Depth of the plot, in metres: what a change of width multiplies by. */
+const PLOT_DEPTH = 10;
+/** West face of the kitchen in the untouched plan, in metres. */
+const KITCHEN_MIN_X = 10;
 
 /* ------------------------------------------------------------------ *
  * Helpers.
  * ------------------------------------------------------------------ */
 
 /**
- * Builds a frozen space whose name is its id.
+ * Builds the opening boxes of the fixtures: a door runs from the finished floor
+ * to the door head, a window from its own sill to its own head.
  *
- * @param id - Identifier of the space.
- * @param kind - Kind of the space.
- * @param rects - Clear rects of the space.
- * @returns A frozen space.
- */
-function makeSpace(id: SpaceId, kind: SpaceKind, rects: readonly PlanRect[]): Space {
-  return Object.freeze({ id, name: id, kind, rects: Object.freeze([...rects]) });
-}
-
-/**
- * Builds a frozen plan without join overrides.
+ * A door still takes its head from the heights, because that is where a door
+ * height comes from. A window does not: sill and head are passed in, since they
+ * belong to the window and no longer to `FloorHeights`.
  *
- * @param plot - Outer boundary of the floor.
- * @param spaces - Spaces of the plan.
- * @returns A frozen plan whose interior equals its plot, which the wall
- *   generator does not read.
+ * @param heights - Vertical sizes to use.
+ * @param windowSill - Sill of the fixture windows, in metres.
+ * @param windowHead - Head of the fixture windows, in metres.
+ * @returns The holes, as boxes, in fixture order.
  */
-function makePlan(plot: PlanRect, spaces: readonly Space[]): FloorPlan {
-  return Object.freeze({
-    plot,
-    interior: plot,
-    spaces: Object.freeze([...spaces]),
-    joinOverrides: Object.freeze([]),
-  });
+function openingBoxes(
+  heights: FloorHeights,
+  windowSill: number,
+  windowHead: number,
+): readonly PlanBox[] {
+  return OPENINGS.map(({ rect: [minX, maxX, minZ, maxZ], kind }) =>
+    kind === 'door'
+      ? makeBox(makeRect(minX, maxX, minZ, maxZ), FLOOR_LEVEL, heights.door)
+      : makeBox(makeRect(minX, maxX, minZ, maxZ), windowSill, windowHead),
+  );
 }
 
 /**
@@ -267,38 +312,9 @@ function cellArea(cells: readonly WallCell[]): number {
  */
 function cellAt(cells: readonly WallCell[], point: PlanPoint): WallCell | undefined {
   const covering = cells.filter((cell) => rectContainsPoint(cell.rect, point));
+
   expect(covering.length).toBeLessThanOrEqual(1);
   return covering[0];
-}
-
-/**
- * Finds the single cell whose footprint is exactly the given rectangle.
- *
- * @param cells - The wall cells to search.
- * @param rect - The footprint to match.
- * @returns The matching cell, or `undefined` when the grid holds no such cell.
- */
-function cellOfRect(cells: readonly WallCell[], rect: PlanRect): WallCell | undefined {
-  return cells.find(
-    (cell) =>
-      cell.rect.minX === rect.minX &&
-      cell.rect.maxX === rect.maxX &&
-      cell.rect.minZ === rect.minZ &&
-      cell.rect.maxZ === rect.maxZ,
-  );
-}
-
-/**
- * Checks whether two boxes share a volume.
- *
- * @param a - First box.
- * @param b - Second box.
- * @returns `true` when their footprints overlap and their vertical spans do too,
- *   both by more than `LENGTH_TOLERANCE`.
- */
-function boxesOverlap(a: PlanBox, b: PlanBox): boolean {
-  const vertical = Math.min(a.top, b.top) - Math.max(a.bottom, b.bottom);
-  return vertical > LENGTH_TOLERANCE && rectsOverlap(a.rect, b.rect);
 }
 
 /**
@@ -312,6 +328,16 @@ function footprintKey(rect: PlanRect): string {
 }
 
 /**
+ * Formats a block as a comparable key: footprint, vertical span and kind.
+ *
+ * @param piece - The block.
+ * @returns A key unique to the whole block.
+ */
+function pieceKey(piece: WallPiece): string {
+  return `${footprintKey(piece.rect)}|${String(piece.bottom)}|${String(piece.top)}|${piece.kind}`;
+}
+
+/**
  * Checks whether a level is one of a list, within the plan tolerance.
  *
  * @param level - The level to look up.
@@ -322,47 +348,34 @@ function isOneOf(level: number, levels: readonly number[]): boolean {
   return levels.some((candidate) => Math.abs(level - candidate) <= LENGTH_TOLERANCE);
 }
 
-/** One expected wall block of a hand-written strip. */
-type StripPiece = readonly [minX: number, maxX: number, bottom: number, top: number];
-
 /**
- * Lists the pieces whose footprint lies exactly in one band of the plan, along
- * the axis the band runs, as `[start, end, bottom, top]`.
+ * Checks whether two boxes share a volume.
  *
- * @param pieces - Every wall block.
- * @param band - The band: the two coordinates of the wall across its thickness.
- * @param axis - The axis the wall runs along.
- * @returns The blocks of the band, ordered along the wall then upwards.
+ * @param a - First box.
+ * @param b - Second box.
+ * @returns `true` when their footprints overlap and their vertical spans do too.
  */
-function stripPieces(
-  pieces: readonly PlanBox[],
-  band: readonly [number, number],
-  axis: 'x' | 'z',
-): readonly StripPiece[] {
-  const inBand = pieces.filter((piece) =>
-    axis === 'x'
-      ? piece.rect.minZ === band[0] && piece.rect.maxZ === band[1]
-      : piece.rect.minX === band[0] && piece.rect.maxX === band[1],
+function boxesOverlap(a: PlanBox, b: PlanBox): boolean {
+  return (
+    Math.min(a.top, b.top) - Math.max(a.bottom, b.bottom) > LENGTH_TOLERANCE &&
+    rectsOverlap(a.rect, b.rect)
   );
-  return inBand
-    .map((piece): StripPiece => {
-      const start = axis === 'x' ? piece.rect.minX : piece.rect.minZ;
-      const end = axis === 'x' ? piece.rect.maxX : piece.rect.maxZ;
-      return [start, end, piece.bottom, piece.top];
-    })
-    .sort((a, b) => a[0] - b[0] || a[2] - b[2]);
 }
 
 /**
- * Rounds the levels of a strip so that a hand-written table never fails on the
- * floating-point noise of a level it writes as a plain number.
+ * Returns the face with the given matricule.
  *
- * @param strip - The measured strip.
- * @returns The same strip with both levels rounded to nine digits.
+ * @param walls - The derived faces.
+ * @param matricule - The matricule to find.
+ * @returns That face.
+ * @throws Error when no face carries it, so a moved matricule fails loudly.
  */
-function roundedStrip(strip: readonly StripPiece[]): readonly StripPiece[] {
-  const round = (value: number): number => Number(value.toFixed(PRECISION_DIGITS));
-  return strip.map(([start, end, bottom, top]) => [start, end, round(bottom), round(top)]);
+function faceOf(walls: readonly DerivedWall[], matricule: string): DerivedWall {
+  const wall = walls.find((candidate) => candidate.matricule === matricule);
+  if (wall === undefined) {
+    throw new Error(`no derived wall with matricule ${matricule}`);
+  }
+  return wall;
 }
 
 /**
@@ -389,393 +402,469 @@ function withKitchenShifted(plan: FloorPlan, shift: number): FloorPlan {
 }
 
 /**
- * Builds a copy of the plan with the kitchen's east face pulled back, which
- * widens the wall to the laundry and so changes the wall footprint.
+ * Returns the west face of the kitchen of a plan.
  *
- * @param plan - The plan to copy; it is not modified.
- * @param shrink - Distance to pull the `maxX` face back, in metres.
- * @returns A new plan whose kitchen is narrower.
+ * @param plan - The plan to read.
+ * @returns The `minX` of the kitchen's first rect, in metres.
  */
-function withKitchenShrunk(plan: FloorPlan, shrink: number): FloorPlan {
-  return {
-    ...plan,
-    spaces: plan.spaces.map((space) =>
-      space.id === 'kitchen'
-        ? {
-            ...space,
-            rects: space.rects.map((rect) =>
-              makeRect(rect.minX, rect.maxX - shrink, rect.minZ, rect.maxZ),
-            ),
-          }
-        : space,
-    ),
-  };
+function kitchenMinX(plan: FloorPlan): number {
+  const kitchen = plan.spaces.find((space) => space.id === 'kitchen');
+  return kitchen?.rects[0].minX ?? Number.NaN;
 }
-
-/* ------------------------------------------------------------------ *
- * Synthetic plans.
- * ------------------------------------------------------------------ */
-
-/** A 5.00 × 4.00 plot holding a single 4.40 × 3.40 space, walls 0.30 m all round. */
-const TINY_PLOT = makeRect(0, 5, 0, 4);
-const TINY_CLEAR = makeRect(0.3, 4.7, 0.3, 3.7);
-/** 5 × 4 − 4.40 × 3.40 = 5.04 m². */
-const TINY_WALL_AREA = 5.04;
-/** Eight cells: three rows of three, less the space itself. */
-const TINY_CELL_COUNT = 8;
-/** The ring merges into four blocks: the two full-width bands and the two jambs. */
-const TINY_PIECE_COUNT = 4;
-
-const TINY_ROOM_PLAN = makePlan(TINY_PLOT, [makeSpace('masterBedroom', 'room', [TINY_CLEAR])]);
-const TINY_BALCONY_PLAN = makePlan(TINY_PLOT, [makeSpace('balconyA', 'openAir', [TINY_CLEAR])]);
-const TINY_VOID_PLAN = makePlan(TINY_PLOT, [makeSpace('voidWest', 'void', [TINY_CLEAR])]);
-
-/** A door in the west wall of the tiny plan, the full depth of that cell. */
-const TINY_DOOR = makeBox(makeRect(0, 0.3, 1.3, 2.2), FLOOR_LEVEL, FLOOR_HEIGHTS.door);
-/** An opening taller than the wall, in the same cell: it must leave nothing. */
-const TINY_FULL_HEIGHT_OPENING = makeBox(
-  makeRect(0, 0.3, 0.3, 3.7),
-  SLAB_BOTTOM - 1,
-  FLOOR_HEIGHTS.wall + 1,
-);
-
-/** A plot whose single space is too far from every boundary to share a wall. */
-const ISOLATED_PLAN = makePlan(makeRect(0, 10, 0, 10), [
-  makeSpace('masterBedroom', 'room', [makeRect(4, 6, 4, 6)]),
-]);
 
 /* ------------------------------------------------------------------ *
  * Probes on the real plan.
  * ------------------------------------------------------------------ */
 
-/** A cell of the real grid, named by the case it pins down. */
-type NamedCell = readonly [
-  label: string,
-  rect: PlanRect,
-  height: number,
-  kind: WallHeightKind,
-  why: string,
-];
+/** A point of the real plan, and the wall that must stand there. */
+type ProbePoint = readonly [label: string, point: PlanPoint, kind: WallHeightKind];
 
-/**
- * The cells the algorithm was designed against: every one of them is a junction
- * or a side-classification case that a naive rule gets wrong.
- */
-const NAMED_CELLS: readonly NamedCell[] = [
-  [
-    'x 1.30–1.60 × z 0–0.30',
-    makeRect(1.3, 1.6, 0, 0.3),
-    FLOOR_HEIGHTS.wall,
-    'wall',
-    'junction where the balcony wall meets side C: the tallest neighbour is the 2.70 balcony wall',
-  ],
-  [
-    'x 0–0.30 × z 0–0.30',
-    makeRect(0, 0.3, 0, 0.3),
-    FLOOR_HEIGHTS.railing,
-    'parapet',
-    'outer corner of sides A and C: every neighbour is a parapet along the balcony',
-  ],
-  [
-    'x 1.30–1.60 × z 8.70–9.70',
-    makeRect(1.3, 1.6, 8.7, 9.7),
-    FLOOR_HEIGHTS.railing,
-    'parapet',
-    'balconyA to voidWest: open air on both sides, and the 1.60 − 1.30 gap needs the tolerance',
-  ],
-  [
-    'x 20.20–20.40 × z 9.70–10.00',
-    makeRect(20.2, 20.4, 9.7, 10),
-    FLOOR_HEIGHTS.wall,
-    'wall',
-    'junction at the voidEast/utility corner: the utility-room wall next to it is full height',
-  ],
-  [
-    'x 0.30–1.30 × z 0–0.30',
-    makeRect(0.3, 1.3, 0, 0.3),
-    FLOOR_HEIGHTS.railing,
-    'parapet',
-    'the side-C strip in front of the side-A balcony: open air on one side, outside on the other',
-  ],
-];
-
-/** A point of the real plan, and the wall it must sit in. */
-type ProbePoint = readonly [label: string, point: PlanPoint, height: number, kind: WallHeightKind];
-
-/** Further probes, one per kind of wall on the floor. */
+/** One probe per kind of wall the floor has, including the three thicknesses. */
 const PROBE_POINTS: readonly ProbePoint[] = [
-  [
-    'side-A exterior wall beside the balcony',
-    { x: 0.15, z: 2.0 },
-    FLOOR_HEIGHTS.railing,
-    'parapet',
-  ],
-  ['side-C exterior wall at the master bedroom', { x: 4.1, z: 0.15 }, FLOOR_HEIGHTS.wall, 'wall'],
-  ['master bedroom to living room partition', { x: 6.7, z: 2.0 }, FLOOR_HEIGHTS.wall, 'wall'],
-  ['balcony wall beside the stairs', { x: 1.45, z: 4.65 }, FLOOR_HEIGHTS.wall, 'wall'],
-  ['guest room to kitchen partition', { x: 9.9, z: 7.0 }, FLOOR_HEIGHTS.wall, 'wall'],
-  ['side-B parapet along the east void', { x: 18.2, z: 9.85 }, FLOOR_HEIGHTS.railing, 'parapet'],
-  ['side-B exterior wall at the utility room', { x: 21.3, z: 9.85 }, FLOOR_HEIGHTS.wall, 'wall'],
-  ['side-D exterior wall', { x: 22.35, z: 2.0 }, FLOOR_HEIGHTS.wall, 'wall'],
-  [
-    'balcony wall where side B turns the corner',
-    { x: 1.45, z: 9.85 },
-    FLOOR_HEIGHTS.railing,
-    'parapet',
-  ],
-  ['main sanitair to utility room wall', { x: 20.3, z: 6.0 }, FLOOR_HEIGHTS.wall, 'wall'],
-  ['guest sanitair corner', { x: 8.1, z: 7.0 }, FLOOR_HEIGHTS.wall, 'wall'],
-  ['outer corner of sides A and B', { x: 0.15, z: 9.85 }, FLOOR_HEIGHTS.railing, 'parapet'],
+  ['outer corner of sides A and C', { x: 0.15, z: 0.15 }, 'wall'],
+  ['outer corner of sides A and B', { x: 0.15, z: 9.85 }, 'wall'],
+  ['side-B envelope behind the west void', { x: 6, z: 9.85 }, 'wall'],
+  ['side-C envelope at the master bedroom', { x: 4.1, z: 0.15 }, 'wall'],
+  ['balcony spine behind the master bedroom', { x: 1.45, z: 2 }, 'wall'],
+  ['corridor north wall at the master bedroom (0.30)', { x: 6, z: 3.8 }, 'wall'],
+  ['corridor north wall at the living room (0.15)', { x: 9, z: 3.92 }, 'wall'],
+  ['utility west wall at the east void (0.20)', { x: 20.4, z: 9.2 }, 'wall'],
+  ['the side-A balustrade', { x: 0.15, z: 5 }, 'parapet'],
 ];
 
 /** Points inside a space, where there must be no wall at all. */
 const CLEAR_POINTS: readonly (readonly [string, PlanPoint])[] = [
-  ['inside the west void', { x: 12.45, z: 9.2 }],
   ['inside the corridor', { x: 9.9, z: 4.65 }],
-  ['inside the kitchen', { x: 12.0, z: 7.0 }],
-  ['inside the side-A balcony', { x: 0.8, z: 5.0 }],
+  ['inside the kitchen', { x: 12, z: 7 }],
+  ['inside the west void', { x: 6, z: 9.2 }],
+  ['inside the stair bay', { x: 3, z: 5 }],
+  ['on the zero join between the stairs and the corridor', { x: 5.6, z: 5 }],
+  ['inside the side-A balcony', { x: 0.8, z: 5 }],
 ];
 
-/* ------------------------------------------------------------------ *
- * Hand-written wall strips.
- * ------------------------------------------------------------------ */
+const WALLS_DERIVED = deriveWalls();
+const SOLIDS = getWallSolids();
+const CELLS = getWallCells(FLOOR_PLAN, []);
+const PIECES = getWallPieces(FLOOR_PLAN, []);
+const FIXTURE_OPENINGS = openingBoxes(FLOOR_HEIGHTS, FIXTURE_WINDOW_SILL, FIXTURE_WINDOW_HEAD);
+const FINE_CELLS = getWallCells(FLOOR_PLAN, FIXTURE_OPENINGS);
+const FINE_PIECES = getWallPieces(FLOOR_PLAN, FIXTURE_OPENINGS);
+const SPACE_RECTS: readonly PlanRect[] = ROOMS.flatMap((room) =>
+  room.rects.map(([minX, maxX, minZ, maxZ]) => makeRect(minX, maxX, minZ, maxZ)),
+);
 
-/** The wall z 3.70–3.90 between the top row and the corridor, with its four doors. */
-const CORRIDOR_TOP_WALL: readonly StripPiece[] = [
-  [1.3, 5.65, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [5.65, 6.55, SLAB_BOTTOM, FLOOR_LEVEL],
-  [5.65, 6.55, FLOOR_HEIGHTS.door, FLOOR_HEIGHTS.wall],
-  [6.55, 7.5, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [7.5, 11.0, SLAB_BOTTOM, FLOOR_LEVEL],
-  [7.5, 11.0, FLOOR_HEIGHTS.door, FLOOR_HEIGHTS.wall],
-  [11.0, 14.05, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [14.05, 14.95, SLAB_BOTTOM, FLOOR_LEVEL],
-  [14.05, 14.95, FLOOR_HEIGHTS.door, FLOOR_HEIGHTS.wall],
-  [14.95, 18.55, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [18.55, 19.45, SLAB_BOTTOM, FLOOR_LEVEL],
-  [18.55, 19.45, FLOOR_HEIGHTS.door, FLOOR_HEIGHTS.wall],
-  [19.45, 22.5, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-];
-
-/**
- * The wall x 1.30–1.60 behind the side-A balcony, listed along z: two windows,
- * two doors, and the parapet where it passes the west void. The head of the
- * control-center window is cut at z 7.05, 7.10 and 8.00 by the grid lines of
- * the doors on other walls, which is why it arrives in four blocks.
- */
-const BALCONY_WALL: readonly StripPiece[] = [
-  [0.3, 0.43, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [0.43, 1.63, SLAB_BOTTOM, FLOOR_HEIGHTS.windowSill],
-  [0.43, 1.63, FLOOR_HEIGHTS.windowHead, FLOOR_HEIGHTS.wall],
-  [1.63, 1.85, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [1.85, 2.75, SLAB_BOTTOM, FLOOR_LEVEL],
-  [1.85, 2.75, FLOOR_HEIGHTS.door, FLOOR_HEIGHTS.wall],
-  [2.75, 3.7, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [3.9, 4.2, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [4.2, 5.1, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [5.1, 5.4, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [5.6, 5.65, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [5.65, 6.0, SLAB_BOTTOM, FLOOR_LEVEL],
-  [5.65, 6.0, FLOOR_HEIGHTS.door, FLOOR_HEIGHTS.wall],
-  [6.0, 6.15, SLAB_BOTTOM, FLOOR_LEVEL],
-  [6.0, 6.15, FLOOR_HEIGHTS.door, FLOOR_HEIGHTS.wall],
-  [6.15, 6.45, SLAB_BOTTOM, FLOOR_LEVEL],
-  [6.15, 6.45, FLOOR_HEIGHTS.door, FLOOR_HEIGHTS.wall],
-  [6.45, 6.5, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [6.7, 6.9, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [6.9, 6.95, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [6.95, 8.15, SLAB_BOTTOM, FLOOR_HEIGHTS.windowSill],
-  [6.95, 7.05, FLOOR_HEIGHTS.windowHead, FLOOR_HEIGHTS.wall],
-  [7.05, 7.1, FLOOR_HEIGHTS.windowHead, FLOOR_HEIGHTS.wall],
-  [7.1, 8.0, FLOOR_HEIGHTS.windowHead, FLOOR_HEIGHTS.wall],
-  [8.0, 8.15, FLOOR_HEIGHTS.windowHead, FLOOR_HEIGHTS.wall],
-  [8.15, 8.4, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [8.7, 9.7, SLAB_BOTTOM, FLOOR_HEIGHTS.railing],
-];
-
-/** The wall z 8.40–8.70 facing the void, with five windows and two balcony doors. */
-const VOID_WALL: readonly StripPiece[] = [
-  [1.3, 2.1, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [2.1, 3.3, SLAB_BOTTOM, FLOOR_HEIGHTS.windowSill],
-  [2.1, 3.3, FLOOR_HEIGHTS.windowHead, FLOOR_HEIGHTS.wall],
-  [3.3, 5.4, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [5.4, 6.6, SLAB_BOTTOM, FLOOR_HEIGHTS.windowSill],
-  [5.4, 6.6, FLOOR_HEIGHTS.windowHead, FLOOR_HEIGHTS.wall],
-  [6.6, 8.4, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [8.4, 9.6, SLAB_BOTTOM, FLOOR_HEIGHTS.windowSill],
-  [8.4, 9.6, FLOOR_HEIGHTS.windowHead, FLOOR_HEIGHTS.wall],
-  [9.6, 10.7, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [10.7, 11.9, SLAB_BOTTOM, FLOOR_HEIGHTS.windowSill],
-  [10.7, 11.9, FLOOR_HEIGHTS.windowHead, FLOOR_HEIGHTS.wall],
-  [11.9, 12.7, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [12.7, 13.6, SLAB_BOTTOM, FLOOR_LEVEL],
-  [12.7, 13.6, FLOOR_HEIGHTS.door, FLOOR_HEIGHTS.wall],
-  [13.6, 15.3, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [15.3, 16.2, SLAB_BOTTOM, FLOOR_LEVEL],
-  [15.3, 16.2, FLOOR_HEIGHTS.door, FLOOR_HEIGHTS.wall],
-  [16.2, 18.3, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [18.3, 19.5, SLAB_BOTTOM, FLOOR_HEIGHTS.windowSill],
-  [18.3, 19.5, FLOOR_HEIGHTS.windowHead, FLOOR_HEIGHTS.wall],
-  [19.5, 20.4, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-  [22.2, 22.5, SLAB_BOTTOM, FLOOR_HEIGHTS.wall],
-];
-
-const CELLS = getWallCells(FLOOR_PLAN, OPENINGS);
-const PIECES = getWallPieces(FLOOR_PLAN, OPENINGS);
-const SPACE_RECTS = FLOOR_PLAN.spaces.flatMap((space) => space.rects);
-
-describe('wall cells', () => {
-  it('covers the 42.52 m² wall footprint of brief §8 with 486 cells', () => {
-    expect(CELLS).toHaveLength(WALL_CELL_COUNT);
-    expect(cellArea(CELLS)).toBeCloseTo(WALL_FOOTPRINT_AREA, PRECISION_DIGITS);
+describe('derived wall faces', () => {
+  it('derives 96 frozen faces with unique matricules', () => {
+    expect(WALLS_DERIVED).toHaveLength(FACE_COUNT);
+    expect(Object.isFrozen(WALLS_DERIVED)).toBe(true);
+    WALLS_DERIVED.forEach((wall) => {
+      expect(Object.isFrozen(wall)).toBe(true);
+      expect(wall.matricule).toMatch(/^F1-R\d{2}-[A-Z]+-W\d+$/u);
+    });
+    expect(new Set(WALLS_DERIVED.map((wall) => wall.matricule)).size).toBe(FACE_COUNT);
   });
 
-  it('covers the same footprint on the coarse grid, without the openings', () => {
-    const coarse = getWallCells(FLOOR_PLAN, []);
+  it('tiles every face with its contacts, end to end and with no gap', () => {
+    // The invariant both renderers draw from, and the one check 8 of
+    // `scripts/source-of-truth/verify.mjs` asserts independently.
+    WALLS_DERIVED.forEach((wall) => {
+      const covered = wall.contacts.reduce((sum, contact) => sum + contact.length, 0);
 
-    expect(coarse).toHaveLength(COARSE_WALL_CELL_COUNT);
-    expect(cellArea(coarse)).toBeCloseTo(WALL_FOOTPRINT_AREA, PRECISION_DIGITS);
+      expect(wall.contacts.length).toBeGreaterThan(NONE);
+      expect(covered).toBeCloseTo(wall.length, PRECISION_DIGITS);
+      expect(wall.contacts[0].spanMin).toBeCloseTo(wall.spanMin, PRECISION_DIGITS);
+      expect(wall.contacts.at(-1)?.spanMax).toBeCloseTo(wall.spanMax, PRECISION_DIGITS);
+      wall.contacts.slice(1).forEach((contact, index) => {
+        expect(contact.spanMin).toBeCloseTo(wall.contacts[index].spanMax, PRECISION_DIGITS);
+      });
+    });
+    expect(WALLS_DERIVED.reduce((sum, wall) => sum + wall.contacts.length, 0)).toBe(CONTACT_COUNT);
   });
 
-  it('splits the footprint into full-height wall and parapet', () => {
-    const full = CELLS.filter((cell) => cell.kind === 'wall');
-    const parapet = CELLS.filter((cell) => cell.kind === 'parapet');
+  it('reports the thickest contact as the face thickness, for quantities only', () => {
+    WALLS_DERIVED.forEach((wall) => {
+      const thicknesses = wall.contacts.map((contact) => contact.thickness);
 
-    expect(full).toHaveLength(FULL_HEIGHT_CELL_COUNT);
-    expect(cellArea(full)).toBeCloseTo(FULL_HEIGHT_AREA, PRECISION_DIGITS);
-    expect(parapet).toHaveLength(PARAPET_CELL_COUNT);
-    expect(cellArea(parapet)).toBeCloseTo(PARAPET_AREA, PRECISION_DIGITS);
-    expect(cellArea(full) + cellArea(parapet)).toBeCloseTo(WALL_FOOTPRINT_AREA, PRECISION_DIGITS);
+      expect(wall.thickness).toBeCloseTo(Math.max(...thicknesses), PRECISION_DIGITS);
+      expect(wall.varies).toBe(new Set(thicknesses).size > 1);
+    });
   });
 
-  it('uses only the wall and railing heights', () => {
-    const heights = new Set(CELLS.map((cell) => cell.height));
+  it('has exactly six faces that change thickness along their length', () => {
+    const varying = WALLS_DERIVED.filter((wall) => wall.varies);
 
-    expect([...heights].sort((a, b) => a - b)).toEqual([FLOOR_HEIGHTS.railing, FLOOR_HEIGHTS.wall]);
+    expect(varying).toHaveLength(VARYING_FACE_COUNT);
+    expect(varying.map((wall) => wall.matricule)).toEqual([
+      'F1-R05-BED-W3',
+      'F1-R07-COR-W1',
+      'F1-R09-GST-W7',
+      'F1-R10-BTH-W1',
+      'F1-R11-KIT-W4',
+      'F1-R14-UTL-W4',
+    ]);
   });
 
-  it('never overlaps two cells', () => {
-    const offenders = CELLS.flatMap((cell, position) =>
-      CELLS.slice(position + 1)
-        .filter((other) => rectsOverlap(cell.rect, other.rect))
-        .map((other) => `${footprintKey(cell.rect)} ↔ ${footprintKey(other.rect)}`),
+  it('builds the utility room’s west face 0.30, 0.15 and 0.20 along its length', () => {
+    // Three thicknesses against three neighbours, and all three are right: heavy
+    // to the corridor, thin to the sanitair, and the 0.20 the owner kept where it
+    // passes the east void.
+    const face = faceOf(WALLS_DERIVED, 'F1-R14-UTL-W4');
+
+    expect(face.thickness).toBe(WALLS.insulated);
+    expect(
+      face.contacts.map((contact) => [contact.neighbourId, contact.thickness, contact.reason]),
+    ).toEqual([
+      ['corridor', WALLS.insulated, 'isolation'],
+      [null, WALLS.insulated, 'isolation'],
+      ['mainSanitair', WALLS.partition, 'plain separator'],
+      [null, WALLS.partition, 'no facing space'],
+      ['mainShowerCubicle', WALLS.partition, 'plain separator'],
+      [null, 0.2, 'no facing space'],
+      ['voidEast', 0.2, 'join override'],
+    ]);
+  });
+
+  it('builds the kitchen’s west face 0.30 where it wraps the guest room, 0.15 after', () => {
+    const face = faceOf(WALLS_DERIVED, 'F1-R11-KIT-W4');
+
+    expect(face.contacts.map((contact) => [contact.neighbourId, contact.thickness])).toEqual([
+      ['guestRoom', WALLS.insulated],
+      [null, WALLS.insulated],
+      ['guestSanitair', WALLS.partition],
+      [null, WALLS.partition],
+      ['guestShowerCubicle', WALLS.partition],
+    ]);
+  });
+
+  it.each([
+    ['exterior', [WALLS.exterior]],
+    ['plain separator', [WALLS.partition]],
+    ['weather-exposed', [WALLS.voidFacing]],
+    ['join override', [0, 0.2]],
+  ] as readonly (readonly [ContactReason, readonly number[]])[])(
+    'builds every %s stretch one of the thicknesses that rule allows',
+    (reason, allowed) => {
+      const offenders = WALLS_DERIVED.flatMap((wall) =>
+        wall.contacts
+          .filter((contact) => contact.reason === reason && !isOneOf(contact.thickness, allowed))
+          .map((contact) => `${wall.matricule} ${String(contact.thickness)}`),
+      );
+
+      expect(offenders).toEqual([]);
+    },
+  );
+
+  it('builds every wall the owner named 0.30 over its whole length', () => {
+    // Isolation is a width now. The owner's quoted length is kept beside each
+    // matricule as a tripwire: if the numbering ever shifts under his list, this
+    // fails instead of silently insulating a different wall.
+    INSULATED_WALLS.forEach((entry) => {
+      const wall = faceOf(WALLS_DERIVED, entry.matricule);
+
+      expect(wall.length).toBeCloseTo(entry.length, PRECISION_DIGITS);
+      wall.contacts.forEach((contact) => {
+        expect(contact.thickness).toBeCloseTo(WALLS.insulated, PRECISION_DIGITS);
+      });
+    });
+  });
+
+  it('never thins a wall at a junction: a return takes the thicker side', () => {
+    const offenders = WALLS_DERIVED.flatMap((wall) =>
+      wall.contacts
+        .filter((contact, index) => {
+          if (contact.reason !== 'no facing space') {
+            return false;
+          }
+          const around = [wall.contacts[index - 1], wall.contacts[index + 1]]
+            .filter((other) => other !== undefined)
+            .map((other) => other.thickness);
+          return around.length > 0 && contact.thickness < Math.max(...around) - LENGTH_TOLERANCE;
+        })
+        .map((contact) => `${wall.matricule} at ${String(contact.spanMin)}`),
     );
 
     expect(offenders).toEqual([]);
   });
 
-  it('never puts a cell inside a space', () => {
-    const offenders = CELLS.filter((cell) =>
-      SPACE_RECTS.some((rect) => rectsOverlap(cell.rect, rect)),
-    ).map((cell) => footprintKey(cell.rect));
+  it('carries isolation through a junction: the stronger wall wins the corner', () => {
+    // The owner's words: "when X wall meet Y wall and both this the XY point is
+    // RED thick win". The return at 5.50–5.80 sits between an isolated stretch
+    // and a plain one, and takes the isolated one's width and reason.
+    const face = faceOf(WALLS_DERIVED, 'F1-R14-UTL-W4');
+    const [toCorridor, corner, toSanitair] = face.contacts;
 
-    expect(offenders).toEqual([]);
+    expect(toCorridor.reason).toBe('isolation');
+    expect(corner.neighbourId).toBeNull();
+    expect(corner.reason).toBe('isolation');
+    expect(corner.thickness).toBe(WALLS.insulated);
+    expect(toSanitair.reason).toBe('plain separator');
+    expect(toSanitair.thickness).toBe(WALLS.partition);
   });
 
-  it('classifies the cells identically whether or not the openings cut the grid', () => {
-    const coarse = getWallCells(FLOOR_PLAN, []);
-    const mismatches = coarse.filter((cell) => {
-      const fine = cellAt(CELLS, centreOf(cell.rect));
-      return fine === undefined || fine.height !== cell.height || fine.kind !== cell.kind;
-    });
+  it('never reads isolation at less than the insulated width, anywhere', () => {
+    // Isolation IS a width here — 0.30 heavy, 0.15 plain — so `reason:
+    // 'isolation'` at 0.15 is a contradiction in terms: a stretch claiming a
+    // sound and heat barrier while being built as a thin partition, which a
+    // renderer painting the isolated runs red would paint as a thin red wall.
+    //
+    // This used to be breachable, and was breached at two corners, because the
+    // junction rule read its two halves off different neighbourhoods: the WIDTH
+    // came from the stretches beside a corner along its own face, the REASON
+    // also from the face landing in it. They are read off the same stretches
+    // now, so the contradiction is unreachable rather than merely absent — a
+    // corner that takes the reason from a heavy stretch takes its width too.
+    const thin = WALLS_DERIVED.flatMap((wall) =>
+      wall.contacts
+        .filter(
+          (contact) =>
+            contact.reason === 'isolation' &&
+            contact.thickness < WALLS.insulated - LENGTH_TOLERANCE,
+        )
+        .map(
+          (contact) => `${wall.matricule} ${String(contact.spanMin)}–${String(contact.spanMax)}`,
+        ),
+    );
+    const thinAndRed = SOLIDS.filter(
+      (solid) => solid.insulated && solid.thickness < WALLS.insulated - LENGTH_TOLERANCE,
+    ).map((solid) => solid.matricule);
 
-    expect(mismatches).toEqual([]);
+    expect(thin).toEqual([]);
+    expect(thinAndRed).toEqual([]);
   });
 
-  describe('named cells of the design', () => {
-    it.each(NAMED_CELLS)('gives %s the height %f (%s)', (_label, rect, height, kind) => {
-      const cell = cellOfRect(CELLS, rect);
+  it('widens the two guest-suite corners where a 0.30 wall lands in a 0.15 one', () => {
+    // The owner's rule for exactly this case: "in thick wall when X wall meet Y
+    // wall and both this the XY point is RED thick win". Both corners are one of
+    // the guest room's own 0.30 walls landing in a 0.15 wall to a space he
+    // deliberately kept OUT of the thick wrap — the control center, "a technical
+    // room", and the guest bathroom, excluded by name — so thick wins and the
+    // corner is widened, not merely coloured.
+    const guestSouth = faceOf(WALLS_DERIVED, 'F1-R09-GST-W7');
+    const bathNorth = faceOf(WALLS_DERIVED, 'F1-R10-BTH-W1');
+    const shape = (wall: DerivedWall): readonly unknown[] =>
+      wall.contacts.map((contact) => [contact.neighbourId, contact.thickness, contact.reason]);
 
-      expect(cell).toBeDefined();
-      expect(cell?.height).toBeCloseTo(height, PRECISION_DIGITS);
-      expect(cell?.kind).toBe(kind);
+    // The 0.30 wall landing in the guest room's south face is its own west face,
+    // which the owner named; the wall landing in the bathroom's north face is the
+    // room's east face to the kitchen, which he named too.
+    expect(shape(guestSouth)).toEqual([
+      ['controlCenter', WALLS.partition, 'plain separator'],
+      [null, WALLS.insulated, 'isolation'],
+    ]);
+    expect(shape(bathNorth)).toEqual([
+      ['guestRoom', WALLS.partition, 'plain separator'],
+      [null, WALLS.insulated, 'isolation'],
+    ]);
+    // Widening a corner can only grow it into the landing wall's own footprint,
+    // never into a room: the general guard is `never stands a solid in a clear
+    // space`, and this is the pair that moved.
+    SOLIDS.filter((solid) => solid.matricule === guestSouth.matricule).forEach((solid) => {
+      expect(SPACE_RECTS.some((rect) => rectsOverlap(solid.rect, rect))).toBe(false);
     });
   });
 
-  describe('probe points', () => {
-    it.each(PROBE_POINTS)('walls the %s at %o', (_label, point, height, kind) => {
-      const cell = cellAt(CELLS, point);
+  it('sits 15 faces on the envelope and gives each one exterior contact', () => {
+    const envelope = WALLS_DERIVED.filter((wall) => wall.exterior);
 
-      expect(cell).toBeDefined();
-      expect(cell?.height).toBeCloseTo(height, PRECISION_DIGITS);
-      expect(cell?.kind).toBe(kind);
-    });
-
-    it.each(CLEAR_POINTS)('leaves no wall %s', (_label, point) => {
-      expect(cellAt(CELLS, point)).toBeUndefined();
+    expect(envelope).toHaveLength(ENVELOPE_FACE_COUNT);
+    envelope.forEach((wall) => {
+      expect(wall.contacts).toHaveLength(1);
+      expect(wall.contacts[0].reason).toBe('exterior');
+      expect(wall.contacts[0].thickness).toBe(WALLS.exterior);
+      expect(wall.faces).toBe('outside');
+      expect(wall.neighbours).toEqual([]);
     });
   });
 });
 
-describe('wall pieces of the typical floor', () => {
-  it('returns 218 frozen blocks', () => {
+describe('wall solids', () => {
+  it('builds one solid per contact, skipping the eight joins with no masonry', () => {
+    const zeroJoins = WALLS_DERIVED.flatMap((wall) =>
+      wall.contacts.filter((contact) => contact.thickness <= LENGTH_TOLERANCE),
+    );
+
+    expect(zeroJoins).toHaveLength(ZERO_JOIN_COUNT);
+    expect(SOLIDS).toHaveLength(SOLID_COUNT);
+    expect(Object.isFrozen(SOLIDS)).toBe(true);
+    SOLIDS.forEach((solid) => {
+      expect(solid.thickness).toBeGreaterThan(LENGTH_TOLERANCE);
+    });
+  });
+
+  it('never stands a solid in a clear space', () => {
+    const offenders = SOLIDS.filter((solid) =>
+      SPACE_RECTS.some((rect) => rectsOverlap(solid.rect, rect)),
+    ).map((solid) => solid.matricule);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('marks every stretch the owner wants heavy, named face or backing face', () => {
+    // Typed as strings: `INSULATED_WALLS` gives a literal union, and a derived
+    // matricule is a plain string, so the set has to be widened to compare them.
+    const named = new Set<string>(INSULATED_WALLS.map((entry) => entry.matricule));
+    const insulated = SOLIDS.filter((solid) => solid.insulated);
+
+    expect(insulated).toHaveLength(INSULATED_SOLID_COUNT);
+    SOLIDS.filter((solid) => named.has(solid.matricule)).forEach((solid) => {
+      expect(solid.insulated).toBe(true);
+    });
+  });
+});
+
+describe('wall cells of the typical floor', () => {
+  it('covers the 44.125 m² wall footprint with 296 frozen cells', () => {
+    expect(CELLS).toHaveLength(CELL_COUNT);
+    expect(cellArea(CELLS)).toBeCloseTo(WALL_FOOTPRINT_AREA, PRECISION_DIGITS);
+    expect(Object.isFrozen(CELLS)).toBe(true);
+    CELLS.forEach((cell) => {
+      expect(Object.isFrozen(cell)).toBe(true);
+    });
+  });
+
+  it('closes on the plot: clear floor plus walls is the whole 225.00 m²', () => {
+    // The strongest single statement about the layout, and the one that catches a
+    // room moved 5 cm: nothing is double-counted and nothing is missing.
+    const clear = SPACE_RECTS.reduce((sum, rect) => sum + rectArea(rect), 0);
+
+    expect(clear).toBeCloseTo(CLEAR_FLOOR_AREA, PRECISION_DIGITS);
+    expect(clear + cellArea(CELLS)).toBeCloseTo(PLOT_AREA, PRECISION_DIGITS);
+    expect(rectArea(makeRect(PLOT[0], PLOT[1], PLOT[2], PLOT[3]))).toBe(PLOT_AREA);
+  });
+
+  it('never overlaps two cells and never puts one inside a space', () => {
+    const overlaps = CELLS.flatMap((cell, index) =>
+      CELLS.slice(index + 1)
+        .filter((other) => rectsOverlap(cell.rect, other.rect))
+        .map((other) => `${footprintKey(cell.rect)} ↔ ${footprintKey(other.rect)}`),
+    );
+    const inside = CELLS.filter((cell) =>
+      SPACE_RECTS.some((rect) => rectsOverlap(cell.rect, rect)),
+    ).map((cell) => footprintKey(cell.rect));
+
+    expect(overlaps).toEqual([]);
+    expect(inside).toEqual([]);
+  });
+
+  it('stands full height everywhere except the one declared balustrade', () => {
+    // Side B is a normal exterior wall now, so nothing is inferred from what a
+    // cell faces and no parapet arises by accident. The only low wall is the one
+    // `PARAPET_WALLS` names.
+    const full = CELLS.filter((cell) => cell.kind === 'wall');
+    const parapet = CELLS.filter((cell) => cell.kind === 'parapet');
+
+    expect(full).toHaveLength(FULL_HEIGHT_CELL_COUNT);
+    expect(parapet).toHaveLength(PARAPET_CELL_COUNT);
+    expect(new Set(full.map((cell) => cell.height))).toEqual(new Set([FLOOR_HEIGHTS.wall]));
+    expect(new Set(parapet.map((cell) => cell.height))).toEqual(new Set([PARAPET_HEIGHT]));
+  });
+
+  it('puts the balustrade on the side-A face the spec names, 1.10 m over 9.40', () => {
+    const parapet = CELLS.filter((cell) => cell.kind === 'parapet');
+
+    expect(PARAPET_WALLS).toHaveLength(PARAPET_PIECE_COUNT);
+    expect(PARAPET_WALLS[0].matricule).toBe('F1-R01-BAL-W4');
+    // Pinned against the railing constant, not against PARAPET_HEIGHT, which is read
+    // from this very entry and so could only agree with itself. ADR-011: the owner
+    // chose 1.10 and the entry states it AS the constant, so a plan that went back to
+    // a literal — 1.00, or a 1.10 written out again — fails here.
+    expect(PARAPET_WALLS[0].height).toBe(FLOOR_HEIGHTS.railing);
+    expect(PARAPET_HEIGHT).toBeLessThan(FLOOR_HEIGHTS.wall);
+    expect(cellArea(parapet)).toBeCloseTo(PARAPET_AREA, PRECISION_DIGITS);
+    expect(cellArea(parapet)).toBeCloseTo(
+      faceOf(WALLS_DERIVED, 'F1-R01-BAL-W4').length * WALLS.exterior,
+      PRECISION_DIGITS,
+    );
+    parapet.forEach((cell) => {
+      expect(rectContainsRect(PARAPET_STRIP, cell.rect)).toBe(true);
+    });
+  });
+
+  it('keeps the balustrade to its own ends, so the corners still close', () => {
+    // The blocks where sides C and B land on the balcony face lie beyond the
+    // named face's span, so they stay full height: a stated parapet must not eat
+    // the corner of the wall that crosses it.
+    const corners = [
+      { x: 0.15, z: 0.15 },
+      { x: 0.15, z: 9.85 },
+    ];
+
+    corners.forEach((point) => {
+      const cell = cellAt(CELLS, point);
+
+      expect(cell?.kind).toBe('wall');
+      expect(cell?.height).toBe(FLOOR_HEIGHTS.wall);
+    });
+  });
+
+  it.each(PROBE_POINTS)('walls the %s', (_label, point, kind) => {
+    const cell = cellAt(CELLS, point);
+
+    expect(cell).toBeDefined();
+    expect(cell?.kind).toBe(kind);
+  });
+
+  it.each(CLEAR_POINTS)('leaves no wall %s', (_label, point) => {
+    expect(cellAt(CELLS, point)).toBeUndefined();
+  });
+
+  it('classifies the cells identically however finely the grid is cut', () => {
+    const mismatches = CELLS.filter((cell) => {
+      const fine = cellAt(FINE_CELLS, centreOf(cell.rect));
+      return fine === undefined || fine.height !== cell.height || fine.kind !== cell.kind;
+    }).map((cell) => footprintKey(cell.rect));
+
+    expect(FINE_CELLS).toHaveLength(FINE_CELL_COUNT);
+    expect(mismatches).toEqual([]);
+  });
+});
+
+describe('wall blocks of the typical floor', () => {
+  it('merges the plan’s walls into 93 frozen blocks', () => {
     expect(PIECES).toHaveLength(PIECE_COUNT);
     expect(Object.isFrozen(PIECES)).toBe(true);
     PIECES.forEach((piece) => {
       expect(Object.isFrozen(piece)).toBe(true);
       expect(Object.isFrozen(piece.rect)).toBe(true);
+      expect(piece.bottom).toBe(SLAB_BOTTOM);
     });
-  });
-
-  it('keeps the 42.52 m² footprint of brief §8', () => {
     expect(getWallFootprintArea(PIECES)).toBeCloseTo(WALL_FOOTPRINT_AREA, PRECISION_DIGITS);
   });
 
-  it('counts a footprint once even though the blocks over it sum to more', () => {
-    const summed = PIECES.reduce((sum, piece) => sum + rectArea(piece.rect), 0);
+  it('carries the kind on every block, and keeps the parapet in one box', () => {
+    // The renderer is told rather than left to guess. Guessing by height was the
+    // old defect and it is no more workable now than it was: the stated parapet
+    // and the railing constant read 1.10 alike since ADR-011, so a top of 1.10
+    // says nothing about which of the two a block is, and an opening cuts a
+    // full-height wall into blocks that top out at a sill or a threshold anyway.
+    // What the height comparison would really do is answer a different question:
+    // `heights.railing` is an argument, and the stated height is plan data, so the
+    // two coincide at production heights and part company at any other — see the
+    // injected-heights block below.
+    const parapets = PIECES.filter((piece) => piece.kind === 'parapet');
 
-    expect(summed).toBeGreaterThan(WALL_FOOTPRINT_AREA);
-    expect(new Set(PIECES.map((piece) => footprintKey(piece.rect))).size).toBe(
-      DISTINCT_FOOTPRINT_COUNT,
+    expect(parapets).toHaveLength(PARAPET_PIECE_COUNT);
+    expect(parapets[0].rect).toEqual(PARAPET_STRIP);
+    expect(parapets[0].top).toBe(PARAPET_HEIGHT);
+    expect(parapets[0].bottom).toBe(SLAB_BOTTOM);
+    expect(PIECES.filter((piece) => piece.kind === 'wall')).toHaveLength(
+      PIECE_COUNT - PARAPET_PIECE_COUNT,
     );
-    expect(getWallFootprintArea(PIECES)).toBeCloseTo(WALL_FOOTPRINT_AREA, PRECISION_DIGITS);
   });
 
-  it('splits the blocks into bases on the slab and heads over the openings', () => {
-    const bases = PIECES.filter(
-      (piece) => Math.abs(piece.bottom - SLAB_BOTTOM) <= LENGTH_TOLERANCE,
+  it('closes on its own volume: the footprint less the balustrade’s missing height', () => {
+    const fullHeight = WALL_FOOTPRINT_AREA * (FLOOR_HEIGHTS.wall - SLAB_BOTTOM);
+    const parapetSaving = PARAPET_AREA * (FLOOR_HEIGHTS.wall - PARAPET_HEIGHT);
+
+    expect(PIECES.reduce((sum, piece) => sum + boxVolume(piece), 0)).toBeCloseTo(
+      fullHeight - parapetSaving,
+      PRECISION_DIGITS,
     );
-    const heads = PIECES.filter((piece) => piece.bottom > SLAB_BOTTOM + LENGTH_TOLERANCE);
-
-    expect(bases).toHaveLength(BASE_PIECE_COUNT);
-    expect(heads).toHaveLength(HEAD_PIECE_COUNT);
-    expect(bases.length + heads.length).toBe(PIECE_COUNT);
-  });
-
-  it('starts every base block at exactly the underside of the slab', () => {
-    const bases = PIECES.filter((piece) => piece.bottom < FLOOR_LEVEL);
-
-    // Exact equality, not toBeCloseTo: `slabs.ts` owns this level, and a wall
-    // that derived it on its own would sit at -0.2999999999999998 instead.
-    expect(bases).toHaveLength(BASE_PIECE_COUNT);
-    bases.forEach((piece) => {
-      expect(piece.bottom).toBe(-getSlabThickness());
-    });
-  });
-
-  it('starts every block at the slab or at the head of an opening', () => {
-    const openingTops = OPENINGS.map((opening) => opening.top);
-    const offenders = PIECES.filter(
-      (piece) => !isOneOf(piece.bottom, [SLAB_BOTTOM, ...openingTops]),
-    ).map((piece) => `${footprintKey(piece.rect)} bottom ${String(piece.bottom)}`);
-
-    expect(offenders).toEqual([]);
-  });
-
-  it('ends every block at the floor, a sill, a parapet or the wall head', () => {
-    const offenders = PIECES.filter((piece) => !isOneOf(piece.top, REAL_TOPS)).map(
-      (piece) => `${footprintKey(piece.rect)} top ${String(piece.top)}`,
-    );
-
-    expect(offenders).toEqual([]);
-    PIECES.forEach((piece) => {
-      expect(isOneOf(piece.bottom, REAL_LEVELS)).toBe(true);
-    });
   });
 
   it('never overlaps two blocks in three dimensions', () => {
-    const offenders = PIECES.flatMap((piece, position) =>
-      PIECES.slice(position + 1)
+    const offenders = PIECES.flatMap((piece, index) =>
+      PIECES.slice(index + 1)
         .filter((other) => boxesOverlap(piece, other))
         .map((other) => `${footprintKey(piece.rect)} ↔ ${footprintKey(other.rect)}`),
     );
@@ -790,198 +879,127 @@ describe('wall pieces of the typical floor', () => {
 
     expect(offenders).toEqual([]);
   });
-
-  it('fills the same volume as the cells, less every opening', () => {
-    const solid = getWallPieces(FLOOR_PLAN, []);
-
-    expect(solid).toHaveLength(SOLID_PIECE_COUNT);
-    expect(getWallFootprintArea(solid)).toBeCloseTo(WALL_FOOTPRINT_AREA, PRECISION_DIGITS);
-    expect(solid.reduce((sum, piece) => sum + boxVolume(piece), 0)).toBeCloseTo(
-      SOLID_WALL_VOLUME,
-      PRECISION_DIGITS,
-    );
-    expect(PIECES.reduce((sum, piece) => sum + boxVolume(piece), 0)).toBeCloseTo(
-      WALL_VOLUME,
-      PRECISION_DIGITS,
-    );
-  });
 });
 
-describe('openings of the typical floor', () => {
-  it('uses 19 doors and 8 windows', () => {
-    expect(DOOR_FOOTPRINTS).toHaveLength(DOOR_COUNT);
-    expect(WINDOW_FOOTPRINTS).toHaveLength(WINDOW_COUNT);
-    expect(OPENINGS).toHaveLength(OPENING_COUNT);
+describe('openings punched out of the walls', () => {
+  it('keeps the footprint: a hole changes the blocks, never the plan area', () => {
+    expect(FINE_PIECES).toHaveLength(FINE_PIECE_COUNT);
+    expect(getWallFootprintArea(FINE_PIECES)).toBeCloseTo(WALL_FOOTPRINT_AREA, PRECISION_DIGITS);
   });
 
-  it.each(OPENINGS.map((opening, index) => [index, opening] as const))(
-    'punches a hole through opening %i and keeps a head over it',
-    (_index, opening) => {
+  it('removes exactly the volume of the holes, no more and no less', () => {
+    // Every fixture opening lies wholly inside masonry, so the arithmetic is
+    // exact: this catches a hole that missed its wall as well as one punched twice.
+    const solid = PIECES.reduce((sum, piece) => sum + boxVolume(piece), 0);
+    const holes = FIXTURE_OPENINGS.reduce((sum, opening) => sum + boxVolume(opening), 0);
+
+    expect(FINE_PIECES.reduce((sum, piece) => sum + boxVolume(piece), 0)).toBeCloseTo(
+      solid - holes,
+      PRECISION_DIGITS,
+    );
+  });
+
+  it.each(OPENINGS.map((opening, index) => [opening.label, index] as const))(
+    'leaves a threshold and a lintel at the %s',
+    (_label, index) => {
+      const opening = FIXTURE_OPENINGS[index];
       const centre = centreOf(opening.rect);
-      const covering = PIECES.filter(
+      const through = FINE_PIECES.filter(
         (piece) =>
           rectContainsPoint(piece.rect, centre) &&
           Math.min(piece.top, opening.top) - Math.max(piece.bottom, opening.bottom) >
             LENGTH_TOLERANCE,
       );
-      const above = PIECES.filter(
-        (piece) =>
-          rectContainsPoint(piece.rect, centre) && piece.bottom >= opening.top - LENGTH_TOLERANCE,
-      );
-      const below = PIECES.filter(
+      const below = FINE_PIECES.filter(
         (piece) =>
           rectContainsPoint(piece.rect, centre) && piece.top <= opening.bottom + LENGTH_TOLERANCE,
       );
+      const above = FINE_PIECES.filter(
+        (piece) =>
+          rectContainsPoint(piece.rect, centre) && piece.bottom >= opening.top - LENGTH_TOLERANCE,
+      );
 
-      expect(covering).toEqual([]);
-      expect(above.length).toBeGreaterThan(NONE);
+      expect(through).toEqual([]);
       expect(below.length).toBeGreaterThan(NONE);
+      expect(above.length).toBeGreaterThan(NONE);
+      below.forEach((piece) => {
+        expect(piece.bottom).toBe(SLAB_BOTTOM);
+        expect(piece.top).toBeCloseTo(opening.bottom, PRECISION_DIGITS);
+      });
       above.forEach((piece) => {
+        expect(piece.bottom).toBeCloseTo(opening.top, PRECISION_DIGITS);
         expect(piece.top).toBeCloseTo(FLOOR_HEIGHTS.wall, PRECISION_DIGITS);
       });
     },
   );
-
-  it('keeps a threshold under every door and a sill under every window', () => {
-    const doors = OPENINGS.slice(0, DOOR_FOOTPRINTS.length);
-    const windows = OPENINGS.slice(DOOR_FOOTPRINTS.length);
-    const topsUnder = (opening: PlanBox): readonly number[] =>
-      PIECES.filter(
-        (piece) =>
-          rectContainsPoint(piece.rect, centreOf(opening.rect)) &&
-          piece.top <= opening.bottom + LENGTH_TOLERANCE,
-      ).map((piece) => piece.top);
-
-    doors.forEach((door) => {
-      topsUnder(door).forEach((top) => {
-        expect(top).toBeCloseTo(FLOOR_LEVEL, PRECISION_DIGITS);
-      });
-    });
-    windows.forEach((window) => {
-      topsUnder(window).forEach((top) => {
-        expect(top).toBeCloseTo(FLOOR_HEIGHTS.windowSill, PRECISION_DIGITS);
-      });
-    });
-  });
-});
-
-describe('hand-written wall strips', () => {
-  it('builds the z 3.70–3.90 corridor wall piece by piece', () => {
-    expect(roundedStrip(stripPieces(PIECES, CORRIDOR_TOP_BAND, 'x'))).toEqual(
-      roundedStrip(CORRIDOR_TOP_WALL),
-    );
-  });
-
-  it('builds the x 1.30–1.60 balcony wall piece by piece', () => {
-    expect(roundedStrip(stripPieces(PIECES, BALCONY_BAND, 'z'))).toEqual(
-      roundedStrip(BALCONY_WALL),
-    );
-  });
-
-  it('builds the z 8.40–8.70 void wall piece by piece', () => {
-    expect(roundedStrip(stripPieces(PIECES, VOID_BAND, 'x'))).toEqual(roundedStrip(VOID_WALL));
-  });
-});
-
-describe('a small synthetic plan', () => {
-  it('rings a room with eight cells at wall height', () => {
-    const cells = getWallCells(TINY_ROOM_PLAN, []);
-
-    expect(cells).toHaveLength(TINY_CELL_COUNT);
-    expect(cellArea(cells)).toBeCloseTo(TINY_WALL_AREA, PRECISION_DIGITS);
-    cells.forEach((cell) => {
-      expect(cell.height).toBeCloseTo(FLOOR_HEIGHTS.wall, PRECISION_DIGITS);
-      expect(cell.kind).toBe('wall');
-    });
-  });
-
-  it.each([
-    ['openAir', TINY_BALCONY_PLAN],
-    ['void', TINY_VOID_PLAN],
-  ] as const)('rings a %s space with parapets only', (_kind, plan) => {
-    const cells = getWallCells(plan, []);
-
-    expect(cells).toHaveLength(TINY_CELL_COUNT);
-    cells.forEach((cell) => {
-      expect(cell.height).toBeCloseTo(FLOOR_HEIGHTS.railing, PRECISION_DIGITS);
-      expect(cell.kind).toBe('parapet');
-    });
-  });
-
-  it('merges the ring into four blocks: two bands and two jambs', () => {
-    const pieces = getWallPieces(TINY_ROOM_PLAN, []);
-
-    expect(pieces).toHaveLength(TINY_PIECE_COUNT);
-    expect(getWallFootprintArea(pieces)).toBeCloseTo(TINY_WALL_AREA, PRECISION_DIGITS);
-    expect(
-      pieces.map((piece) => [piece.rect.minX, piece.rect.maxX, piece.rect.minZ, piece.rect.maxZ]),
-    ).toEqual([
-      [0, 5, 0, 0.3],
-      [0, 0.3, 0.3, 3.7],
-      [4.7, 5, 0.3, 3.7],
-      [0, 5, 3.7, 4],
-    ]);
-    pieces.forEach((piece) => {
-      expect(piece.bottom).toBeCloseTo(SLAB_BOTTOM, PRECISION_DIGITS);
-      expect(piece.top).toBeCloseTo(FLOOR_HEIGHTS.wall, PRECISION_DIGITS);
-    });
-  });
-
-  it('splits a cell into a threshold and a lintel around a door', () => {
-    const pieces = getWallPieces(TINY_ROOM_PLAN, [TINY_DOOR]);
-    const atDoor = pieces
-      .filter((piece) => rectContainsPoint(piece.rect, centreOf(TINY_DOOR.rect)))
-      .sort((a, b) => a.bottom - b.bottom);
-
-    expect(atDoor).toHaveLength(2);
-    expect(atDoor[0].bottom).toBeCloseTo(SLAB_BOTTOM, PRECISION_DIGITS);
-    expect(atDoor[0].top).toBeCloseTo(FLOOR_LEVEL, PRECISION_DIGITS);
-    expect(atDoor[1].bottom).toBeCloseTo(FLOOR_HEIGHTS.door, PRECISION_DIGITS);
-    expect(atDoor[1].top).toBeCloseTo(FLOOR_HEIGHTS.wall, PRECISION_DIGITS);
-    expect(getWallFootprintArea(pieces)).toBeCloseTo(TINY_WALL_AREA, PRECISION_DIGITS);
-  });
-
-  it('leaves nothing where an opening takes the whole height', () => {
-    const pieces = getWallPieces(TINY_ROOM_PLAN, [TINY_FULL_HEIGHT_OPENING]);
-    const centre = centreOf(TINY_FULL_HEIGHT_OPENING.rect);
-
-    expect(pieces.filter((piece) => rectContainsPoint(piece.rect, centre))).toEqual([]);
-    expect(getWallFootprintArea(pieces)).toBeLessThan(TINY_WALL_AREA);
-  });
-
-  it('refuses a plan whose walls are all junctions', () => {
-    expect(() => getWallCells(ISOLATED_PLAN, [])).toThrow(RangeError);
-    expect(() => getWallPieces(ISOLATED_PLAN, [])).toThrow(/touches no wall cell/u);
-  });
 });
 
 describe('injected heights', () => {
-  const otherOpenings = fixtureOpenings(OTHER_HEIGHTS);
+  const otherOpenings = openingBoxes(OTHER_HEIGHTS, OTHER_WINDOW_SILL, OTHER_WINDOW_HEAD);
   const pieces = getWallPieces(FLOOR_PLAN, otherOpenings, OTHER_HEIGHTS);
   const cells = getWallCells(FLOOR_PLAN, otherOpenings, OTHER_HEIGHTS);
   const levels = [...new Set(pieces.flatMap((piece) => [piece.bottom, piece.top]))];
+  /**
+   * The levels that must come from the argument: every block that is not a stated
+   * parapet. A parapet's top is plan data — 1.10 m, which no height may move — so
+   * sweeping it up here would forbid the plan from stating the number it states.
+   * It is pinned on its own in the case below instead.
+   */
+  const heightLevels = [
+    ...new Set(
+      pieces
+        .filter((piece) => piece.kind !== 'parapet')
+        .flatMap((piece) => [piece.bottom, piece.top]),
+    ),
+  ];
 
-  it('takes every level from the argument, never from FLOOR_HEIGHTS', () => {
-    const survivors = levels.filter((level) => isOneOf(level, FORBIDDEN_LEVELS));
+  it('forbids levels the real floor really stands at, and says which are only tripwires', () => {
+    // Without this the guard below could pass by forbidding levels nothing is ever
+    // built at. Each witnessed level is checked to be on the real floor's own
+    // blocks; each tripwire is checked NOT to be, so neither list can rot quietly
+    // into the other.
+    const realLevels = FINE_PIECES.filter((piece) => piece.kind !== 'parapet').flatMap((piece) => [
+      piece.bottom,
+      piece.top,
+    ]);
 
-    expect(survivors).toEqual([]);
+    expect(WITNESSED_FORBIDDEN_LEVELS.length).toBeGreaterThan(NONE);
+    WITNESSED_FORBIDDEN_LEVELS.forEach((level) => {
+      expect(isOneOf(level, realLevels), String(level)).toBe(true);
+    });
+    TRIPWIRE_FORBIDDEN_LEVELS.forEach((level) => {
+      expect(isOneOf(level, realLevels), String(level)).toBe(false);
+    });
   });
 
-  it('raises the walls and the parapets to the injected heights', () => {
-    const heights = new Set(cells.map((cell) => cell.height));
-
-    expect([...heights].sort((a, b) => a - b)).toEqual([OTHER_HEIGHTS.railing, OTHER_HEIGHTS.wall]);
-    expect(Math.min(...levels)).toBeCloseTo(
-      -(OTHER_HEIGHTS.floorToFloor - OTHER_HEIGHTS.wall),
-      PRECISION_DIGITS,
-    );
+  it('takes every level from the argument, never from FLOOR_HEIGHTS', () => {
+    expect(heightLevels.filter((level) => isOneOf(level, FORBIDDEN_LEVELS))).toEqual([]);
     expect(Math.max(...levels)).toBeCloseTo(OTHER_HEIGHTS.wall, PRECISION_DIGITS);
   });
 
   it('starts the walls at exactly the underside the injected slab implies', () => {
-    // Exact equality for injected sizes too: the shared helper is what keeps
-    // the walls and the slabs on one level, whatever heights come in.
+    // Exact equality: the shared `slabs.ts` helper is what keeps the walls and
+    // the slabs on one level, whatever heights come in.
     expect(Math.min(...levels)).toBe(-getSlabThickness(OTHER_HEIGHTS));
+  });
+
+  it('keeps the stated parapet at its own height, which no argument can move', () => {
+    // The one level that does not come from `heights`: the spec states 1.10 m for
+    // the balustrade, so it stays 1.10 while every other level changes.
+    //
+    // This is where the stated height and the railing height part company, and so
+    // it is where a module that read `heights.railing` for the balustrade would be
+    // caught: at production heights the two are both 1.10 and nothing could tell
+    // them apart, but the injected railing is 1.55 and the balustrade must ignore
+    // it. The difference is asserted rather than trusted, because the day someone
+    // sets OTHER_HEIGHTS.railing to 1.10 this case would go quietly vacuous.
+    expect(OTHER_HEIGHTS.railing).not.toBe(PARAPET_HEIGHT);
+    expect(
+      new Set(cells.filter((cell) => cell.kind === 'parapet').map((cell) => cell.height)),
+    ).toEqual(new Set([PARAPET_HEIGHT]));
+    expect(
+      new Set(cells.filter((cell) => cell.kind === 'wall').map((cell) => cell.height)),
+    ).toEqual(new Set([OTHER_HEIGHTS.wall]));
   });
 
   it('keeps the footprint, which no height can change', () => {
@@ -990,65 +1008,68 @@ describe('injected heights', () => {
   });
 });
 
-describe('mutation guards', () => {
-  it('gives the untouched plan the figures of brief §8', () => {
-    expect(getWallFootprintArea(PIECES)).toBeCloseTo(WALL_FOOTPRINT_AREA, PRECISION_DIGITS);
-    expect(cellArea(CELLS.filter((cell) => cell.kind === 'parapet'))).toBeCloseTo(
-      PARAPET_AREA,
-      PRECISION_DIGITS,
-    );
-  });
+describe('the plan argument contributes only its plot', () => {
+  /*
+   * WHY the old mutation guards are gone. They moved the kitchen inside an
+   * injected `FloorPlan` and expected the walls around it to move, and they were
+   * right to, because the spaces used to come from that argument. They do not any
+   * more: `getWallCells` and `getWallPieces` keep their signature but read the
+   * spaces from `sourceOfTruth/plan.ts`, and take only `plan.plot` from what is
+   * handed in. That is deliberate — the matricules, the isolation list and the
+   * stated parapet all name faces of one floor, and deriving those faces from an
+   * argument meant a caller could hand in a floor where `F1-R11-KIT-W4` was a
+   * different wall, or no wall. One source, so a matricule means one thing.
+   *
+   * So what a guard can prove has changed with it: injecting geometry through
+   * the spaces must now be INERT, and the plot must still be live. Both are
+   * tested below — an inert argument is only safe if it is inert on purpose, and
+   * the day someone re-reads `plan.spaces` in this module, the first test fails.
+   */
 
-  it('changes the walls when the kitchen moves 0.05 m along x', () => {
+  it('ignores the spaces of the plan: a shifted kitchen moves no wall', () => {
     const shifted = withKitchenShifted(FLOOR_PLAN, KITCHEN_SHIFT_X);
-    const pieces = getWallPieces(shifted, OPENINGS);
-    const onKitchenWestWall = (candidates: readonly PlanBox[]): number =>
-      candidates.filter(
-        (piece) =>
-          piece.rect.minX === KITCHEN_WEST_WALL[0] && piece.rect.maxX === KITCHEN_WEST_WALL[1],
-      ).length;
+    const pieces = getWallPieces(shifted, FIXTURE_OPENINGS);
 
-    // Sliding a space between two walls moves solid from one to the other, so
-    // the total footprint is unchanged: the wall layout is what must differ.
-    expect(pieces).toHaveLength(SHIFTED_PIECE_COUNT);
-    expect(pieces.length).not.toBe(PIECE_COUNT);
-    expect(onKitchenWestWall(PIECES)).toBe(KITCHEN_WEST_WALL_PIECE_COUNT);
-    expect(onKitchenWestWall(pieces)).toBeLessThan(KITCHEN_WEST_WALL_PIECE_COUNT);
-    expect(getSpaceMinX(FLOOR_PLAN)).not.toBe(getSpaceMinX(shifted));
+    expect(kitchenMinX(shifted)).not.toBe(kitchenMinX(FLOOR_PLAN));
+    expect(pieces.map(pieceKey)).toEqual(FINE_PIECES.map(pieceKey));
+    expect(getWallCells(shifted, []).map((cell) => footprintKey(cell.rect))).toEqual(
+      CELLS.map((cell) => footprintKey(cell.rect)),
+    );
   });
 
-  it('changes the footprint area when the kitchen loses 0.05 m of width', () => {
-    const shrunk = withKitchenShrunk(FLOOR_PLAN, KITCHEN_SHIFT_X);
+  it('ignores them even when there are none at all', () => {
+    const empty: FloorPlan = { ...FLOOR_PLAN, spaces: [] };
 
-    expect(getWallFootprintArea(getWallPieces(shrunk, OPENINGS))).toBeCloseTo(
-      SHRUNK_FOOTPRINT_AREA,
+    expect(getWallPieces(empty, []).map(pieceKey)).toEqual(PIECES.map(pieceKey));
+  });
+
+  it('reads the plot, which frames the grid: a wider plot is a wider envelope', () => {
+    const wider: FloorPlan = {
+      ...FLOOR_PLAN,
+      plot: makeRect(PLOT[0], PLOT[1] + PLOT_GROWTH, PLOT[2], PLOT[3]),
+    };
+    const narrower: FloorPlan = {
+      ...FLOOR_PLAN,
+      plot: makeRect(PLOT[0], PLOT[1] - WALLS.exterior, PLOT[2], PLOT[3]),
+    };
+
+    expect(getWallFootprintArea(getWallPieces(wider, []))).toBeCloseTo(
+      WALL_FOOTPRINT_AREA + PLOT_GROWTH * PLOT_DEPTH,
       PRECISION_DIGITS,
     );
-    expect(getWallFootprintArea(getWallPieces(shrunk, OPENINGS))).not.toBeCloseTo(
-      WALL_FOOTPRINT_AREA,
+    expect(getWallFootprintArea(getWallPieces(narrower, []))).toBeCloseTo(
+      WALL_FOOTPRINT_AREA - WALLS.exterior * PLOT_DEPTH,
       PRECISION_DIGITS,
     );
   });
 
   it('leaves FLOOR_PLAN untouched after every mutation', () => {
     withKitchenShifted(FLOOR_PLAN, KITCHEN_SHIFT_X);
-    withKitchenShrunk(FLOOR_PLAN, KITCHEN_SHIFT_X);
 
-    expect(getSpaceMinX(FLOOR_PLAN)).toBe(KITCHEN_MIN_X);
-    expect(getWallFootprintArea(getWallPieces(FLOOR_PLAN, OPENINGS))).toBeCloseTo(
+    expect(kitchenMinX(FLOOR_PLAN)).toBe(KITCHEN_MIN_X);
+    expect(getWallFootprintArea(getWallPieces(FLOOR_PLAN, FIXTURE_OPENINGS))).toBeCloseTo(
       WALL_FOOTPRINT_AREA,
       PRECISION_DIGITS,
     );
   });
 });
-
-/**
- * Returns the west face of the kitchen of a plan.
- *
- * @param plan - The plan to read.
- * @returns The `minX` of the kitchen's first rect, in metres.
- */
-function getSpaceMinX(plan: FloorPlan): number {
-  const kitchen = plan.spaces.find((space) => space.id === 'kitchen');
-  return kitchen?.rects[0].minX ?? Number.NaN;
-}

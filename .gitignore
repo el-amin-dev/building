@@ -41,3 +41,7 @@ Thumbs.db
 *.log
 tmp/
 .cache/
+
+# draw.io editor backups (recreated whenever the generated drawing is opened)
+docs/.$*.bkp
+.$*.bkp

@@ -1,209 +1,245 @@
 import { describe, expect, it } from 'vitest';
-import { FLOOR_PLAN, getSpace, INTERIOR_RECT } from './floorPlan/index.ts';
+import { FLOOR_PLAN, getNeighbours, getSpace } from './floorPlan/index.ts';
 import type { SpaceId } from './floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from './heights.ts';
 import type { FloorHeights } from './heights.ts';
 import { LENGTH_TOLERANCE, toPlanLength } from './planGeometry.ts';
 import type { PlanRect } from './planGeometry.ts';
-import type { Port, PortAxis } from './ports/types.ts';
+import { PORT_SCHEDULE } from './ports/index.ts';
+import type { Port, PortAxis } from './ports/index.ts';
 import { getWindows, WINDOW_SPEC } from './windows.ts';
-import type { FloorWindow, WindowSide } from './windows.ts';
+import type { FloorWindow, WindowKind, WindowSide } from './windows.ts';
 
 const PRECISION_DIGITS = 9;
 
-/** Clear width of a default door leaf, in metres (brief §6). */
-const DOOR_WIDTH = 0.9;
-/** Clear width of the balcony-A door into the link corridor, in metres (ADR-006). */
-const LINK_DOOR_WIDTH = 0.8;
-
-/**
- * Builds a frozen door for the fixture below.
- *
- * @param first - First space of the door.
- * @param second - Second space of the door.
- * @param along - Plan axis the width runs along.
- * @param spanMin - Start of the door along `along`, in metres.
- * @param width - Clear width of the door, in metres.
- * @returns A frozen {@link Port} of kind `'door'`.
- */
-function defineDoor(
-  first: SpaceId,
-  second: SpaceId,
-  along: PortAxis,
-  spanMin: number,
-  width: number,
-): Port {
-  return Object.freeze({
-    spaces: Object.freeze([first, second] as const),
-    kind: 'door',
-    along,
-    spanMin,
-    width,
-  });
-}
-
-/**
- * The doors that fall on a side-A or side-B face, hand-written from brief §6 as
- * amended by ADR-006: the only ports a window can collide with.
- *
- * Only these four matter here, so the fixture stays readable and the expected
- * window table can be checked by hand. A later integration test passes the real
- * `PORT_SCHEDULE` of `ports/portSchedule.ts` to `getWindows` and must find the
- * same windows.
- *
- * - balconyA ↔ masterBedroom: z 1.85–2.75, in the side-A wall x 1.30–1.60;
- * - balconyA ↔ linkCorridor: z 5.65–6.45, in the same wall;
- * - kitchen ↔ balconySlabB: x 12.70–13.60, in the side-B wall z 8.40–8.70;
- * - laundry ↔ balconySlabB: x 15.30–16.20, in the same wall.
- */
-const A_B_FACE_DOORS: readonly Port[] = Object.freeze([
-  defineDoor('balconyA', 'masterBedroom', 'z', 1.85, DOOR_WIDTH),
-  defineDoor('balconyA', 'linkCorridor', 'z', 5.65, LINK_DOOR_WIDTH),
-  defineDoor('kitchen', 'balconySlabB', 'x', 12.7, DOOR_WIDTH),
-  defineDoor('laundry', 'balconySlabB', 'x', 15.3, DOOR_WIDTH),
-]);
-
-/** One expected window: its face, its span along the face and the hole in the wall. */
+/** One expected window: where the schedule puts it and the hole it cuts. */
 interface ExpectedWindow {
-  /** The room the window belongs to. */
+  /** What the window is for, which fixes its sill and head. */
+  readonly kind: WindowKind;
+  /** The room the window is measured from. */
   readonly spaceId: SpaceId;
-  /** Which face of the room is glazed. */
+  /** The space on the other side of the wall. */
+  readonly neighbourId: SpaceId;
+  /** Which face of the room is pierced. */
   readonly side: WindowSide;
+  /** The plan axis the width runs along. */
+  readonly along: PortAxis;
   /** Expected start of the window along its face, in metres. */
   readonly spanMin: number;
   /** Expected end of the window along its face, in metres. */
   readonly spanMax: number;
+  /** Expected sill above the finished floor, in metres. */
+  readonly sill: number;
+  /** Expected head above the finished floor, in metres. */
+  readonly head: number;
+  /** Thickness of the wall the window pierces, in metres. */
+  readonly thickness: number;
   /** Expected footprint of the opening: the span across the wall thickness. */
   readonly rect: PlanRect;
 }
 
 /**
- * Every window of the typical floor, worked out by hand from the plan data, the
- * wall thicknesses and {@link A_B_FACE_DOORS}, in the order `getWindows` reports
- * them.
+ * Every window of the typical floor, in the order `getWindows` reports them,
+ * which is the order of the declared schedule (`sourceOfTruth/plan.ts`).
  *
- * The side-A walls are 0.30 m (balconyA is open air), the side-B walls 0.30 m
- * (the void and the balcony slab are open air) and the utility room's side-B
- * wall is the 0.30 m exterior wall at z 9.70.
+ * v1 derived these: one 1.20 × 1.20 opening per room per glazeable face, centred
+ * in the longest run the doors left free. Nothing is derived any more — the
+ * owner asked for purposeful openings, so each one carries its own width, sill
+ * and head, and this table is the realised schedule measured off the plan.
  *
- * Rooms deliberately absent:
- * - livingRoom, bedroomMaleKids, bedroomFemaleKids: their only open face is
- *   side C, which is never glazed (ADR-006: electric light);
- * - laundry: its side-B face is 3.20 m, but the balcony-slab door plus its jambs
- *   leave only 1.00 m and 1.10 m, both under the 1.20 m window;
- * - utilityRoom's `minX` face: it fronts the east void over 1.00 m only.
+ * Three kinds, at three heights: `air` is a bathroom vent above eye level
+ * (1.90–2.30), `pass` is the tunnel that hands food and coffee to the guests at
+ * counter height (1.00–1.80), and `light` is daylight (0.90–2.10, and 0.60–2.30
+ * in the laundry, which the owner wanted "completely open light" and which can
+ * only be given height because its wall has no width to spare).
  */
 const EXPECTED_WINDOWS: readonly ExpectedWindow[] = [
   {
-    spaceId: 'masterBedroom',
-    side: 'minX',
-    spanMin: 0.43,
-    spanMax: 1.63,
-    rect: { minX: 1.3, maxX: 1.6, minZ: 0.43, maxZ: 1.63 },
-  },
-  {
+    kind: 'light',
     spaceId: 'controlCenter',
+    neighbourId: 'balconyA',
     side: 'minX',
-    spanMin: 6.95,
-    spanMax: 8.15,
-    rect: { minX: 1.3, maxX: 1.6, minZ: 6.95, maxZ: 8.15 },
+    along: 'z',
+    spanMin: 7.5,
+    spanMax: 8.4,
+    sill: 0.9,
+    head: 2.1,
+    thickness: 0.3,
+    rect: { minX: 1.3, maxX: 1.6, minZ: 7.5, maxZ: 8.4 },
   },
   {
-    spaceId: 'controlCenter',
-    side: 'maxZ',
-    spanMin: 2.1,
-    spanMax: 3.3,
-    rect: { minX: 2.1, maxX: 3.3, minZ: 8.4, maxZ: 8.7 },
-  },
-  {
+    kind: 'pass',
     spaceId: 'guestRoom',
-    side: 'maxZ',
-    spanMin: 5.4,
-    spanMax: 6.6,
-    rect: { minX: 5.4, maxX: 6.6, minZ: 8.4, maxZ: 8.7 },
+    neighbourId: 'kitchen',
+    side: 'maxX',
+    along: 'z',
+    spanMin: 6.35,
+    spanMax: 7.0,
+    sill: 1.0,
+    head: 1.8,
+    thickness: 0.3,
+    rect: { minX: 9.7, maxX: 10.0, minZ: 6.35, maxZ: 7.0 },
   },
   {
-    spaceId: 'guestSanitair',
+    kind: 'air',
+    spaceId: 'guestBathCubicle',
+    neighbourId: 'voidWest',
     side: 'maxZ',
-    spanMin: 8.4,
+    along: 'x',
+    spanMin: 7.55,
+    spanMax: 8.15,
+    sill: 1.9,
+    head: 2.3,
+    thickness: 0.3,
+    rect: { minX: 7.55, maxX: 8.15, minZ: 8.6, maxZ: 8.9 },
+  },
+  {
+    kind: 'air',
+    spaceId: 'guestShowerCubicle',
+    neighbourId: 'voidWest',
+    side: 'maxZ',
+    along: 'x',
+    spanMin: 9.0,
     spanMax: 9.6,
-    rect: { minX: 8.4, maxX: 9.6, minZ: 8.4, maxZ: 8.7 },
+    sill: 1.9,
+    head: 2.3,
+    thickness: 0.3,
+    rect: { minX: 9.0, maxX: 9.6, minZ: 8.6, maxZ: 8.9 },
   },
   {
+    kind: 'light',
     spaceId: 'kitchen',
+    neighbourId: 'voidWest',
     side: 'maxZ',
-    spanMin: 10.7,
-    spanMax: 11.9,
-    rect: { minX: 10.7, maxX: 11.9, minZ: 8.4, maxZ: 8.7 },
+    along: 'x',
+    spanMin: 10.1,
+    spanMax: 11.5,
+    sill: 0.9,
+    head: 2.1,
+    thickness: 0.3,
+    rect: { minX: 10.1, maxX: 11.5, minZ: 8.6, maxZ: 8.9 },
   },
   {
-    spaceId: 'mainSanitair',
+    kind: 'light',
+    spaceId: 'laundry',
+    neighbourId: 'voidEast',
     side: 'maxZ',
-    spanMin: 18.3,
-    spanMax: 19.5,
-    rect: { minX: 18.3, maxX: 19.5, minZ: 8.4, maxZ: 8.7 },
+    along: 'x',
+    spanMin: 15.4,
+    spanMax: 17.3,
+    sill: 0.6,
+    head: 2.3,
+    thickness: 0.3,
+    rect: { minX: 15.4, maxX: 17.3, minZ: 8.6, maxZ: 8.9 },
   },
   {
+    kind: 'air',
+    spaceId: 'mainBathCubicle',
+    neighbourId: 'voidEast',
+    side: 'maxZ',
+    along: 'x',
+    spanMin: 18.1,
+    spanMax: 18.8,
+    sill: 1.9,
+    head: 2.3,
+    thickness: 0.3,
+    rect: { minX: 18.1, maxX: 18.8, minZ: 8.6, maxZ: 8.9 },
+  },
+  {
+    kind: 'air',
+    spaceId: 'mainShowerCubicle',
+    neighbourId: 'voidEast',
+    side: 'maxZ',
+    along: 'x',
+    spanMin: 19.6,
+    spanMax: 20.2,
+    sill: 1.9,
+    head: 2.3,
+    thickness: 0.3,
+    rect: { minX: 19.6, maxX: 20.2, minZ: 8.6, maxZ: 8.9 },
+  },
+  {
+    kind: 'light',
     spaceId: 'utilityRoom',
-    side: 'maxZ',
-    spanMin: 20.7,
-    spanMax: 21.9,
-    rect: { minX: 20.7, maxX: 21.9, minZ: 9.7, maxZ: 10 },
+    neighbourId: 'voidEast',
+    side: 'minX',
+    along: 'z',
+    spanMin: 8.95,
+    spanMax: 9.65,
+    sill: 0.9,
+    head: 2.1,
+    // The one window not in a 0.30 wall: the owner kept the drawn 0.20 m wall
+    // between the utility room and the east void (ADR-006, join override).
+    thickness: 0.2,
+    rect: { minX: 20.3, maxX: 20.5, minZ: 8.95, maxZ: 9.65 },
   },
 ];
 
-/** The glazeable faces: sides C (`minZ`) and D (`maxX`) are never among them. */
-const GLAZEABLE_SIDES: readonly WindowSide[] = ['minX', 'maxZ'];
-
-/** Spaces that front open air but are not rooms, so they are never glazed. */
+/**
+ * Every space the schedule gives no window of its own, exhaustively.
+ *
+ * Together with the nine hosts of {@link EXPECTED_WINDOWS} this covers all 22
+ * spaces. The master bedroom is here on purpose and is the interesting one: it
+ * has an open face onto the side-A balcony and v1 glazed it, but the owner asked
+ * for no window at all, so its balcony door is its only opening.
+ */
 const UNGLAZED_SPACE_IDS: readonly SpaceId[] = [
   'balconyA',
-  'balconySlabB',
-  'voidWest',
-  'voidEast',
-  'stairs',
-  'corridor',
-  'linkCorridor',
-];
-
-/** Rooms whose only open face is side C, lit electrically instead (ADR-006). */
-const SIDE_C_ONLY_ROOM_IDS: readonly SpaceId[] = [
+  'masterBedroom',
   'livingRoom',
   'bedroomMaleKids',
   'bedroomFemaleKids',
+  'stairs',
+  'corridor',
+  'guestSanitair',
+  'mainSanitair',
+  'ccBalcony',
+  'balconySlabB',
+  'voidWest',
+  'voidEast',
 ];
 
+/** The kinds of space a window may look out onto, for every window but the `pass`. */
+const OPEN_AIR_KINDS: readonly string[] = ['openAir', 'void'];
+
 /**
- * Vertical sizes that share no value with `FLOOR_HEIGHTS`, so a real 0.90 m sill
- * or 2.10 m head surviving injection is visible.
+ * Vertical sizes that share no value with `FLOOR_HEIGHTS` and leave every head
+ * under the wall, so a sill or head leaking out of the heights is visible.
+ *
+ * `FloorHeights` no longer has a `windowSill` or a `windowHead` to leak: every
+ * window carries its own pair, declared in the WINDOW SCHEDULE. What is left to
+ * check is that the schedule's levels are the ones that come out, whatever
+ * heights go in.
  */
 const SYNTHETIC_HEIGHTS: FloorHeights = Object.freeze({
-  floorToFloor: 2.55,
-  wall: 2.22,
+  floorToFloor: 2.8,
+  wall: 2.5,
   door: 1.88,
   railing: 0.61,
-  windowSill: 0.42,
-  windowHead: 1.73,
 });
 
+/** A wall too low for the 2.30 m heads of the air windows and the laundry glazing. */
+const TOO_LOW_WALL = 2.2;
+
 /**
- * The tightest wall the rule leaves between a window and a door, in metres: the
- * master-bedroom window ends at z 1.63 and its balcony door starts at z 1.85.
- *
- * Larger than `WINDOW_SPEC.minJamb` because centring the window in the 1.45 m
- * free run pushes it away from the door.
+ * The tightest wall the schedule leaves between a window and a door of the same
+ * face, in metres: the laundry's glazing starts at x 15.40 and its balcony door
+ * ends at 15.20.
  */
-const TIGHTEST_DOOR_CLEARANCE = 0.22;
+const TIGHTEST_DOOR_CLEARANCE = 0.2;
 
-/** What the kitchen window would become if the door span were not widened at all. */
-const KITCHEN_SPAN_MIN_WITHOUT_JAMB = 10.75;
-/** What it would become if the jamb widened the wall instead of the door. */
-const KITCHEN_SPAN_MIN_WITH_SWAPPED_JAMB = 10.8;
+/**
+ * The v1 position of the laundry's balcony door, before the owner swapped it
+ * with the glazing, in metres.
+ *
+ * A door there would run 15.30–16.20, straight through the declared window, so
+ * feeding it to `getWindows` must be rejected.
+ */
+const CLASHING_DOOR_SPAN_MIN = 15.3;
+/** Clear width of that door, in metres. */
+const CLASHING_DOOR_WIDTH = 0.9;
 
-/** The two free stretches of the laundry's side-B face, in metres, both too short. */
-const LAUNDRY_FREE_RUNS: readonly number[] = [1, 1.1];
-
-const WINDOWS = getWindows(FLOOR_PLAN, A_B_FACE_DOORS);
+const WINDOWS = getWindows(FLOOR_PLAN, PORT_SCHEDULE);
 
 /**
  * Returns the window of one face of a room.
@@ -217,203 +253,310 @@ function windowOf(spaceId: SpaceId, side: WindowSide): FloorWindow | undefined {
 }
 
 /**
- * Returns the span of a window along the axis a door of the same face runs on.
+ * Returns the extent of a window's opening along the axis its width runs on.
  *
  * @param window - The window.
- * @returns `[min, max]` along the face, in metres.
+ * @returns The length of the hole along `window.along`, in metres.
  */
-function windowSpan(window: FloorWindow): readonly [number, number] {
-  return [window.spanMin, window.spanMax];
+function openingWidth(window: FloorWindow): number {
+  const { minX, maxX, minZ, maxZ } = window.opening.rect;
+  return window.along === 'x' ? maxX - minX : maxZ - minZ;
 }
 
 /**
- * Measures the solid wall between a window and a door of the same room, if they
- * share a face.
+ * Returns the thickness of the wall a window pierces, across its face.
  *
  * @param window - The window.
- * @param door - The door.
- * @returns The clearance in metres, negative when the two overlap, or
- *   `undefined` when they do not share a face.
+ * @returns The extent of the hole across the wall, in metres.
  */
-function doorClearance(window: FloorWindow, door: Port): number | undefined {
-  const faceAxis: PortAxis = window.side === 'minX' ? 'z' : 'x';
-  if (door.along !== faceAxis || !door.spaces.includes(window.spaceId)) {
-    return undefined;
-  }
-  const [windowMin, windowMax] = windowSpan(window);
-  return toPlanLength(Math.max(door.spanMin - windowMax, windowMin - (door.spanMin + door.width)));
+function openingThickness(window: FloorWindow): number {
+  const { minX, maxX, minZ, maxZ } = window.opening.rect;
+  return window.along === 'x' ? maxZ - minZ : maxX - minX;
+}
+
+/**
+ * Lists the ports that share a face with a window: same axis, and the port's
+ * other space is a neighbour across that very face.
+ *
+ * The face test is what keeps the guest room's balcony door away from its
+ * kitchen tunnel. Both run along z over exactly z 6.35–7.00, but the door is in
+ * the room's `minX` wall and the window in its `maxX` wall, so they never meet.
+ *
+ * @param window - The window.
+ * @param ports - The port schedule to search.
+ * @returns The ports in the same face, with their spans.
+ */
+function portsInFaceOf(
+  window: FloorWindow,
+  ports: readonly Port[],
+): readonly { readonly port: Port; readonly min: number; readonly max: number }[] {
+  const faceNeighbours = new Set(
+    getNeighbours(FLOOR_PLAN, window.spaceId)
+      .filter((contact) => contact.side === window.side)
+      .map((contact) => contact.neighbourId),
+  );
+  return ports.flatMap((port) => {
+    const [first, second] = port.spaces;
+    if (port.along !== window.along || !port.spaces.includes(window.spaceId)) {
+      return [];
+    }
+    const other = first === window.spaceId ? second : first;
+    if (!faceNeighbours.has(other)) {
+      return [];
+    }
+    return [{ port, min: port.spanMin, max: toPlanLength(port.spanMin + port.width) }];
+  });
 }
 
 describe('windows', () => {
   describe('WINDOW_SPEC', () => {
-    it('is the frozen 1.20 m window with a 0.10 m jamb (ADR-006)', () => {
-      expect(WINDOW_SPEC).toEqual({ width: 1.2, minJamb: 0.1 });
+    it('is the frozen jamb and clearance rule, with no width or height of its own', () => {
+      // v1 also carried `width: 1.2`, because every window was the same window. The
+      // schedule gives each one its own width, sill and head now, so a width here
+      // would be a second opinion: `toEqual` fails if one comes back.
+      expect(WINDOW_SPEC).toEqual({ minJamb: 0.05, minClearance: 0.1 });
       expect(Object.isFrozen(WINDOW_SPEC)).toBe(true);
     });
   });
 
   describe('the windows of the typical floor', () => {
-    it('glazes exactly the eight expected faces, in plan order', () => {
-      expect(WINDOWS.map((window) => `${window.spaceId} ${window.side}`)).toEqual(
-        EXPECTED_WINDOWS.map((expected) => `${expected.spaceId} ${expected.side}`),
+    it('realises exactly the nine declared windows, in schedule order', () => {
+      expect(WINDOWS.map((window) => `${window.spaceId} → ${window.neighbourId}`)).toEqual(
+        EXPECTED_WINDOWS.map((expected) => `${expected.spaceId} → ${expected.neighbourId}`),
       );
       expect(WINDOWS).toHaveLength(EXPECTED_WINDOWS.length);
     });
 
     it.each(EXPECTED_WINDOWS)(
-      'places the $side window of $spaceId at $spanMin–$spanMax',
-      ({ spaceId, side, spanMin, spanMax, rect }) => {
-        const window = windowOf(spaceId, side);
+      'places the $kind window of $spaceId at $spanMin–$spanMax, $sill–$head high',
+      (expected) => {
+        const window = windowOf(expected.spaceId, expected.side);
 
         expect(window).toBeDefined();
-        expect(window?.spanMin).toBe(spanMin);
-        expect(window?.spanMax).toBe(spanMax);
-        expect(window?.opening.rect).toEqual(rect);
+        expect(window?.kind).toBe(expected.kind);
+        expect(window?.neighbourId).toBe(expected.neighbourId);
+        expect(window?.along).toBe(expected.along);
+        expect(window?.spanMin).toBe(expected.spanMin);
+        expect(window?.spanMax).toBe(expected.spanMax);
+        expect(window?.sill).toBe(expected.sill);
+        expect(window?.head).toBe(expected.head);
+        expect(window?.opening.rect).toEqual(expected.rect);
+        expect(window?.opening.bottom).toBe(expected.sill);
+        expect(window?.opening.top).toBe(expected.head);
       },
     );
 
-    it('makes every window exactly one window width wide', () => {
-      WINDOWS.forEach((window) => {
-        expect(window.spanMax - window.spanMin).toBeCloseTo(WINDOW_SPEC.width, PRECISION_DIGITS);
-      });
-    });
+    it.each(EXPECTED_WINDOWS)(
+      'cuts the $kind window of $spaceId through the whole $thickness m wall',
+      (expected) => {
+        const window = windowOf(expected.spaceId, expected.side);
+        const contacts = getNeighbours(FLOOR_PLAN, expected.spaceId).filter(
+          (contact) =>
+            contact.neighbourId === expected.neighbourId && contact.side === expected.side,
+        );
 
-    it('spans the whole thickness of the wall it pierces', () => {
-      WINDOWS.forEach((window) => {
-        const { minX, maxX, minZ, maxZ } = window.opening.rect;
-        const thickness = window.side === 'minX' ? maxX - minX : maxZ - minZ;
-
-        expect(thickness).toBeGreaterThan(0);
-        expect(window.side === 'minX' ? maxZ - minZ : maxX - minX).toBeCloseTo(
-          WINDOW_SPEC.width,
+        expect(window).toBeDefined();
+        expect(openingThickness(window as FloorWindow)).toBeCloseTo(
+          expected.thickness,
           PRECISION_DIGITS,
         );
-      });
+        // The thickness is the gap the plan actually draws between the two spaces,
+        // not a constant: the utility room's window pierces the kept 0.20 m wall.
+        expect(contacts.length).toBeGreaterThan(0);
+        expect(
+          contacts.some(
+            (contact) => Math.abs(contact.gap - expected.thickness) <= LENGTH_TOLERANCE,
+          ),
+        ).toBe(true);
+      },
+    );
+
+    it.each(EXPECTED_WINDOWS)(
+      'makes the $kind window of $spaceId as wide as its declared span',
+      (expected) => {
+        const window = windowOf(expected.spaceId, expected.side);
+        const width = expected.spanMax - expected.spanMin;
+
+        expect(window).toBeDefined();
+        expect((window as FloorWindow).spanMax - (window as FloorWindow).spanMin).toBeCloseTo(
+          width,
+          PRECISION_DIGITS,
+        );
+        expect(openingWidth(window as FloorWindow)).toBeCloseTo(width, PRECISION_DIGITS);
+        expect(width).toBeGreaterThan(0);
+      },
+    );
+
+    it('gives the floor windows of several different widths and heights', () => {
+      // The one assertion v1 could not have made: it produced 1.20 × 1.20 everywhere,
+      // and a test that passed on a single size would still pass if the schedule were
+      // ignored and one size derived again.
+      const widths = new Set(
+        WINDOWS.map((window) => toPlanLength(window.spanMax - window.spanMin)),
+      );
+      const sills = new Set(WINDOWS.map((window) => window.sill));
+      const heads = new Set(WINDOWS.map((window) => window.head));
+
+      expect(widths.size).toBeGreaterThan(1);
+      expect(sills.size).toBeGreaterThan(1);
+      expect(heads.size).toBeGreaterThan(1);
     });
   });
 
-  describe('the glazing rule', () => {
-    it('never glazes side C or side D', () => {
-      WINDOWS.forEach((window) => {
-        expect(GLAZEABLE_SIDES).toContain(window.side);
-        // Side C is the inside of the north exterior wall, side D the east one.
-        expect(window.opening.rect.minZ).toBeGreaterThan(INTERIOR_RECT.minZ);
-        expect(window.opening.rect.maxX).toBeLessThan(INTERIOR_RECT.maxX);
-      });
-    });
-
+  describe('the glazing rules that are left', () => {
     it('glazes rooms only', () => {
       WINDOWS.forEach((window) => {
         expect(getSpace(FLOOR_PLAN, window.spaceId).kind).toBe('room');
       });
     });
 
-    it.each(UNGLAZED_SPACE_IDS)('gives %s no window, whatever it fronts', (spaceId) => {
+    it.each(UNGLAZED_SPACE_IDS)('gives %s no window of its own', (spaceId) => {
       expect(WINDOWS.filter((window) => window.spaceId === spaceId)).toEqual([]);
     });
 
-    it.each(SIDE_C_ONLY_ROOM_IDS)('gives %s no window: it faces side C only', (spaceId) => {
-      expect(WINDOWS.filter((window) => window.spaceId === spaceId)).toEqual([]);
+    it('accounts for every space: nine glazed, thirteen not', () => {
+      const glazed = new Set(WINDOWS.map((window) => window.spaceId));
+
+      expect([...glazed].sort()).toEqual(
+        [...new Set(EXPECTED_WINDOWS.map((expected) => expected.spaceId))].sort(),
+      );
+      expect(glazed.size + UNGLAZED_SPACE_IDS.length).toBe(FLOOR_PLAN.spaces.length);
+      expect(UNGLAZED_SPACE_IDS.filter((id) => glazed.has(id))).toEqual([]);
     });
 
-    it('gives the laundry no window: both free runs of its side-B face are too short', () => {
-      expect(WINDOWS.filter((window) => window.spaceId === 'laundry')).toEqual([]);
-      LAUNDRY_FREE_RUNS.forEach((run) => {
-        expect(run).toBeLessThan(WINDOW_SPEC.width);
+    it('gives the master bedroom no window, though its balcony face could take one', () => {
+      // Not a vacuous negative: the master bedroom has a 3.40 m face onto the side-A
+      // balcony and v1 glazed it at z 0.43–1.63. The owner asked for none.
+      expect(WINDOWS.filter((window) => window.spaceId === 'masterBedroom')).toEqual([]);
+      expect(
+        getNeighbours(FLOOR_PLAN, 'masterBedroom').some(
+          (contact) => contact.neighbourId === 'balconyA',
+        ),
+      ).toBe(true);
+    });
+
+    it('lets only the pass window look into another room', () => {
+      WINDOWS.forEach((window) => {
+        const neighbourKind = getSpace(FLOOR_PLAN, window.neighbourId).kind;
+        if (window.kind === 'pass') {
+          expect(OPEN_AIR_KINDS).not.toContain(neighbourKind);
+        } else {
+          expect(OPEN_AIR_KINDS).toContain(neighbourKind);
+        }
       });
     });
 
-    it('gives the utility room a side-B window but none on its 1.00 m void face', () => {
-      expect(windowOf('utilityRoom', 'maxZ')).toBeDefined();
-      expect(windowOf('utilityRoom', 'minX')).toBeUndefined();
+    it('has exactly one pass window: the guest room tunnel to the kitchen', () => {
+      const passes = WINDOWS.filter((window) => window.kind === 'pass');
+
+      expect(passes).toHaveLength(1);
+      expect(passes[0].spaceId).toBe('guestRoom');
+      expect(passes[0].neighbourId).toBe('kitchen');
+      expect(getSpace(FLOOR_PLAN, 'kitchen').kind).toBe('room');
     });
 
-    it('gives the control center one window on each of its two open faces', () => {
-      expect(WINDOWS.filter((window) => window.spaceId === 'controlCenter')).toHaveLength(
-        GLAZEABLE_SIDES.length,
-      );
+    it('puts every window under the wall it pierces', () => {
+      WINDOWS.forEach((window) => {
+        expect(window.head).toBeGreaterThan(window.sill);
+        expect(window.sill).toBeGreaterThanOrEqual(0);
+        expect(window.head).toBeLessThanOrEqual(FLOOR_HEIGHTS.wall);
+      });
     });
   });
 
-  describe('door clearance', () => {
+  describe('clearance from the doors', () => {
     const clearances = WINDOWS.flatMap((window) =>
-      A_B_FACE_DOORS.flatMap((door) => {
-        const clearance = doorClearance(window, door);
-        return clearance === undefined ? [] : [{ window, door, clearance }];
-      }),
+      portsInFaceOf(window, PORT_SCHEDULE).map(({ port, min, max }) => ({
+        window,
+        port,
+        clearance: toPlanLength(Math.max(min - window.spanMax, window.spanMin - max)),
+      })),
     );
 
-    it('measures a clearance for the windows that share a face with a door', () => {
+    it('finds windows that really do share a face with a door', () => {
       expect(clearances.length).toBeGreaterThan(0);
     });
 
-    it('never lets a window span overlap a door span', () => {
+    it('never lets a window overlap a door of the same face', () => {
       clearances.forEach(({ clearance }) => {
         expect(clearance).toBeGreaterThan(0);
       });
     });
 
-    it('keeps at least the jamb of solid wall, the tightest being 0.22 m', () => {
+    it('keeps at least the clearance of solid wall, the tightest being 0.20 m', () => {
       clearances.forEach(({ clearance }) => {
-        expect(clearance).toBeGreaterThanOrEqual(WINDOW_SPEC.minJamb - LENGTH_TOLERANCE);
+        expect(clearance).toBeGreaterThanOrEqual(WINDOW_SPEC.minClearance - LENGTH_TOLERANCE);
       });
 
       expect(Math.min(...clearances.map(({ clearance }) => clearance))).toBe(
         TIGHTEST_DOOR_CLEARANCE,
       );
     });
-  });
 
-  describe('injected heights', () => {
-    it('takes the sill and the head from the heights it is given', () => {
-      const injected = getWindows(FLOOR_PLAN, A_B_FACE_DOORS, SYNTHETIC_HEIGHTS);
+    it('lets a door and a window share a span when they are in opposite walls', () => {
+      const tunnel = windowOf('guestRoom', 'maxX');
+      const balconyDoor = PORT_SCHEDULE.find(
+        (port) => port.spaces.includes('guestRoom') && port.spaces.includes('balconyA'),
+      );
 
-      expect(injected).toHaveLength(EXPECTED_WINDOWS.length);
-      injected.forEach((window) => {
-        expect(window.opening.bottom).toBe(SYNTHETIC_HEIGHTS.windowSill);
-        expect(window.opening.top).toBe(SYNTHETIC_HEIGHTS.windowHead);
-        expect(window.opening.bottom).not.toBe(FLOOR_HEIGHTS.windowSill);
-        expect(window.opening.top).not.toBe(FLOOR_HEIGHTS.windowHead);
-      });
+      expect(tunnel).toBeDefined();
+      expect(balconyDoor).toBeDefined();
+      // Same axis, same z, and no clash: the door is in the room's minX wall and the
+      // tunnel in its maxX wall, which is exactly the case a span-only check breaks on.
+      expect(balconyDoor?.along).toBe(tunnel?.along);
+      expect(balconyDoor?.spanMin).toBe(tunnel?.spanMin);
+      expect(toPlanLength((balconyDoor?.spanMin ?? 0) + (balconyDoor?.width ?? 0))).toBe(
+        tunnel?.spanMax,
+      );
+      expect(portsInFaceOf(tunnel as FloorWindow, PORT_SCHEDULE)).toEqual([]);
     });
 
-    it('falls back to the floor heights, a 1.20 m tall window from 0.90 m', () => {
-      WINDOWS.forEach((window) => {
-        expect(window.opening.bottom).toBe(FLOOR_HEIGHTS.windowSill);
-        expect(window.opening.top).toBe(FLOOR_HEIGHTS.windowHead);
-        expect(window.opening.top - window.opening.bottom).toBeCloseTo(
-          WINDOW_SPEC.width,
-          PRECISION_DIGITS,
-        );
+    it('rejects a door drawn through a declared window', () => {
+      // The laundry's balcony door before the owner swapped it with the glazing: it
+      // would run 15.30–16.20, through the window at 15.40–17.30.
+      const clashing: Port = Object.freeze({
+        spaces: Object.freeze(['laundry', 'balconySlabB'] as const),
+        kind: 'door',
+        along: 'x',
+        spanMin: CLASHING_DOOR_SPAN_MIN,
+        width: CLASHING_DOOR_WIDTH,
+      });
+
+      expect(() => getWindows(FLOOR_PLAN, [...PORT_SCHEDULE, clashing])).toThrow(RangeError);
+    });
+  });
+
+  describe('heights', () => {
+    it('takes every sill and head from the schedule, never from the floor heights', () => {
+      const injected = getWindows(FLOOR_PLAN, PORT_SCHEDULE, SYNTHETIC_HEIGHTS);
+
+      expect(injected).toHaveLength(EXPECTED_WINDOWS.length);
+      injected.forEach((window, index) => {
+        expect(window.sill).toBe(EXPECTED_WINDOWS[index].sill);
+        expect(window.head).toBe(EXPECTED_WINDOWS[index].head);
+        // Two assertions deleted here. They pinned the opening away from
+        // `SYNTHETIC_HEIGHTS.windowSill` / `.windowHead`, which no longer exist:
+        // there is no floor-wide sill or head for an opening to pick up by
+        // mistake. The two assertions above are the positive form and are
+        // stronger — they name the level each window must have.
+        expect(window.opening.bottom).toBe(EXPECTED_WINDOWS[index].sill);
+        expect(window.opening.top).toBe(EXPECTED_WINDOWS[index].head);
       });
     });
 
     it('moves no window when the heights change', () => {
-      const injected = getWindows(FLOOR_PLAN, A_B_FACE_DOORS, SYNTHETIC_HEIGHTS);
+      const injected = getWindows(FLOOR_PLAN, PORT_SCHEDULE, SYNTHETIC_HEIGHTS);
 
       expect(injected.map((window) => window.opening.rect)).toEqual(
         WINDOWS.map((window) => window.opening.rect),
       );
     });
-  });
 
-  describe('the door table drives the result', () => {
-    it('places no window at all when every port is ignored', () => {
-      const withoutDoors = getWindows(FLOOR_PLAN, []);
+    it('refuses a wall too low for the windows it must carry', () => {
+      const lowWall: FloorHeights = Object.freeze({ ...FLOOR_HEIGHTS, wall: TOO_LOW_WALL });
 
-      // The laundry's whole 3.20 m face is then free, so it gains a window.
-      expect(withoutDoors.length).toBeGreaterThan(EXPECTED_WINDOWS.length);
-      expect(withoutDoors.filter((window) => window.spaceId === 'laundry')).toHaveLength(1);
-    });
-
-    it('centres the kitchen window in the run the jamb-widened door leaves', () => {
-      // Without the jamb the free run would be x 10.00–12.70 and the window
-      // would start at 10.75; widening the wall instead of the door would give
-      // 10.80. Only widening the door by the jamb on both sides gives 10.70.
-      expect(windowOf('kitchen', 'maxZ')?.spanMin).toBe(EXPECTED_WINDOWS[5].spanMin);
-      expect([KITCHEN_SPAN_MIN_WITHOUT_JAMB, KITCHEN_SPAN_MIN_WITH_SWAPPED_JAMB]).not.toContain(
-        windowOf('kitchen', 'maxZ')?.spanMin,
-      );
+      expect(TOO_LOW_WALL).toBeLessThan(Math.max(...EXPECTED_WINDOWS.map(({ head }) => head)));
+      expect(() => getWindows(FLOOR_PLAN, PORT_SCHEDULE, lowWall)).toThrow(RangeError);
     });
   });
 

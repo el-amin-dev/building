@@ -1,7 +1,12 @@
 import { getBuiltFloor } from '../domain/builtFloor.ts';
 import type { PlanBox } from '../domain/planBox.ts';
-import { FLOOR_MATERIAL_KEYS, getCeilingLayout, getFloorLayout } from './floorLayout.ts';
-import type { CeilingLayout } from './floorLayout.ts';
+import {
+  FLOOR_MATERIAL_KEYS,
+  getCeilingLayout,
+  getFixtureLayout,
+  getFloorLayout,
+} from './floorLayout.ts';
+import type { CeilingLayout, FloorLayout } from './floorLayout.ts';
 import { MATERIAL_PALETTE } from './floorMaterials.ts';
 import type { FloorMaterialKey } from './floorMaterials.ts';
 import { MergedBoxesMesh } from './MergedBoxesMesh.tsx';
@@ -21,6 +26,20 @@ const FLOOR_LAYOUT = getFloorLayout(getBuiltFloor());
 
 /** The ceilings and light panels, built once for the same reason. */
 const CEILING_LAYOUT = getCeilingLayout();
+
+/**
+ * Everything drawn in both views, in one object: the built floor plus the sanitary ware.
+ *
+ * The fixtures come from the spec rather than from a `BuiltFloor` (`floorLayout.ts`), so
+ * they arrive as a second layout and are folded into the first here. Merging once, at module
+ * level, is what keeps the rule of this component intact: one mesh per material, over one
+ * object, whatever bucket a solid happened to be derived by. Every bucket keeps its identity
+ * for the life of the page, which is what `MergedBoxesMesh` needs.
+ */
+const ALWAYS_DRAWN_LAYOUT: FloorLayout = Object.freeze({
+  ...FLOOR_LAYOUT,
+  ...getFixtureLayout(),
+});
 
 /** The two material families that exist only while the interior is shown. */
 const CEILING_MATERIAL_KEYS: readonly (keyof CeilingLayout)[] = Object.freeze([
@@ -73,8 +92,11 @@ export interface FloorModelProps {
  * The whole built floor, drawn as one merged mesh per material.
  *
  * Everything the floor is made of is drawn: the walls and the parapets, the slab of every
- * space, the steps of the dog-leg, the railings and the television panel — and, inside, a
- * ceiling and a light panel per roofed space. The grouping is `floorLayout.ts`'s and the
+ * space, the steps of the dog-leg, the railings, the television panel and the sanitary ware
+ * of the bathrooms — and, inside, a ceiling and a light panel per roofed space. The
+ * sanitary ware is drawn in both views on purpose: a ceiling has to go so that the floor can
+ * be seen from above, and a bath is one of the things worth seeing once it has. The
+ * grouping is `floorLayout.ts`'s and the
  * geometry `mergeBoxes.ts`'s, so this component only decides what is on screen: one
  * `MergedBoxesMesh` per non-empty bucket, in palette order.
  *
@@ -93,7 +115,7 @@ export function FloorModel({ showCeilings }: FloorModelProps) {
         <MaterialMesh
           key={materialKey}
           materialKey={materialKey}
-          boxes={FLOOR_LAYOUT[materialKey]}
+          boxes={ALWAYS_DRAWN_LAYOUT[materialKey]}
         />
       ))}
       {showCeilings &&

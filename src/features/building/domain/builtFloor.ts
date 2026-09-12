@@ -48,27 +48,50 @@ import { getStairsLayout } from './stairs.ts';
 import type { StairsLayout } from './stairs.ts';
 import { getTvPanel } from './tvPanel.ts';
 import { getWallPieces } from './walls.ts';
+import type { WallPiece } from './walls.ts';
 import { getWindows } from './windows.ts';
 import type { FloorWindow } from './windows.ts';
 
 /** Every solid of one storey, as the renderer needs it. */
 export interface BuiltFloor {
   /** The solid wall blocks, with every opening punched out (`walls.ts`, brief §2). */
-  readonly walls: readonly PlanBox[];
+  /**
+   * The wall solids, each carrying whether it is full height or a parapet.
+   *
+   * Declared as `WallPiece`, not `PlanBox`: a `WallPiece` is assignable to a
+   * `PlanBox`, so widening it here compiles and breaks nothing — and silently
+   * drops `kind` at the one boundary that consumes it, leaving the renderer to
+   * infer from a height what the plan already states.
+   */
+  readonly walls: readonly WallPiece[];
   /** The slab under every space that has a floor (`slabs.ts`, brief §8). */
   readonly slabs: readonly FloorSlab[];
   /** The guard railings closing the fall edges of the side-B strip (`railings.ts`). */
   readonly railings: readonly Railing[];
   /** The windows of the floor, each with the hole it cuts (`windows.ts`, ADR-006). */
   readonly windows: readonly FloorWindow[];
-  /** The dog-leg stairs: flights, half-landing, landing and arrival (`stairs.ts`, brief §4.2). */
+  /**
+   * The stairs: whatever pieces the plan declares, their levels, the rects that
+   * block movement, and the arrival pose (`stairs.ts`).
+   *
+   * Only the arrival landing is floor at this storey, but the stair does not stop
+   * here — it runs through (owner). One flight rises out of this level and the
+   * other arrives at it from the half-landing below, so tread tops run from
+   * −1.50 to +1.50 and the half-landing footprint carries a surface at both.
+   */
   readonly stairs: StairsLayout;
   /** The television panel of the lounge (`tvPanel.ts`, brief §4.1). */
   readonly tvPanel: PlanBox;
   /**
    * Every hole fed to the wall generator: the port openings in schedule order,
    * then the window openings in window order. Doors run from the finished floor
-   * to `heights.door`, windows from `heights.windowSill` to `heights.windowHead`.
+   * to `heights.door`; each window carries its own sill and head, because they
+   * now differ by purpose — a bathroom vent sits high, a pass-through at counter
+   * height, a daylight window low and tall.
+   *
+   * That difference is what makes movement through a window impossible without a
+   * rule forbidding it: a sill leaves the wall solid at body height, so a walker
+   * meets masonry at a window and a hole only at a door.
    */
   readonly openings: readonly PlanBox[];
 }

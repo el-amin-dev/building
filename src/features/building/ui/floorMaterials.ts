@@ -2,9 +2,9 @@
  * Named material palette of the built floor.
  *
  * Every surface kind of the floor (walls, parapets, the slabs of each space kind, the
- * ceilings and their light panels, the railings, the stairs, the television panel) has one
- * entry here, so a mesh never carries its own inline colour and a Leva control can later
- * override a whole family of surfaces by name.
+ * ceilings and their light panels, the railings, the stairs, the television panel, the
+ * sanitary ware) has one entry here, so a mesh never carries its own inline colour and a
+ * Leva control can later override a whole family of surfaces by name.
  *
  * The palette is deliberately low-contrast indoors: the interior surfaces are warm
  * off-whites and light beiges of close value, so the many rooms read as one building
@@ -27,6 +27,14 @@ const SCREED_BEIGE = '#d6c7ae';
 const CIRCULATION_BEIGE = '#c2b49b';
 /** Grey outdoor tile of the balconies, clearly not an indoor floor. */
 const TERRACE_GREY = '#9fa8a8';
+/**
+ * Cool, pale ceramic tile of a wet room.
+ *
+ * The one interior floor that steps out of the warm beige family, because a bathroom floor
+ * is the one interior floor that really is tiled rather than screeded. It stays close in
+ * value to the screeds, so the floor still reads as one building.
+ */
+const WET_TILE_GREY = '#ccd4d2';
 /** Near-white ceiling, the lightest surface indoors, so rooms feel open. */
 const CEILING_WHITE = '#f4f6f7';
 /** Warm white of the ceiling light panel's own surface. */
@@ -39,6 +47,8 @@ const RAILING_STEEL = '#7f8a93';
 const STAIRS_TIMBER = '#a98f6f';
 /** Switched-off television: the darkest surface on the floor. */
 const TV_PANEL_BLACK = '#16191c';
+/** Glazed white ceramic of a basin, a bath and a shower tray. */
+const SANITARY_WHITE = '#f0f3f4';
 
 /** Fully diffuse finish: plaster and raw screed scatter all the light they receive. */
 const MATTE_ROUGHNESS = 0.9;
@@ -50,6 +60,8 @@ const VARNISH_ROUGHNESS = 0.55;
 const PANEL_ROUGHNESS = 0.4;
 /** Brushed metal: a tight highlight. */
 const BRUSHED_ROUGHNESS = 0.35;
+/** Fired ceramic glaze: wetter-looking than paint, short of a mirror. */
+const GLAZE_ROUGHNESS = 0.25;
 /** Glass screen: the sharpest highlight on the floor. */
 const SCREEN_ROUGHNESS = 0.2;
 
@@ -75,11 +87,13 @@ export type FloorMaterialKey =
   | 'slabRoom'
   | 'slabCirculation'
   | 'slabOpenAir'
+  | 'slabWet'
   | 'ceiling'
   | 'lightPanel'
   | 'railing'
   | 'stairs'
-  | 'tvPanel';
+  | 'tvPanel'
+  | 'sanitaryWare';
 
 /** The `meshStandardMaterial` settings of one surface family. */
 export interface FloorMaterialSpec {
@@ -111,16 +125,24 @@ function makeSpec(spec: FloorMaterialSpec): FloorMaterialSpec {
  * The material of every surface family of the floor, frozen down to each spec.
  *
  * - `wall`: the interior and exterior walls, the largest surface of the floor;
- * - `parapet`: the low walls edging the balconies and the stair void, a shade darker so
- *   they read as elements standing on the slab;
+ * - `parapet`: the low walls edging the two balcony slabs, a shade darker so they read as
+ *   elements standing on the slab. Side B is a full-height exterior wall like every other
+ *   side, so no parapet runs along it;
  * - `slabRoom`, `slabCirculation`, `slabOpenAir`: the floor slabs, one per walkable space
  *   kind, so a corridor and a balcony are told apart underfoot (a `void` space has none);
+ * - `slabWet`: the slab of a wet room — the two bathrooms and the four bath and shower
+ *   cubicles inside them. A wet room is not a space *kind* of its own: every one of them is
+ *   an ordinary `room`, so `getSlabMaterialKey` cannot pick this out and `floorLayout.ts`
+ *   chooses it per space instead, from the sanitary ware the room holds;
  * - `ceiling`: the underside of the slab above, hidden in the exterior view;
  * - `lightPanel`: the emissive panel that lights each room — the room's light is this
  *   surface, not a point light, so it must glow on its own;
  * - `railing`: the metal balustrades, metallic against the matte surfaces around them;
  * - `stairs`: the flight and its steps, a timber tone distinct from walls and screed;
- * - `tvPanel`: the television screen in the living room, the one dark surface.
+ * - `tvPanel`: the television screen in the living room, the one dark surface;
+ * - `sanitaryWare`: the basins, baths and shower trays standing in the bathrooms — the one
+ *   family here that is furniture rather than building fabric, glazed so it separates from
+ *   the tiled floor it stands on without leaving the near-white end of the palette.
  */
 export const MATERIAL_PALETTE: Readonly<Record<FloorMaterialKey, FloorMaterialSpec>> =
   Object.freeze({
@@ -150,6 +172,12 @@ export const MATERIAL_PALETTE: Readonly<Record<FloorMaterialKey, FloorMaterialSp
     }),
     slabOpenAir: makeSpec({
       color: TERRACE_GREY,
+      roughness: SATIN_ROUGHNESS,
+      metalness: NON_METAL,
+      dithering: DITHER_LARGE_SURFACE,
+    }),
+    slabWet: makeSpec({
+      color: WET_TILE_GREY,
       roughness: SATIN_ROUGHNESS,
       metalness: NON_METAL,
       dithering: DITHER_LARGE_SURFACE,
@@ -184,6 +212,12 @@ export const MATERIAL_PALETTE: Readonly<Record<FloorMaterialKey, FloorMaterialSp
       color: TV_PANEL_BLACK,
       roughness: SCREEN_ROUGHNESS,
       metalness: FAINTLY_METAL,
+      dithering: DITHER_SMALL_ELEMENT,
+    }),
+    sanitaryWare: makeSpec({
+      color: SANITARY_WHITE,
+      roughness: GLAZE_ROUGHNESS,
+      metalness: NON_METAL,
       dithering: DITHER_SMALL_ELEMENT,
     }),
   });

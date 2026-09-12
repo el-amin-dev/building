@@ -11,6 +11,20 @@ const OFF_GRID_SPAN_MIN = 5.655;
 const ZERO_WIDTH = 0;
 const NEGATIVE_WIDTH = -0.9;
 
+/**
+ * Start of a door along x that really does sit in one wall contact, in metres.
+ *
+ * On the redrawn floor the corridor meets the kitchen along x over 10.00–11.90
+ * (corridor rect 1 ↔ kitchen rect 0) and again over 12.20–14.10, and meets the
+ * west void over 10.00–11.65, so a 0.90 m door starting here fits inside one
+ * contact of either pair. It was 11.55, which runs to 12.45 — off the end of the
+ * first contact and short of the second. Every case below therefore carried a
+ * second, geometric defect on top of the one it names, and the cases meant to be
+ * rejected for a bad id, kind, axis or width were passing only because those
+ * checks happen to run before the geometry one.
+ */
+const DOOR_SPAN_MIN = 10.5;
+
 /** An id no space of the plan carries, for the unknown-id check. */
 const UNKNOWN_ID = 'nowhere' as unknown as SpaceId;
 /** A kind outside the {@link PortKind} union, for the enum check. */
@@ -39,43 +53,43 @@ function makePort(
 }
 
 /** A valid port, used as the base of the rejection cases. */
-const VALID_PORT = makePort(['corridor', 'kitchen'], 'door', 'x', 11.55, DOOR_WIDTH);
+const VALID_PORT = makePort(['corridor', 'kitchen'], 'door', 'x', DOOR_SPAN_MIN, DOOR_WIDTH);
 
 /** One schedule the validator must reject, with the phrase its message carries. */
 const REJECTED: readonly (readonly [string, readonly Port[], RegExp])[] = [
   [
     'a space that is not in the plan',
-    [makePort(['corridor', UNKNOWN_ID], 'door', 'x', 11.55, DOOR_WIDTH)],
+    [makePort(['corridor', UNKNOWN_ID], 'door', 'x', DOOR_SPAN_MIN, DOOR_WIDTH)],
     /ports\[0\].*is not in the plan/,
   ],
   [
     'a port from a space to itself',
-    [makePort(['corridor', 'corridor'], 'door', 'x', 11.55, DOOR_WIDTH)],
+    [makePort(['corridor', 'corridor'], 'door', 'x', DOOR_SPAN_MIN, DOOR_WIDTH)],
     /ports\[0\].*two distinct spaces/,
   ],
   [
     'an unknown kind',
-    [makePort(['corridor', 'kitchen'], UNKNOWN_KIND, 'x', 11.55, DOOR_WIDTH)],
+    [makePort(['corridor', 'kitchen'], UNKNOWN_KIND, 'x', DOOR_SPAN_MIN, DOOR_WIDTH)],
     /ports\[0\].*kind must be one of/,
   ],
   [
     'an unknown axis',
-    [makePort(['corridor', 'kitchen'], 'door', UNKNOWN_AXIS, 11.55, DOOR_WIDTH)],
+    [makePort(['corridor', 'kitchen'], 'door', UNKNOWN_AXIS, DOOR_SPAN_MIN, DOOR_WIDTH)],
     /ports\[0\].*along must be one of/,
   ],
   [
     'a zero width',
-    [makePort(['corridor', 'kitchen'], 'door', 'x', 11.55, ZERO_WIDTH)],
+    [makePort(['corridor', 'kitchen'], 'door', 'x', DOOR_SPAN_MIN, ZERO_WIDTH)],
     /ports\[0\].*width must be/,
   ],
   [
     'a negative width',
-    [makePort(['corridor', 'kitchen'], 'door', 'x', 11.55, NEGATIVE_WIDTH)],
+    [makePort(['corridor', 'kitchen'], 'door', 'x', DOOR_SPAN_MIN, NEGATIVE_WIDTH)],
     /ports\[0\].*width must be/,
   ],
   [
     'a width off the centimetre grid',
-    [makePort(['corridor', 'kitchen'], 'door', 'x', 11.55, OFF_GRID_WIDTH)],
+    [makePort(['corridor', 'kitchen'], 'door', 'x', DOOR_SPAN_MIN, OFF_GRID_WIDTH)],
     /ports\[0\].*width must be/,
   ],
   [
@@ -85,7 +99,7 @@ const REJECTED: readonly (readonly [string, readonly Port[], RegExp])[] = [
   ],
   [
     'a port onto a void',
-    [makePort(['kitchen', 'voidWest'], 'door', 'x', 11.0, DOOR_WIDTH)],
+    [makePort(['kitchen', 'voidWest'], 'door', 'x', DOOR_SPAN_MIN, DOOR_WIDTH)],
     /ports\[0\].*no floor/,
   ],
   [
@@ -110,7 +124,7 @@ const REJECTED: readonly (readonly [string, readonly Port[], RegExp])[] = [
   ],
   [
     'the same pair twice',
-    [VALID_PORT, makePort(['kitchen', 'corridor'], 'door', 'x', 11.55, DOOR_WIDTH)],
+    [VALID_PORT, makePort(['kitchen', 'corridor'], 'door', 'x', DOOR_SPAN_MIN, DOOR_WIDTH)],
     /ports\[1\].*repeats a pair/,
   ],
 ];
@@ -130,6 +144,23 @@ describe('validatePorts', () => {
     const ports = [VALID_PORT];
 
     expect(validatePorts(FLOOR_PLAN, ports)).toBe(ports);
+  });
+
+  it('builds the rejection cases on a base port the plan really accepts', () => {
+    // Almost every case below is VALID_PORT with one field spoiled. The base going
+    // stale is exactly how this file broke before: at x 11.55 it matched no wall
+    // contact, so the id, kind, axis and width cases still threw and still matched
+    // their phrase — for the base's geometry rather than for the defect they name.
+    // Nothing here proves a case fails for its own reason unless the base passes.
+    expect(VALID_PORT.spaces).toStrictEqual(['corridor', 'kitchen']);
+    expect(VALID_PORT.spanMin).toBe(DOOR_SPAN_MIN);
+    expect(VALID_PORT.width).toBe(DOOR_WIDTH);
+    expect(() => validatePorts(FLOOR_PLAN, [VALID_PORT])).not.toThrow();
+    expect(() =>
+      validatePorts(FLOOR_PLAN, [
+        makePort(['masterBedroom', 'corridor'], 'door', 'x', 5.65, DOOR_WIDTH),
+      ]),
+    ).not.toThrow();
   });
 
   it.each(REJECTED)('rejects %s', (_label, ports, message) => {

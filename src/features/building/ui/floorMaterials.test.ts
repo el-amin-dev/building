@@ -11,14 +11,25 @@ const EXPECTED_KEYS: readonly FloorMaterialKey[] = [
   'slabRoom',
   'slabCirculation',
   'slabOpenAir',
+  'slabWet',
   'ceiling',
   'lightPanel',
   'railing',
   'stairs',
   'tvPanel',
+  'sanitaryWare',
 ];
-/** The three slab keys, one per walkable space kind. */
+/**
+ * The three slab keys a space KIND can choose, one per walkable kind.
+ *
+ * `slabWet` is deliberately not here: a wet room is not a space kind — the two
+ * bathrooms and the four cubicles are ordinary `room` spaces — so
+ * `getSlabMaterialKey` cannot return it and `floorLayout.ts` picks it per space
+ * from the sanitary ware the room holds.
+ */
 const SLAB_KEYS: readonly FloorMaterialKey[] = ['slabRoom', 'slabCirculation', 'slabOpenAir'];
+/** The slab of a wet room, chosen per space rather than per kind. */
+const WET_SLAB_KEY: FloorMaterialKey = 'slabWet';
 /** The only key allowed to emit light: the ceiling panel that lights a room. */
 const EMISSIVE_KEY: FloorMaterialKey = 'lightPanel';
 /** Slab key expected for each space kind; a `void` space has no slab. */
@@ -78,8 +89,9 @@ describe('MATERIAL_PALETTE', () => {
 
     expect(dithered).toContain('wall');
     expect(dithered).toContain('ceiling');
-    expect(dithered).toEqual(expect.arrayContaining([...SLAB_KEYS]));
+    expect(dithered).toEqual(expect.arrayContaining([...SLAB_KEYS, WET_SLAB_KEY]));
     expect(dithered).not.toContain(EMISSIVE_KEY);
+    expect(dithered).not.toContain('sanitaryWare');
   });
 
   it('keeps a parapet visible against a wall', () => {
@@ -90,6 +102,29 @@ describe('MATERIAL_PALETTE', () => {
     const colors = SLAB_KEYS.map((key) => MATERIAL_PALETTE[key].color);
 
     expect(new Set(colors).size).toBe(SLAB_KEYS.length);
+  });
+
+  it('gives every family a colour of its own', () => {
+    // Load-bearing elsewhere: `FloorModel.test.tsx` names the bucket a mesh draws by
+    // looking its colour up in this palette. Two families sharing a colour would make
+    // that lookup answer with whichever key comes first, and every per-bucket assertion
+    // over there would quietly check the wrong mesh.
+    const colors = ENTRIES.map(([, spec]) => spec.color);
+
+    expect(new Set(colors).size).toBe(EXPECTED_KEYS.length);
+  });
+
+  it('tells a wet room underfoot from every other slab', () => {
+    const colors = [...SLAB_KEYS, WET_SLAB_KEY].map((key) => MATERIAL_PALETTE[key].color);
+
+    expect(new Set(colors).size).toBe(SLAB_KEYS.length + 1);
+  });
+
+  it('keeps the sanitary ware readable against the slab it stands on', () => {
+    const { sanitaryWare, slabWet } = MATERIAL_PALETTE;
+
+    expect(sanitaryWare.color).not.toBe(slabWet.color);
+    expect(sanitaryWare.roughness).toBeLessThan(slabWet.roughness);
   });
 
   it('sets the stairs and the railing apart from the walls and from each other', () => {

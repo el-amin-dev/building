@@ -6,12 +6,14 @@ import {
   rectsOverlap,
   toPlanLength,
 } from '../planGeometry.ts';
-import type { PlanRect } from '../planGeometry.ts';
+import type { PlanRect, RectSide } from '../planGeometry.ts';
 import { WALL_SPEC } from '../wallSpec.ts';
+import { deriveWalls } from '../walls.ts';
+import type { WallSide } from '../walls.ts';
 import { FLOOR_PLAN, INTERIOR_RECT } from './floorPlanData.ts';
 import { getJoinThickness } from './joins.ts';
 import { findSpaceAt, getNeighbours, getSpace } from './queries.ts';
-import type { FloorPlan, SpaceId } from './types.ts';
+import type { FloorPlan, SpaceContact, SpaceId } from './types.ts';
 import { validateFloorPlan } from './validateFloorPlan.ts';
 
 const PRECISION_DIGITS = 9;
@@ -20,10 +22,42 @@ const NO_WALL = 0;
 const KITCHEN_SHIFT_X = 0.05;
 
 /**
+ * Number of neighbour contacts the redrawn floor has, each wall counted from
+ * both of the rooms it separates.
+ *
+ * Pinned so that the gap checks cannot quietly start measuring fewer walls than
+ * the floor has.
+ */
+const CONTACT_COUNT = 116;
+
+/** Thickness of the one join the owner kept at a hand-set 0.20 m (voidEast ↔ utilityRoom). */
+const KEPT_DRAWN_WALL = 0.2;
+
+/**
  * The thickest wall of the plan: a line closer than this to a parallel face
  * may run inside that wall rather than across it.
  */
-const MAX_WALL_THICKNESS = Math.max(WALL_SPEC.exterior, WALL_SPEC.partition, WALL_SPEC.voidFacing);
+const MAX_WALL_THICKNESS = Math.max(
+  WALL_SPEC.exterior,
+  WALL_SPEC.insulated,
+  WALL_SPEC.partition,
+  WALL_SPEC.voidFacing,
+);
+
+/**
+ * Every gap the redrawn floor actually draws between two spaces, in metres.
+ *
+ * Isolation is a width now: a wall the owner named for sound and heat is built
+ * `insulated` (0.30) where a plain separator is built `partition` (0.15), so
+ * these four values are the complete vocabulary of the plan. A contact gap
+ * outside this set is a drawing error rather than a new kind of wall.
+ */
+const DRAWN_JOIN_GAPS: readonly number[] = [
+  NO_WALL,
+  WALL_SPEC.partition,
+  KEPT_DRAWN_WALL,
+  WALL_SPEC.insulated,
+];
 
 type Axis = 'x' | 'z';
 
@@ -51,56 +85,128 @@ interface SectionJoin {
   readonly end: number;
 }
 
-/** Explicit join exceptions of ADR-005 / ADR-006, plus a default void-facing join for contrast. */
+/**
+ * The join overrides of the plan, each with the gap it states, plus one
+ * kind-rule join for contrast.
+ *
+ * `voidEast ↔ utilityRoom` is written as a literal 0.20 and no longer as
+ * `WALL_SPEC.partition`: the two were the same number in v1 and are not any
+ * more, so spelling it as the partition thickness would pass for the wrong
+ * reason. `kitchen ↔ balconySlabB` is not an override at all — it is the
+ * weather-exposed rule giving 0.30 — and is here so that a bug making every
+ * join an override would still fail something.
+ */
 const JOIN_EXCEPTIONS: readonly (readonly [SpaceId, SpaceId, number])[] = [
   ['stairs', 'corridor', NO_WALL],
+  ['voidWest', 'ccBalcony', NO_WALL],
   ['voidWest', 'balconySlabB', NO_WALL],
   ['voidEast', 'balconySlabB', NO_WALL],
-  ['voidEast', 'utilityRoom', WALL_SPEC.partition],
+  ['voidEast', 'utilityRoom', KEPT_DRAWN_WALL],
   ['kitchen', 'balconySlabB', WALL_SPEC.voidFacing],
 ];
 
 /**
- * Neighbour ids of every space, derived by hand from the clear rects of
+ * Neighbour ids of every space, derived from the clear rects of
  * `floorPlanData.ts`: two spaces are neighbours when a face of one rect lies
  * within 0.30 m of a parallel face of the other and the two overlap along that
  * face by more than the tolerance. Several 0.30 m gaps are 0.30000000000000004
  * in floating point (for example balconyA maxX 1.30 → x 1.60), so these sets
  * also guard the tolerance of the contact gap. Symmetric: A lists B iff B lists A.
+ *
+ * Changed with the redrawn floor: `linkCorridor` is gone, absorbed into the
+ * guest room's north strip, which is why the guest room now reaches the side-A
+ * balcony and the stairs; `ccBalcony` is new; and the four bath and shower
+ * cubicles are rooms, so they have neighbours of their own.
  */
 const EXPECTED_NEIGHBOURS: Readonly<Record<SpaceId, readonly SpaceId[]>> = {
   // x 1.30 → 1.60 along the whole A side.
-  balconyA: ['masterBedroom', 'stairs', 'linkCorridor', 'controlCenter', 'voidWest'],
-  masterBedroom: ['balconyA', 'livingRoom', 'stairs', 'corridor'],
-  livingRoom: ['masterBedroom', 'bedroomMaleKids', 'corridor'],
-  bedroomMaleKids: ['livingRoom', 'bedroomFemaleKids', 'corridor'],
+  balconyA: ['controlCenter', 'guestRoom', 'masterBedroom', 'stairs'],
+  masterBedroom: ['balconyA', 'corridor', 'livingRoom', 'stairs'],
+  livingRoom: ['bedroomMaleKids', 'corridor', 'masterBedroom'],
+  bedroomMaleKids: ['bedroomFemaleKids', 'corridor', 'livingRoom'],
   bedroomFemaleKids: ['bedroomMaleKids', 'corridor', 'utilityRoom'],
-  stairs: ['balconyA', 'masterBedroom', 'corridor', 'linkCorridor'],
+  stairs: ['balconyA', 'corridor', 'guestRoom', 'masterBedroom'],
   corridor: [
-    'masterBedroom',
-    'livingRoom',
-    'bedroomMaleKids',
     'bedroomFemaleKids',
-    'stairs',
-    'linkCorridor',
+    'bedroomMaleKids',
     'guestRoom',
     'kitchen',
     'laundry',
+    'livingRoom',
     'mainSanitair',
+    'masterBedroom',
+    'stairs',
     'utilityRoom',
   ],
-  linkCorridor: ['balconyA', 'stairs', 'corridor', 'controlCenter', 'guestRoom'],
-  controlCenter: ['balconyA', 'linkCorridor', 'guestRoom', 'voidWest'],
-  guestRoom: ['corridor', 'linkCorridor', 'controlCenter', 'guestSanitair', 'kitchen', 'voidWest'],
-  guestSanitair: ['guestRoom', 'kitchen', 'voidWest'],
-  kitchen: ['corridor', 'guestRoom', 'guestSanitair', 'laundry', 'balconySlabB', 'voidWest'],
-  laundry: ['corridor', 'kitchen', 'mainSanitair', 'balconySlabB', 'voidEast'],
-  mainSanitair: ['corridor', 'laundry', 'utilityRoom', 'voidEast'],
-  utilityRoom: ['bedroomFemaleKids', 'corridor', 'mainSanitair', 'voidEast'],
-  balconySlabB: ['kitchen', 'laundry', 'voidWest', 'voidEast'],
-  voidWest: ['balconyA', 'controlCenter', 'guestRoom', 'guestSanitair', 'kitchen', 'balconySlabB'],
-  voidEast: ['laundry', 'mainSanitair', 'utilityRoom', 'balconySlabB'],
+  controlCenter: ['balconyA', 'ccBalcony', 'guestRoom'],
+  guestRoom: [
+    'balconyA',
+    'ccBalcony',
+    'controlCenter',
+    'corridor',
+    'guestBathCubicle',
+    'guestSanitair',
+    'kitchen',
+    'stairs',
+    'voidWest',
+  ],
+  guestSanitair: ['guestBathCubicle', 'guestRoom', 'guestShowerCubicle', 'kitchen'],
+  kitchen: [
+    'balconySlabB',
+    'corridor',
+    'guestRoom',
+    'guestSanitair',
+    'guestShowerCubicle',
+    'laundry',
+    'voidWest',
+  ],
+  laundry: ['balconySlabB', 'corridor', 'kitchen', 'mainBathCubicle', 'mainSanitair', 'voidEast'],
+  mainSanitair: ['corridor', 'laundry', 'mainBathCubicle', 'mainShowerCubicle', 'utilityRoom'],
+  utilityRoom: ['bedroomFemaleKids', 'corridor', 'mainSanitair', 'mainShowerCubicle', 'voidEast'],
+  ccBalcony: ['controlCenter', 'guestRoom', 'voidWest'],
+  balconySlabB: ['kitchen', 'laundry', 'voidEast', 'voidWest'],
+  voidWest: [
+    'balconySlabB',
+    'ccBalcony',
+    'guestBathCubicle',
+    'guestRoom',
+    'guestShowerCubicle',
+    'kitchen',
+  ],
+  voidEast: ['balconySlabB', 'laundry', 'mainBathCubicle', 'mainShowerCubicle', 'utilityRoom'],
+  guestBathCubicle: ['guestRoom', 'guestSanitair', 'guestShowerCubicle', 'voidWest'],
+  guestShowerCubicle: ['guestBathCubicle', 'guestSanitair', 'kitchen', 'voidWest'],
+  mainBathCubicle: ['laundry', 'mainSanitair', 'mainShowerCubicle', 'voidEast'],
+  mainShowerCubicle: ['mainBathCubicle', 'mainSanitair', 'utilityRoom', 'voidEast'],
 };
+
+/**
+ * The contacts where the per-PAIR summary of {@link getJoinThickness} is not the
+ * wall the plan draws there — and the only ones on this floor.
+ *
+ * **Not a bug, and not a list of tolerated failures.** The plan genuinely draws
+ * this one wall at BOTH widths: 0.15 under the guest room's north strip and 0.30
+ * on the control center's east wall, which `pnpm verify:plan` reports as
+ * "F1-R08-CTR-W2 … is insulated 1.70 of 2.50". `getJoinThickness` answers per
+ * pair, so it has a single number to give for two walls, and it gives the
+ * THICKEST — the owner's junction rule, "in thick wall when X wall meet Y wall …
+ * thick win". A per-pair comparison therefore cannot be exact for a wall that
+ * varies, which is why the gap checks below measure per STRETCH against
+ * `walls.ts` instead and stay exact everywhere, this wall included.
+ *
+ * Pinned exhaustively, both halves of the one wall, so that a NEW varying wall —
+ * a second pair whose summary stops matching what is drawn — fails here instead
+ * of being absorbed silently.
+ *
+ * This replaces a 28-entry list that tracked `joins.ts` inferring a 0.15
+ * partition from the two room kinds where the floor is built 0.30. That module
+ * now measures the gap the rects leave, so those twenty-eight disagreements no
+ * longer exist.
+ */
+const VARYING_JOIN_CONTACTS: readonly string[] = [
+  'controlCenter[0] minZ → guestRoom[0]',
+  'guestRoom[0] maxZ → controlCenter[0]',
+];
 
 /** A cross-section join skipped because its line runs inside a wall parallel to the line. */
 interface SkippedJoin {
@@ -114,15 +220,27 @@ interface SkippedJoin {
   readonly at: number;
 }
 
-/** The line z 7.00 through the kitchen centre, inside the guest-sanitair north wall. */
-const GUEST_KITCHEN_LINE_Z = 7.0;
-/** The line x 7.15 through the west void centre, inside the wall between the link corridor end and the guest room. */
-const CORRIDOR_GUEST_LINE_X = 7.15;
-
-/** Every join the cross-section check is expected to skip; any other skip fails. */
+/**
+ * Every join the cross-section check is expected to skip; any other skip fails.
+ *
+ * Ten now rather than two, and all for the one reason the check was given the
+ * rule for: the redrawn floor has far more rooms whose faces are not aligned, so
+ * many more centre lines graze a wall that runs parallel to them. The clearest
+ * are the guest suite's — a line along x through the bathroom depth runs inside
+ * the cubicle partitions, so the guest room and the kitchen appear to meet
+ * across three different walls.
+ */
 const EXPECTED_SKIPPED_JOINS: readonly SkippedJoin[] = [
-  { before: 'guestRoom', after: 'kitchen', axis: 'x', at: GUEST_KITCHEN_LINE_Z },
-  { before: 'corridor', after: 'guestRoom', axis: 'z', at: CORRIDOR_GUEST_LINE_X },
+  { before: 'balconyA', after: 'guestRoom', axis: 'x', at: 7.2 },
+  { before: 'corridor', after: 'utilityRoom', axis: 'x', at: 5.75 },
+  { before: 'guestBathCubicle', after: 'guestShowerCubicle', axis: 'x', at: 8.03 },
+  { before: 'guestRoom', after: 'kitchen', axis: 'x', at: 6.93 },
+  { before: 'guestRoom', after: 'kitchen', axis: 'x', at: 7.2 },
+  { before: 'guestRoom', after: 'kitchen', axis: 'x', at: 7.82 },
+  { before: 'guestSanitair', after: 'voidWest', axis: 'z', at: 8.75 },
+  { before: 'laundry', after: 'utilityRoom', axis: 'x', at: 7.45 },
+  { before: 'mainBathCubicle', after: 'mainShowerCubicle', axis: 'x', at: 7.48 },
+  { before: 'mainSanitair', after: 'mainBathCubicle', axis: 'z', at: 17.83 },
 ];
 
 /**
@@ -167,6 +285,85 @@ function otherAxis(axis: Axis): Axis {
  */
 function overlapLength(a: readonly [number, number], b: readonly [number, number]): number {
   return Math.min(a[1], b[1]) - Math.max(a[0], b[0]);
+}
+
+/**
+ * Names a contact the way {@link INSULATED_CONTACTS} spells it.
+ *
+ * @param id - The queried space.
+ * @param contact - One of its contacts.
+ * @returns A label such as `kitchen[0] minX → guestRoom[0]`.
+ */
+function contactKey(id: SpaceId, contact: SpaceContact): string {
+  return `${id}[${String(contact.rectIndex)}] ${contact.side} → ${contact.neighbourId}[${String(contact.neighbourRectIndex)}]`;
+}
+
+/**
+ * Every wall face of the floor, with the stretches it is actually built from.
+ *
+ * The second opinion this file measures against. `walls.ts` tiles each face with
+ * `contacts`, one per stretch, each carrying its own span, thickness and reason —
+ * the migrated rule in full: a stated override wins, else the gap the rects leave
+ * IS the thickness, else the kind rule. Comparing per stretch rather than per
+ * pair is what makes the check exact on a wall built two widths along its length,
+ * and it is a genuinely independent derivation: `walls.ts` sweeps the source of
+ * truth's rooms itself rather than going through `getNeighbours`.
+ */
+const DERIVED_WALLS = deriveWalls();
+
+/** The face of a rect a contact sits on → the room side `walls.ts` calls it. */
+const FACE_OF_SIDE: Readonly<Record<RectSide, WallSide>> = Object.freeze({
+  minZ: 'north',
+  maxZ: 'south',
+  maxX: 'east',
+  minX: 'west',
+});
+
+/**
+ * Returns the coordinate of the face of a rect that a contact sits on.
+ *
+ * @param rect - The rect carrying the contact.
+ * @param side - The face of it that looks at the neighbour.
+ * @returns That face's coordinate on the axis it faces, in metres.
+ */
+function faceAt(rect: PlanRect, side: RectSide): number {
+  if (side === 'minX') {
+    return rect.minX;
+  }
+  if (side === 'maxX') {
+    return rect.maxX;
+  }
+  return side === 'minZ' ? rect.minZ : rect.maxZ;
+}
+
+/**
+ * Returns the thicknesses `walls.ts` builds along one neighbour contact.
+ *
+ * @param plan - The floor plan the contact was measured on.
+ * @param id - The queried space.
+ * @param contact - One of its contacts.
+ * @returns One thickness per stretch of that space's matching face which looks at
+ *   the same neighbour across the contact, in metres; empty when no stretch
+ *   covers it at all.
+ */
+function drawnThicknesses(plan: FloorPlan, id: SpaceId, contact: SpaceContact): readonly number[] {
+  const rect = getSpace(plan, id).rects[contact.rectIndex];
+  const at = faceAt(rect, contact.side);
+  return DERIVED_WALLS.filter(
+    (wall) =>
+      wall.roomId === id &&
+      wall.side === FACE_OF_SIDE[contact.side] &&
+      Math.abs(wall.at - at) <= LENGTH_TOLERANCE,
+  ).flatMap((wall) =>
+    wall.contacts
+      .filter(
+        (stretch) =>
+          stretch.neighbourId === contact.neighbourId &&
+          Math.min(stretch.spanMax, contact.spanMax) - Math.max(stretch.spanMin, contact.spanMin) >
+            LENGTH_TOLERANCE,
+      )
+      .map((stretch) => stretch.thickness),
+  );
 }
 
 /**
@@ -243,8 +440,8 @@ function sectionJoins(plan: FloorPlan, axis: Axis, at: number): SectionJoin[] {
  *
  * That happens when a rect the line does not cross has a face parallel to the
  * line closer than {@link MAX_WALL_THICKNESS}, alongside the join. For example
- * the line z = 7.00 through the kitchen centre runs inside the guest-sanitair
- * north wall between the guest room and the kitchen.
+ * a line along x through the guest bathroom's depth runs inside the cubicle
+ * partitions, so the guest room and the kitchen seem to meet across them.
  *
  * @param plan - The floor plan.
  * @param axis - The axis the line runs along.
@@ -265,11 +462,51 @@ function runsAlongWall(plan: FloorPlan, axis: Axis, at: number, join: SectionJoi
 }
 
 /**
+ * Returns the thicknesses `walls.ts` draws between the two spaces of a
+ * cross-section join, where the line crosses that wall.
+ *
+ * The wall between two spaces a line crosses runs along the OTHER axis, and its
+ * face sits at the start of the join, so the stretch of that face spanning the
+ * line's own position is the one number the section should measure — per stretch
+ * again, so a wall that changes width along its length is read at the point the
+ * line actually cuts it.
+ *
+ * @param axis - The axis the line runs along.
+ * @param at - Position of the line on the other axis, in metres.
+ * @param join - The join the line crosses.
+ * @returns The distinct thicknesses found there, in metres; normally exactly one.
+ */
+function drawnSectionThicknesses(axis: Axis, at: number, join: SectionJoin): readonly number[] {
+  const faceAxis = otherAxis(axis);
+  return [
+    ...new Set(
+      DERIVED_WALLS.filter(
+        (wall) =>
+          wall.roomId === join.before &&
+          wall.axis === faceAxis &&
+          Math.abs(wall.at - join.start) <= LENGTH_TOLERANCE,
+      ).flatMap((wall) =>
+        wall.contacts
+          .filter(
+            (stretch) =>
+              stretch.neighbourId === join.after &&
+              stretch.spanMin <= at + LENGTH_TOLERANCE &&
+              stretch.spanMax >= at - LENGTH_TOLERANCE,
+          )
+          .map((stretch) => stretch.thickness),
+      ),
+    ),
+  ];
+}
+
+/**
  * Checks every join on a cross-section line against its expected thickness.
  *
  * Joins at the plot boundary must be exterior walls and joins between two
  * segments of the same space must be empty. A join that runs alongside a nearby
- * parallel wall (see {@link runsAlongWall}) is skipped and reported as such.
+ * parallel wall (see {@link runsAlongWall}) is skipped and reported as such, and
+ * every other join must measure exactly the stretch of wall the plan draws where
+ * the line cuts it (see {@link drawnSectionThicknesses}).
  *
  * @param plan - The floor plan to cut.
  * @param axis - The axis the line runs along.
@@ -302,13 +539,13 @@ function checkSectionJoins(
       skipped.push({ before: join.before, after: join.after, axis, at: toPlanLength(at) });
       return;
     }
-    const expected = getJoinThickness(
-      plan,
-      getSpace(plan, join.before),
-      getSpace(plan, join.after),
-    );
-    if (Math.abs(gap - expected) > LENGTH_TOLERANCE) {
-      mismatches.push(`${label}, join ${String(expected)}`);
+    const drawn = drawnSectionThicknesses(axis, at, join);
+    if (drawn.length !== 1) {
+      mismatches.push(`${label}, ${String(drawn.length)} drawn stretches cross the line`);
+      return;
+    }
+    if (Math.abs(gap - drawn[0]) > LENGTH_TOLERANCE) {
+      mismatches.push(`${label}, built ${String(drawn[0])}`);
     }
   });
   return { mismatches, skipped };
@@ -318,7 +555,7 @@ function checkSectionJoins(
  * Formats a skipped join as a stable, comparable key.
  *
  * @param skip - The skipped join.
- * @returns A label such as `guestRoom → kitchen along x at 7`.
+ * @returns A label such as `guestRoom → kitchen along x at 7.2`.
  */
 function skippedJoinKey(skip: SkippedJoin): string {
   return `${skip.before} → ${skip.after} along ${skip.axis} at ${String(skip.at)}`;
@@ -343,7 +580,12 @@ function touchAlongEdge(a: PlanRect, b: PlanRect): boolean {
 }
 
 /**
- * Lists every contact whose gap differs from the join thickness of its two spaces.
+ * Lists every contact whose gap differs from the wall the plan actually draws there.
+ *
+ * Measured per stretch against `walls.ts`: the gap must equal the thickness of
+ * every stretch of that face which looks at the neighbour across the contact. A
+ * contact no stretch covers counts as a mismatch too, so the check can never come
+ * back empty by comparing nothing.
  *
  * @param plan - The floor plan to check.
  * @returns One description per mismatching contact; empty when every contact agrees.
@@ -351,13 +593,14 @@ function touchAlongEdge(a: PlanRect, b: PlanRect): boolean {
 function findJoinMismatches(plan: FloorPlan): string[] {
   return plan.spaces.flatMap((space) =>
     getNeighbours(plan, space.id).flatMap((contact) => {
-      const neighbour = getSpace(plan, contact.neighbourId);
-      const expected = getJoinThickness(plan, space, neighbour);
-      return Math.abs(contact.gap - expected) > LENGTH_TOLERANCE
-        ? [
-            `${space.id}[${String(contact.rectIndex)}] ${contact.side} → ${neighbour.id}[${String(contact.neighbourRectIndex)}]: gap ${String(contact.gap)}, join ${String(expected)}`,
-          ]
-        : [];
+      const label = `${contactKey(space.id, contact)}: gap ${String(contact.gap)}`;
+      const drawn = drawnThicknesses(plan, space.id, contact);
+      if (drawn.length === 0) {
+        return [`${label}, no stretch of the drawn wall covers it`];
+      }
+      return drawn
+        .filter((thickness) => Math.abs(contact.gap - thickness) > LENGTH_TOLERANCE)
+        .map((thickness) => `${label}, built ${String(thickness)}`);
     }),
   );
 }
@@ -439,8 +682,35 @@ describe('floor plan invariants', () => {
   );
 
   describe('contact gaps', () => {
-    it('gives every neighbour contact the join thickness of its two spaces', () => {
+    it('gives every neighbour contact the gap the plan draws there', () => {
       expect(findJoinMismatches(FLOOR_PLAN)).toEqual([]);
+    });
+
+    it('measures every contact of the plan against a drawn stretch', () => {
+      const contacts = FLOOR_PLAN.spaces.flatMap((space) =>
+        getNeighbours(FLOOR_PLAN, space.id).map((contact) => ({ id: space.id, contact })),
+      );
+      const uncovered = contacts
+        .filter(({ id, contact }) => drawnThicknesses(FLOOR_PLAN, id, contact).length === 0)
+        .map(({ id, contact }) => contactKey(id, contact));
+
+      // The gap checks are worth exactly as much as their coverage: a lookup that
+      // matched nothing would let every one of them pass while comparing nothing.
+      expect(contacts).toHaveLength(CONTACT_COUNT);
+      expect(uncovered).toEqual([]);
+    });
+
+    it('draws every contact at one of the four thicknesses the plan uses', () => {
+      const strange = FLOOR_PLAN.spaces.flatMap((space) =>
+        getNeighbours(FLOOR_PLAN, space.id)
+          .filter(
+            (contact) =>
+              !DRAWN_JOIN_GAPS.some((gap) => Math.abs(contact.gap - gap) <= LENGTH_TOLERANCE),
+          )
+          .map((contact) => `${contactKey(space.id, contact)}: gap ${String(contact.gap)}`),
+      );
+
+      expect(strange).toEqual([]);
     });
 
     it.each(CENTRE_LINES)(
@@ -458,6 +728,80 @@ describe('floor plan invariants', () => {
       );
 
       expect([...skippedKeys].sort()).toEqual(EXPECTED_SKIPPED_JOINS.map(skippedJoinKey).sort());
+    });
+  });
+
+  describe('a wall drawn at two widths along its length', () => {
+    it('names every contact where the per-pair summary and the drawn wall disagree', () => {
+      const disagreeing = FLOOR_PLAN.spaces.flatMap((space) =>
+        getNeighbours(FLOOR_PLAN, space.id)
+          .filter((contact) => {
+            const summary = getJoinThickness(
+              FLOOR_PLAN,
+              getSpace(FLOOR_PLAN, space.id),
+              getSpace(FLOOR_PLAN, contact.neighbourId),
+            );
+            return Math.abs(contact.gap - summary) > LENGTH_TOLERANCE;
+          })
+          .map((contact) => contactKey(space.id, contact)),
+      );
+
+      expect(disagreeing.sort()).toEqual([...VARYING_JOIN_CONTACTS].sort());
+    });
+
+    it.each(VARYING_JOIN_CONTACTS)(
+      'draws %s thin where the same pair is also drawn thick',
+      (key) => {
+        const found = FLOOR_PLAN.spaces.flatMap((space) =>
+          getNeighbours(FLOOR_PLAN, space.id)
+            .filter((contact) => contactKey(space.id, contact) === key)
+            .map((contact) => ({ space, contact })),
+        );
+
+        expect(found).toHaveLength(1);
+        const [{ space, contact }] = found;
+        const gaps = getNeighbours(FLOOR_PLAN, space.id)
+          .filter((other) => other.neighbourId === contact.neighbourId)
+          .map((other) => other.gap);
+
+        // This stretch is the thin one, and `walls.ts` builds it thin...
+        expect(contact.gap).toBeCloseTo(WALL_SPEC.partition, PRECISION_DIGITS);
+        expect(drawnThicknesses(FLOOR_PLAN, space.id, contact)).toEqual([WALL_SPEC.partition]);
+        // ...while the same pair also meets across a 0.30 stretch elsewhere, which
+        // is what makes the wall vary and the per-pair summary inexact...
+        expect([...new Set(gaps)].sort((a, b) => a - b)).toEqual([
+          WALL_SPEC.partition,
+          WALL_SPEC.insulated,
+        ]);
+        // ...and the summary answers the thicker of the two: thick wins.
+        expect(
+          getJoinThickness(FLOOR_PLAN, space, getSpace(FLOOR_PLAN, contact.neighbourId)),
+        ).toBeCloseTo(WALL_SPEC.insulated, PRECISION_DIGITS);
+      },
+    );
+
+    it('keeps the list symmetric: both sides of the varying wall are named', () => {
+      // A wall is one wall. If the per-pair summary overstates it seen from one of
+      // its two rooms it overstates it seen from the other, so the list must hold
+      // both halves of every wall it names.
+      const oneSided = FLOOR_PLAN.spaces.flatMap((space) =>
+        getNeighbours(FLOOR_PLAN, space.id)
+          .filter((contact) => VARYING_JOIN_CONTACTS.includes(contactKey(space.id, contact)))
+          .filter(
+            (contact) =>
+              !getNeighbours(FLOOR_PLAN, contact.neighbourId).some(
+                (back) =>
+                  back.neighbourId === space.id &&
+                  back.rectIndex === contact.neighbourRectIndex &&
+                  back.neighbourRectIndex === contact.rectIndex &&
+                  VARYING_JOIN_CONTACTS.includes(contactKey(contact.neighbourId, back)),
+              ),
+          )
+          .map((contact) => contactKey(space.id, contact)),
+      );
+
+      expect(oneSided).toEqual([]);
+      expect(VARYING_JOIN_CONTACTS.length % 2).toBe(0);
     });
   });
 

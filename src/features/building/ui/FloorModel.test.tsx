@@ -5,7 +5,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getBuiltFloor } from '../domain/builtFloor.ts';
 import type { PlanBox } from '../domain/planBox.ts';
 import { FloorModel } from './FloorModel.tsx';
-import { FLOOR_MATERIAL_KEYS, getCeilingLayout, getFloorLayout } from './floorLayout.ts';
+import {
+  FLOOR_MATERIAL_KEYS,
+  getCeilingLayout,
+  getFixtureLayout,
+  getFloorLayout,
+} from './floorLayout.ts';
+import type { FloorLayout } from './floorLayout.ts';
 import { MATERIAL_PALETTE } from './floorMaterials.ts';
 import type { FloorMaterialKey } from './floorMaterials.ts';
 
@@ -32,15 +38,33 @@ vi.mock('./MergedBoxesMesh.tsx', () => ({
 
 const MATERIAL_ELEMENT = 'meshStandardMaterial';
 
-/** The families always drawn: every bucket of a built floor that holds a box. */
+/**
+ * Everything drawn in both views, bucketed the way `FloorModel` buckets it: the built floor
+ * MERGED WITH the sanitary ware.
+ *
+ * The fixtures are not part of a `BuiltFloor` — a bath is a thing standing in a room, not
+ * building fabric — so `getFloorLayout` leaves `sanitaryWare` empty and `getFixtureLayout`
+ * fills it, and the component folds the two together (`floorLayout.ts`, `FloorModel.tsx`).
+ * Deriving the expectation from `getFloorLayout` alone, as this file did, therefore left the
+ * bathroom ware out of every count while the model went on drawing it.
+ */
+const ALWAYS_DRAWN_LAYOUT: FloorLayout = {
+  ...getFloorLayout(getBuiltFloor()),
+  ...getFixtureLayout(),
+};
+
+/** The families always drawn: every bucket of that layout which holds a box. */
 const ALWAYS_DRAWN_KEYS: readonly FloorMaterialKey[] = FLOOR_MATERIAL_KEYS.filter(
-  (key) => getFloorLayout(getBuiltFloor())[key].length > 0,
+  (key) => ALWAYS_DRAWN_LAYOUT[key].length > 0,
 );
 /** The families drawn only inside: the ceilings and their light panels. */
 const CEILING_KEYS: readonly FloorMaterialKey[] = ['ceiling', 'lightPanel'];
 
-/** Walls, parapets, three kinds of slab, railings, steps and the television panel. */
-const ALWAYS_DRAWN_COUNT = 8;
+/**
+ * Walls, parapets, four kinds of slab (room, circulation, open air and wet), railings, steps,
+ * the television panel and the sanitary ware.
+ */
+const ALWAYS_DRAWN_COUNT = 10;
 
 const ONCE = 1;
 const NONE = 0;
@@ -133,25 +157,47 @@ describe('FloorModel', () => {
     expect(drawnKeys()).toStrictEqual([...ALWAYS_DRAWN_KEYS]);
   });
 
-  it('renders no mesh for an empty bucket', () => {
+  it('renders no mesh for an empty bucket, and leaves no drawn bucket empty', () => {
     render(<FloorModel showCeilings={false} />);
 
+    // An empty bucket is the vacuous case here: a mesh drawn over an empty array would
+    // still be recorded, and every per-bucket assertion below would pass over nothing.
     for (const mesh of recorded()) {
-      expect(mesh.boxes.length).toBeGreaterThan(NONE);
+      expect(mesh.boxes.length, materialKeyOf(mesh)).toBeGreaterThan(NONE);
     }
+    // ...and the buckets left empty are exactly the two the exterior view drops, so a
+    // family that silently stopped producing solids cannot hide among them.
+    const empty = FLOOR_MATERIAL_KEYS.filter((key) => ALWAYS_DRAWN_LAYOUT[key].length === NONE);
+    expect(empty).toStrictEqual([...CEILING_KEYS]);
     for (const key of CEILING_KEYS) {
       expect(drawnKeys(), key).not.toContain(key);
     }
   });
 
-  it('gives every mesh the boxes of its own bucket', () => {
-    const layout = getFloorLayout(getBuiltFloor());
+  it('draws every solid of the families it is given', () => {
+    /** Two basins, two baths and two shower trays, one per sanitary fixture of the plan. */
+    const sanitaryWareCount = 6;
+    /** One ceiling box per clear rect of every roofed space. */
+    const ceilingBoxCount = 19;
+    /** One light panel per roofed space; the stairwell is roofed by none. */
+    const lightPanelCount = 16;
+    const ceilings = getCeilingLayout();
 
+    render(<FloorModel showCeilings={true} />);
+
+    const drawn = boxesByKey();
+    expect(boxesOf(drawn, 'sanitaryWare')).toHaveLength(sanitaryWareCount);
+    expect(boxesOf(drawn, 'ceiling')).toHaveLength(ceilingBoxCount);
+    expect(boxesOf(drawn, 'lightPanel')).toHaveLength(lightPanelCount);
+    expect(ceilings.lightPanel.length).toBeLessThan(ceilings.ceiling.length);
+  });
+
+  it('gives every mesh the boxes of its own bucket', () => {
     render(<FloorModel showCeilings={false} />);
 
     const drawn = boxesByKey();
     for (const key of ALWAYS_DRAWN_KEYS) {
-      expect(boxesOf(drawn, key), key).toStrictEqual([...layout[key]]);
+      expect(boxesOf(drawn, key), key).toStrictEqual([...ALWAYS_DRAWN_LAYOUT[key]]);
     }
   });
 

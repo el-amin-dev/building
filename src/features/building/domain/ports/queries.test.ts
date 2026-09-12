@@ -12,15 +12,17 @@ import {
   getPortPartners,
   getPortSpan,
   getPortsOf,
+  needsSwingClearance,
 } from './queries.ts';
 import type { Port, PortAxis, PortKind } from './types.ts';
 
 const PRECISION_DIGITS = 9;
 const FLOOR_LEVEL = 0;
 const DOOR_WIDTH = 0.9;
-const LINK_DOOR_WIDTH = 0.8;
 const LIVING_OPENING_WIDTH = 3.5;
-const EXPECTED_CORRIDOR_PORT_COUNT = 8;
+const EXPECTED_CORRIDOR_PORT_COUNT = 7;
+const EXPECTED_KITCHEN_PORT_COUNT = 2;
+const EXPECTED_SWING_CLEARANCE_COUNT = 14;
 
 /** Vertical sizes with a lower door head, to prove the parameter is honoured. */
 const LOW_HEIGHTS: FloorHeights = Object.freeze({ ...FLOOR_HEIGHTS, door: 1.95 });
@@ -65,13 +67,14 @@ function findPort(first: SpaceId, second: SpaceId): Port {
 
 /** Hand-computed spans of a few ports, from `spanMin` and `width`. */
 const EXPECTED_SPANS: readonly (readonly [string, SpaceId, SpaceId, number, number])[] = [
-  ['balconyA ↔ masterBedroom', 'balconyA', 'masterBedroom', 1.85, 2.75],
+  ['balconyA ↔ masterBedroom', 'balconyA', 'masterBedroom', 1.55, 2.45],
   ['livingRoom ↔ corridor', 'livingRoom', 'corridor', 7.5, 11.0],
-  ['balconyA ↔ linkCorridor', 'balconyA', 'linkCorridor', 5.65, 6.45],
-  ['guestRoom ↔ kitchen', 'guestRoom', 'kitchen', 6.0, 6.9],
+  ['balconyA ↔ guestRoom', 'balconyA', 'guestRoom', 6.35, 7.0],
+  ['guestRoom ↔ guestSanitair', 'guestRoom', 'guestSanitair', 7.4, 8.1],
+  ['mainSanitair ↔ mainShowerCubicle', 'mainSanitair', 'mainShowerCubicle', 19.6, 20.25],
 ];
 
-/** One contact a port must resolve to, hand-read off `floorPlanData.ts`. */
+/** One contact a port must resolve to, measured off the plan rects. */
 interface ExpectedContact {
   /** The pair and axis, for the test name. */
   readonly label: string;
@@ -88,47 +91,80 @@ interface ExpectedContact {
 }
 
 /**
- * The pairs that touch on both axes, which is why `Port.along` is stored: the
- * guest room meets the link corridor across its north wall (rect 0) and across
- * the link-corridor end wall (rect 1), and it meets the guest sanitair across
- * that room's west wall (rect 0) and its north wall (rect 2).
+ * The pairs that touch on both axes, which is why `Port.along` is stored.
+ *
+ * There are exactly three on this plan, and `Port.along` names them: the
+ * corridor meets the kitchen across the kitchen's north wall and across the
+ * corridor's east end; the control center meets the guest room across its own
+ * north wall and across the guest-room strip's west end; and the guest room
+ * meets the guest sanitair across that room's north wall and across the guest
+ * room's east face. For each, the scheduled door fixes one axis and a probe port
+ * on the other axis proves the stored axis is what resolves the ambiguity —
+ * without it, either contact would match.
+ *
+ * The old table's first two rows covered `linkCorridor ↔ guestRoom`, the L-shape
+ * ambiguity of the previous plan: the link corridor met the guest room both
+ * across the guest room's north wall and across the link corridor's own end
+ * wall, so a port between them was ambiguous on its own. Those rows are deleted
+ * rather than adapted because the situation is now unreachable: the owner
+ * deleted `linkCorridor` and absorbed it into the guest room's north strip, so
+ * the two spaces that produced the ambiguity are one space and no port can be
+ * drawn between them at all. The corridor ↔ kitchen and controlCenter ↔
+ * guestRoom rows below are the new plan's own both-axes pairs and carry the same
+ * proof.
  */
 const AMBIGUOUS_CONTACTS: readonly ExpectedContact[] = [
   {
-    label: 'linkCorridor ↔ guestRoom along x (the scheduled door)',
-    port: findPort('linkCorridor', 'guestRoom'),
+    label: 'corridor ↔ kitchen along x (the scheduled door)',
+    port: findPort('corridor', 'kitchen'),
     side: 'maxZ',
     rectIndex: 0,
-    neighbourRectIndex: 0,
-    gap: 0.2,
+    neighbourRectIndex: 1,
+    gap: 0.3,
   },
   {
-    label: 'linkCorridor ↔ guestRoom along z (the other axis)',
-    port: makePort(['linkCorridor', 'guestRoom'], 'door', 'z', 5.65, LINK_DOOR_WIDTH),
+    label: 'corridor ↔ kitchen along z (the other axis)',
+    port: makePort(['corridor', 'kitchen'], 'door', 'z', 5.8, 0.2),
+    side: 'maxX',
+    rectIndex: 1,
+    neighbourRectIndex: 1,
+    gap: 0.3,
+  },
+  {
+    label: 'controlCenter ↔ guestRoom along x (the scheduled door)',
+    port: findPort('controlCenter', 'guestRoom'),
+    side: 'minZ',
+    rectIndex: 0,
+    neighbourRectIndex: 0,
+    gap: 0.15,
+  },
+  {
+    label: 'controlCenter ↔ guestRoom along z (the other axis)',
+    port: makePort(['controlCenter', 'guestRoom'], 'door', 'z', 7.2, DOOR_WIDTH),
     side: 'maxX',
     rectIndex: 0,
     neighbourRectIndex: 1,
-    gap: 0.2,
+    gap: 0.3,
   },
   {
-    label: 'guestRoom ↔ guestSanitair along z (the scheduled door)',
+    label: 'guestRoom ↔ guestSanitair along x (the scheduled door)',
     port: findPort('guestRoom', 'guestSanitair'),
-    side: 'maxX',
+    side: 'maxZ',
     rectIndex: 0,
     neighbourRectIndex: 0,
-    gap: 0.2,
+    gap: 0.15,
   },
   {
-    label: 'guestRoom ↔ guestSanitair along x (the other axis)',
-    port: makePort(['guestRoom', 'guestSanitair'], 'door', 'x', 8.5, DOOR_WIDTH),
-    side: 'maxZ',
-    rectIndex: 2,
+    label: 'guestRoom ↔ guestSanitair along z (the other axis)',
+    port: makePort(['guestRoom', 'guestSanitair'], 'door', 'z', 7.2, 0.5),
+    side: 'maxX',
+    rectIndex: 1,
     neighbourRectIndex: 0,
-    gap: 0.2,
+    gap: 0.15,
   },
 ];
 
-/** One opening footprint, hand-read off the clear rects of `floorPlanData.ts`. */
+/** One opening footprint, measured off the clear rects of the plan. */
 interface ExpectedOpening {
   /** The pair, for the test name. */
   readonly label: string;
@@ -140,42 +176,83 @@ interface ExpectedOpening {
   readonly rect: readonly [number, number, number, number];
 }
 
+/**
+ * Openings covering every rect face the schedule actually sits in, and both wall
+ * thicknesses the plan uses: 0.30 where a face is weather-exposed or insulated,
+ * 0.15 where it is a plain separator.
+ *
+ * Three faces, not the four this comment used to claim. `getPortContact` walks
+ * the contacts of `port.spaces[0]`, so which face a port sits in follows from the
+ * order the source of truth names its pair in, and no scheduled port is named in
+ * the order that would put it on a `minX` face. The test below pins that over the
+ * whole schedule rather than over this list alone, so the shortfall is a measured
+ * fact about the plan and not a gap in the list. The fourth face is reached by
+ * naming a pair the other way round, which is what `SWAPPED_PORTS` is for.
+ *
+ * The `minZ` row rests on a single port, the control-center door, which is also
+ * the only port of the floor wider than 0.90: it is 1.20 for the risers, so its
+ * footprint is 1.20 long, x 1.70–2.90.
+ */
 const EXPECTED_OPENINGS: readonly ExpectedOpening[] = [
   {
     label: 'balconyA ↔ masterBedroom',
     first: 'balconyA',
     second: 'masterBedroom',
-    rect: [1.3, 1.6, 1.85, 2.75],
+    rect: [1.3, 1.6, 1.55, 2.45],
   },
   {
     label: 'livingRoom ↔ corridor',
     first: 'livingRoom',
     second: 'corridor',
-    rect: [7.5, 11.0, 3.7, 3.9],
+    rect: [7.5, 11.0, 3.85, 4.0],
   },
   {
     label: 'corridor ↔ utilityRoom',
     first: 'corridor',
     second: 'utilityRoom',
-    rect: [20.2, 20.4, 4.2, 5.1],
+    rect: [20.2, 20.5, 4.2, 5.1],
   },
   {
-    label: 'guestRoom ↔ kitchen',
-    first: 'guestRoom',
-    second: 'kitchen',
-    rect: [9.8, 10.0, 6.0, 6.9],
+    label: 'stairs ↔ guestRoom',
+    first: 'stairs',
+    second: 'guestRoom',
+    rect: [4.65, 5.55, 6.0, 6.3],
+  },
+  {
+    label: 'controlCenter ↔ guestRoom',
+    first: 'controlCenter',
+    second: 'guestRoom',
+    rect: [1.7, 2.9, 7.05, 7.2],
+  },
+  {
+    label: 'controlCenter ↔ ccBalcony',
+    first: 'controlCenter',
+    second: 'ccBalcony',
+    rect: [3.8, 4.1, 8.95, 9.65],
   },
   {
     label: 'guestRoom ↔ guestSanitair',
     first: 'guestRoom',
     second: 'guestSanitair',
-    rect: [8.0, 8.2, 7.1, 8.0],
+    rect: [7.4, 8.1, 7.05, 7.2],
+  },
+  {
+    label: 'guestSanitair ↔ guestShowerCubicle',
+    first: 'guestSanitair',
+    second: 'guestShowerCubicle',
+    rect: [9.0, 9.6, 7.75, 7.9],
+  },
+  {
+    label: 'laundry ↔ mainSanitair',
+    first: 'laundry',
+    second: 'mainSanitair',
+    rect: [17.55, 17.7, 5.9, 6.8],
   },
   {
     label: 'kitchen ↔ balconySlabB',
     first: 'kitchen',
     second: 'balconySlabB',
-    rect: [12.7, 13.6, 8.4, 8.7],
+    rect: [12.7, 13.6, 8.6, 8.9],
   },
 ];
 
@@ -184,13 +261,27 @@ const SWAPPED_PORTS: readonly (readonly [string, Port, Port])[] = [
   [
     'balconyA ↔ masterBedroom across the side-A wall',
     findPort('balconyA', 'masterBedroom'),
-    makePort(['masterBedroom', 'balconyA'], 'door', 'z', 1.85, DOOR_WIDTH),
+    makePort(['masterBedroom', 'balconyA'], 'door', 'z', 1.55, DOOR_WIDTH),
   ],
   [
     'livingRoom ↔ corridor across the top-row wall',
     findPort('livingRoom', 'corridor'),
     makePort(['corridor', 'livingRoom'], 'opening', 'x', 7.5, LIVING_OPENING_WIDTH),
   ],
+  [
+    'stairs ↔ guestRoom across the stair-landing wall',
+    findPort('stairs', 'guestRoom'),
+    makePort(['guestRoom', 'stairs'], 'door', 'x', 4.65, DOOR_WIDTH),
+  ],
+];
+
+/** The five sliding leaves, which need no floor to open into. */
+const SLIDING_PAIRS: readonly (readonly [SpaceId, SpaceId])[] = [
+  ['guestRoom', 'guestSanitair'],
+  ['guestSanitair', 'guestBathCubicle'],
+  ['guestSanitair', 'guestShowerCubicle'],
+  ['mainSanitair', 'mainBathCubicle'],
+  ['mainSanitair', 'mainShowerCubicle'],
 ];
 
 describe('getPortSpan', () => {
@@ -226,6 +317,12 @@ describe('getPortContact', () => {
       expect(contact.spanMax).toBeGreaterThanOrEqual(spanMax);
     },
   );
+
+  it('has a both-axes pair for every ambiguity the table claims to resolve', () => {
+    const pairs = AMBIGUOUS_CONTACTS.map(({ port }) => [...port.spaces].sort().join('|'));
+
+    expect(new Set(pairs).size).toBe(AMBIGUOUS_CONTACTS.length / 2);
+  });
 
   it.each(AMBIGUOUS_CONTACTS)(
     'uses the stored axis to resolve $label',
@@ -272,13 +369,34 @@ describe('getPortOpening', () => {
     expect(opening.top).toBeCloseTo(FLOOR_HEIGHTS.door, PRECISION_DIGITS);
   });
 
-  it('runs every scheduled opening from the floor to the door head', () => {
-    const offenders = PORT_SCHEDULE.filter((port) => {
-      const opening = getPortOpening(FLOOR_PLAN, port);
-      return opening.bottom !== FLOOR_LEVEL || opening.top !== FLOOR_HEIGHTS.door;
-    });
+  it('cuts a wall for every scheduled port, from the floor to the door head', () => {
+    const openings = PORT_SCHEDULE.map((port) => getPortOpening(FLOOR_PLAN, port));
+    const offenders = openings.filter(
+      (opening) => opening.bottom !== FLOOR_LEVEL || opening.top !== FLOOR_HEIGHTS.door,
+    );
 
+    expect(openings).toHaveLength(PORT_SCHEDULE.length);
     expect(offenders).toEqual([]);
+  });
+
+  it('covers every face the schedule sits in across the pinned openings', () => {
+    const sides = EXPECTED_OPENINGS.map(
+      ({ first, second }) => getPortContact(FLOOR_PLAN, findPort(first, second)).side,
+    );
+    const scheduled = PORT_SCHEDULE.map((port) => getPortContact(FLOOR_PLAN, port).side);
+
+    expect([...new Set(sides)].sort()).toEqual(['maxX', 'maxZ', 'minZ']);
+    // The pinned list leaves no face of the schedule out: the whole schedule sits
+    // in these same three. "All four faces" was never true of it.
+    expect([...new Set(scheduled)].sort()).toEqual(['maxX', 'maxZ', 'minZ']);
+  });
+
+  it('reaches the fourth face, minX, only by naming a pair the other way round', () => {
+    const [, scheduled, swapped] = SWAPPED_PORTS[0];
+
+    expect(swapped.spaces).toEqual(['masterBedroom', 'balconyA']);
+    expect(getPortContact(FLOOR_PLAN, swapped).side).toBe('minX');
+    expect(getPortContact(FLOOR_PLAN, scheduled).side).toBe('maxX');
   });
 
   it('honours the heights it is given', () => {
@@ -306,8 +424,36 @@ describe('getPortOpening', () => {
   });
 });
 
+describe('needsSwingClearance', () => {
+  it('needs clear floor for every swinging leaf, and there are fourteen', () => {
+    const swinging = PORT_SCHEDULE.filter((port) => needsSwingClearance(port));
+
+    expect(swinging).toHaveLength(EXPECTED_SWING_CLEARANCE_COUNT);
+    expect(swinging.every((port) => port.kind === 'door' && port.swing === undefined)).toBe(true);
+  });
+
+  it('exempts the living-room opening, which has no leaf', () => {
+    expect(needsSwingClearance(findPort('livingRoom', 'corridor'))).toBe(false);
+  });
+
+  it.each(SLIDING_PAIRS)('exempts the sliding leaf %s ↔ %s', (first, second) => {
+    const port = findPort(first, second);
+
+    expect(port.swing).toBe('slide');
+    expect(needsSwingClearance(port)).toBe(false);
+  });
+
+  it('exempts exactly the opening and the five sliding leaves, and nothing else', () => {
+    const exempt = PORT_SCHEDULE.filter((port) => !needsSwingClearance(port));
+
+    expect(exempt).toHaveLength(PORT_SCHEDULE.length - EXPECTED_SWING_CLEARANCE_COUNT);
+    expect(exempt.filter((port) => port.kind === 'opening')).toHaveLength(1);
+    expect(exempt.filter((port) => port.swing === 'slide')).toHaveLength(SLIDING_PAIRS.length);
+  });
+});
+
 describe('getPortsOf', () => {
-  it('lists the eight corridor ports', () => {
+  it('lists the seven corridor ports', () => {
     expect(getPortsOf(PORT_SCHEDULE, 'corridor')).toHaveLength(EXPECTED_CORRIDOR_PORT_COUNT);
   });
 
@@ -318,6 +464,7 @@ describe('getPortsOf', () => {
   it('only returns ports that name the space, in schedule order', () => {
     const ports = getPortsOf(PORT_SCHEDULE, 'kitchen');
 
+    expect(ports).toHaveLength(EXPECTED_KITCHEN_PORT_COUNT);
     expect(ports.every((port) => port.spaces.includes('kitchen'))).toBe(true);
     expect(ports).toEqual(PORT_SCHEDULE.filter((port) => port.spaces.includes('kitchen')));
   });
@@ -331,7 +478,6 @@ describe('getPortPartners', () => {
   it('names the other space of every port, whichever side it is scheduled on', () => {
     expect([...getPortPartners(PORT_SCHEDULE, 'laundry')].sort()).toEqual([
       'balconySlabB',
-      'kitchen',
       'mainSanitair',
     ]);
   });

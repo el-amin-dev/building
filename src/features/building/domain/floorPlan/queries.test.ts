@@ -53,14 +53,37 @@ const NEGATIVE_COORDINATE = -1;
 const FAR_COORDINATE = 30;
 const ALTERED_GAP = 99;
 
-/** Probe points on FLOOR_PLAN. */
-const BALCONY_B_EAST_POINT: PlanPoint = { x: 15.0, z: 9.2 };
-const BALCONY_B_WEST_POINT: PlanPoint = { x: 12.7, z: 9.2 };
-const CORRIDOR_WEST_EDGE_POINT: PlanPoint = { x: 5.3, z: 4.65 };
-const STAIRS_EAST_EDGE_POINT: PlanPoint = { x: 5.29, z: 4.65 };
+/*
+ * Probe points on FLOOR_PLAN, each measured off the clear rects of the redrawn
+ * floor. Every one is an explicit point with an explicit expected id, so a rect
+ * that moves fails here instead of being followed.
+ *
+ * The side-B strip runs west to east as ccBalcony 4.10–4.90 · voidWest
+ * 4.90–11.65 · balconySlabB 11.65–15.35 · voidEast 15.35–20.30, all over
+ * z 8.90–9.70; the stairs end and the corridor begins at x 5.60, over
+ * z 4.00–5.50.
+ */
+
+/** Just inside the east face of the side-B slab (15.35). */
+const BALCONY_B_EAST_POINT: PlanPoint = { x: 15.34, z: 9.2 };
+/** On that face: the join has no wall, and the + side owns it. */
+const VOID_EAST_EDGE_POINT: PlanPoint = { x: 15.35, z: 9.2 };
+/** On the west face of the slab (11.65), another zero-wall join the + side owns. */
+const BALCONY_B_WEST_EDGE_POINT: PlanPoint = { x: 11.65, z: 9.2 };
+/** One centimetre west of it, which is still the void and not a wall. */
+const VOID_WEST_POINT: PlanPoint = { x: 11.64, z: 9.2 };
+/** On the zero-wall stairs ↔ corridor join at x 5.60: the corridor owns its minX face. */
+const CORRIDOR_WEST_EDGE_POINT: PlanPoint = { x: 5.6, z: 4.65 };
+/** One centimetre west of that join, inside the stairs. */
+const STAIRS_EAST_EDGE_POINT: PlanPoint = { x: 5.59, z: 4.65 };
+/** Inside the 0.30 m wall between the master bedroom (maxX 6.60) and the living room (6.90). */
 const WALL_POINT: PlanPoint = { x: 6.7, z: 2.0 };
-const SANITAIR_WALL_POINT: PlanPoint = { x: 9.0, z: 7.0 };
+/** Inside the 0.15 m wall between the guest room (maxZ 7.05) and the guest sanitair (7.20). */
+const SANITAIR_WALL_POINT: PlanPoint = { x: 9.0, z: 7.1 };
+/** North of that wall, in the guest room's north strip. */
 const GUEST_ROOM_POINT: PlanPoint = { x: 9.0, z: 6.8 };
+/** South of it, in the guest sanitair: the wall has a room on both sides. */
+const GUEST_SANITAIR_POINT: PlanPoint = { x: 9.0, z: 7.3 };
 
 /**
  * Builds a frozen space whose name is its id.
@@ -392,12 +415,15 @@ describe('floorPlan queries', () => {
   describe('on FLOOR_PLAN', () => {
     it.each([
       [BALCONY_B_EAST_POINT, 'balconySlabB'],
+      [VOID_EAST_EDGE_POINT, 'voidEast'],
+      [BALCONY_B_WEST_EDGE_POINT, 'balconySlabB'],
+      [VOID_WEST_POINT, 'voidWest'],
       [CORRIDOR_WEST_EDGE_POINT, 'corridor'],
       [STAIRS_EAST_EDGE_POINT, 'stairs'],
       [WALL_POINT, undefined],
-      [BALCONY_B_WEST_POINT, 'balconySlabB'],
       [SANITAIR_WALL_POINT, undefined],
       [GUEST_ROOM_POINT, 'guestRoom'],
+      [GUEST_SANITAIR_POINT, 'guestSanitair'],
     ] as const)('findSpaceAt(%o) is %s', (point, expectedId) => {
       expect(findSpaceAt(FLOOR_PLAN, point)?.id).toBe(expectedId);
     });
@@ -405,8 +431,17 @@ describe('floorPlan queries', () => {
     it('lists the neighbours of the laundry', () => {
       const ids = new Set(getNeighbours(FLOOR_PLAN, 'laundry').map((c) => c.neighbourId));
 
+      // The main bath cubicle is new: a walled bath is a room of its own on the
+      // redrawn floor, and it takes a bite out of the laundry's east wall.
       expect(ids).toEqual(
-        new Set<SpaceId>(['corridor', 'kitchen', 'mainSanitair', 'balconySlabB', 'voidEast']),
+        new Set<SpaceId>([
+          'corridor',
+          'kitchen',
+          'mainSanitair',
+          'mainBathCubicle',
+          'balconySlabB',
+          'voidEast',
+        ]),
       );
     });
   });

@@ -44,6 +44,14 @@ jobs:
       - name: Check formatting
         run: pnpm format:check
 
+      # The floor plan is the source of truth the model, the drawing and the
+      # tests all derive from. If it does not close on its own terms - areas
+      # summing to the plot, every dimension chain, jambs, reachability, the
+      # stair fit - nothing downstream is worth running, so this gate comes
+      # before the unit tests rather than after them.
+      - name: Verify the floor plan
+        run: pnpm verify:plan
+
       - name: Unit tests
         run: pnpm test
 
