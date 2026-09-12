@@ -151,8 +151,8 @@ A task below keeps its `[x]` when the thing it built still stands and only its d
 - [x] "Go to room" menu operable by keyboard and single click + tests — it **walks** the viewer there through the real doorways rather than teleporting (owner decision), with three ways to stop: the "Stop walking" button, `Escape`, and any manual movement input
 - [x] Animated exterior ↔ interior transitions (0.9 s, eased, from the live camera to the pose the arriving controls will hold), instant under `prefers-reduced-motion` — which governs that flight and **nothing else**: an automatic walk still walks at normal pace
 - [x] SVG minimap from the model with position and heading; pick a room to **walk** there + tests — interior only, `sm` and wider, and its rooms are pointer-only targets with the full-size "Go to room" menu as the keyboard and touch equivalent (WCAG 2.5.8's equivalent-control exception)
-- [ ] HUD usable at 400 px width with touch targets ≥ 24 × 24 px
-- [ ] Playwright axe check on both views; e2e walk stairs arrival → corridor → guest room → kitchen (the link corridor it used to cross no longer exists)
+- [x] HUD usable at 400 px width with touch targets ≥ 24 × 24 px — measured at 400 × 800: the 3D view keeps 67 % of the height against a 0.6 floor, the smallest pad button is 44 CSS px, and `tests/e2e/remoteControl.spec.ts` asserts every button visible, ≥ 24 × 24 px, hit-testable and free of horizontal page scroll
+- [x] Playwright axe check on both views; e2e walk stairs arrival → corridor → guest room → kitchen (the link corridor it used to cross no longer exists) — `tests/e2e/accessibility.spec.ts` over four states, zero violations; the walk is `tests/e2e/explore.spec.ts`
 - [x] ADR superseding ADR-002 (**ADR-013**, which also records the one-walk-field collision model, the automatic walk and its along-track arrival fix, the remembered orbit angle, the view flight and the exact scope of `prefers-reduced-motion`, the two ADR-008 promises this part breaks, and the accepted costs); RUNBOOK "Controls" updated
 - [ ] DoD gate → PR merged
 
@@ -174,6 +174,7 @@ A task below keeps its `[x]` when the thing it built still stands and only its d
 - [ ] Lazy-load the 3D scene chunk, instance/merge static geometry, bundle-size budget in CI
 - [ ] WebGL-unsupported fallback and a canvas error boundary with structured logging
 - [ ] Add eslint-plugin-jsx-a11y if it supports ESLint 10, otherwise record the deferral
+- [ ] Re-instrument the geometry screenshot baselines: a 1 % diff-pixel ratio does not answer "did the geometry move" — 1 % of a 1280 × 720 frame is over 9,000 pixels, room for an entire corner of the building to change unnoticed, which is how a whole floor rebuild sat unseen behind the exterior baseline until Part 3's wider HUD mask used up the headroom (ADR-013). Either tighten the ratio toward the measured noise floor (0 px by Playwright's own metric when a baseline matches its own commit) or assert something that does not average over the frame
 - [ ] ADR self-hosted target + deploy workflow; e2e full tour of every room
 - [ ] README (controls, sources of truth, screenshots), `CHANGELOG.md`, tag `v1.0.0`
 - [ ] DoD gate → release published
