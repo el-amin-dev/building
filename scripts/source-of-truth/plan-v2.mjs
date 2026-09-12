@@ -184,11 +184,15 @@ export const WINDOWS = Object.freeze([
     sill: 1.9, head: 2.3 },
   { kind: 'light', between: ['kitchen', 'voidWest'], along: 'x', spanMin: 10.35, width: 1.8,
     sill: 0.9, head: 2.1, why: 'Hand level, for light over the sink (owner).' },
+  // The owner asked for the laundry to be "completely open light" on side B: a
+  // door and two big windows. The 3.20 m wall cannot give them width — it already
+  // carries 0.90 of door — so they are given height instead: a 0.60 sill and a
+  // 2.30 head make each one 1.70 m tall rather than the usual 1.20.
   { kind: 'light', between: ['laundry', 'balconySlabB'], along: 'x', spanMin: 14.3, width: 0.9,
-    sill: 0.9, head: 2.1 },
+    sill: 0.6, head: 2.3 },
   { kind: 'light', between: ['laundry', 'voidEast'], along: 'x', spanMin: 16.4, width: 0.9,
-    sill: 0.9, head: 2.1,
-    why: '0.90 not 1.00: the laundry south wall is 3.20 and already carries 0.90 of window and 0.90 of door, so 1.00 left no jamb at the east end.' },
+    sill: 0.6, head: 2.3,
+    why: '0.90 not 1.00: the wall is 3.20 and already carries 0.90 of window and 0.90 of door, so 1.00 left no jamb at the east end.' },
   { kind: 'air', between: ['mainSanitair', 'voidEast'], along: 'x', spanMin: 18.0, width: 0.7,
     sill: 1.9, head: 2.3 },
   { kind: 'air', between: ['mainSanitair', 'voidEast'], along: 'x', spanMin: 19.3, width: 0.7,
