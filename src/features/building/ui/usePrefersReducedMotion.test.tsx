@@ -64,6 +64,54 @@ function stubMatchMedia(matches: boolean): QueryListStub {
   };
 }
 
+/**
+ * Installs a `window.matchMedia` whose query list has only `addListener`.
+ *
+ * The shape Safari shipped before 14: no `addEventListener` at all, so a hook that
+ * reaches straight for it either throws or silently never follows the preference.
+ *
+ * @param matches - What the query list reports at first.
+ * @returns The stub, so a test can fire a change or inspect the listeners.
+ */
+function stubLegacyMatchMedia(matches: boolean): QueryListStub {
+  const listeners = new Set<(event: MediaQueryListEvent) => void>();
+  const queries: string[] = [];
+  let current = matches;
+
+  const queryList = {
+    get matches() {
+      return current;
+    },
+    media: REDUCED_MOTION_QUERY,
+    onchange: null,
+    addListener: (listener: (event: MediaQueryListEvent) => void) => {
+      listeners.add(listener);
+    },
+    removeListener: (listener: (event: MediaQueryListEvent) => void) => {
+      listeners.delete(listener);
+    },
+    dispatchEvent: () => false,
+  } as unknown as MediaQueryList;
+
+  window.matchMedia = (query: string) => {
+    queries.push(query);
+    return queryList;
+  };
+
+  return {
+    queryList,
+    listeners,
+    queries,
+    fireChange: (next: boolean) => {
+      current = next;
+      const event = { matches: next } as MediaQueryListEvent;
+      for (const listener of [...listeners]) {
+        listener(event);
+      }
+    },
+  };
+}
+
 describe('usePrefersReducedMotion', () => {
   afterEach(() => {
     window.matchMedia = realMatchMedia;
@@ -125,5 +173,20 @@ describe('usePrefersReducedMotion', () => {
     const { result } = renderHook(() => usePrefersReducedMotion());
 
     expect(result.current).toBe(false);
+  });
+
+  it('follows a change through the legacy listener of Safari before 14', () => {
+    const stub = stubLegacyMatchMedia(false);
+    const { result, unmount } = renderHook(() => usePrefersReducedMotion());
+    expect(stub.listeners.size).toBe(1);
+
+    act(() => {
+      stub.fireChange(true);
+    });
+    expect(result.current).toBe(true);
+
+    unmount();
+
+    expect(stub.listeners.size).toBe(0);
   });
 });

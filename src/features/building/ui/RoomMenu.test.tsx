@@ -89,18 +89,56 @@ describe('RoomMenu', () => {
     render(<RoomMenu />);
 
     expect(getTrigger()).toHaveAttribute('aria-expanded', 'false');
-    expect(getTrigger()).toHaveAttribute('aria-controls', ROOM_LIST_ID);
     expect(queryList()).toBeNull();
 
     await user.click(getTrigger());
 
     expect(getTrigger()).toHaveAttribute('aria-expanded', 'true');
+    expect(getTrigger()).toHaveAttribute('aria-controls', ROOM_LIST_ID);
     expect(queryList()).toHaveAttribute('id', ROOM_LIST_ID);
 
     await user.click(getTrigger());
 
     expect(getTrigger()).toHaveAttribute('aria-expanded', 'false');
     expect(queryList()).toBeNull();
+  });
+
+  it('names no list while the list is closed, so the IDREF always resolves', async () => {
+    const user = userEvent.setup();
+    enterInterior();
+    render(<RoomMenu />);
+
+    // Closed: the `<ul>` is not mounted, so an `aria-controls` naming it would dangle.
+    expect(getTrigger()).not.toHaveAttribute('aria-controls');
+    expect(document.getElementById(ROOM_LIST_ID)).toBeNull();
+
+    await user.click(getTrigger());
+    expect(document.getElementById(ROOM_LIST_ID)).not.toBeNull();
+
+    await user.click(getTrigger());
+
+    expect(getTrigger()).not.toHaveAttribute('aria-controls');
+    expect(document.getElementById(ROOM_LIST_ID)).toBeNull();
+  });
+
+  it('anchors the open list to the trigger instead of to its static position', async () => {
+    const user = userEvent.setup();
+    enterInterior();
+    const { container } = render(<RoomMenu />);
+
+    await user.click(getTrigger());
+    const list = screen.getByRole('list');
+
+    // jsdom computes no layout, so the assertion that matters — every room inside the
+    // window — is an end-to-end one (`tests/e2e/explore.spec.ts`). What is checkable here
+    // is that the offsets exist at all and that the wrapper is the box they resolve
+    // against: an `absolute` list with no `top` falls back to its static position, which
+    // the wrapper's centring flex row put 106 px above the top of the screen.
+    expect(list).toHaveClass('absolute');
+    expect(list).toHaveClass('top-full');
+    expect(list).toHaveClass('left-0');
+    expect(list).toHaveClass('overflow-y-auto');
+    expect(container.firstElementChild).toHaveClass('relative');
   });
 
   it('offers one button per walkable room, named by the model', async () => {

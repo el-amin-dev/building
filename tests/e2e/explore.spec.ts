@@ -88,6 +88,20 @@ const KITCHEN_ITEM_NAME = 'R11/KIT · Kitchen';
 /** Accessible name of the button that abandons a walk in progress. */
 const STOP_WALKING_NAME = 'Stop walking';
 
+/** The open room list, by its id: a plain `<ul>`, so it is found the way the readout is. */
+const ROOM_LIST_SELECTOR = '#room-list';
+/** How many rooms the list offers: the 22 spaces of the plan less its two floorless voids. */
+const ROOM_COUNT = 20;
+/** The left and top edges of the window, in CSS pixels. */
+const VIEWPORT_ORIGIN_PX = 0;
+/** A narrow phone viewport, the second width the open list is measured at. */
+const PHONE_VIEWPORT = Object.freeze({ width: 400, height: 800 });
+/**
+ * Budget for opening the list at two viewports and measuring twenty items in each: two page
+ * loads, two camera flights, and no locomotion at all.
+ */
+const LIST_LAYOUT_TEST_TIMEOUT_MS = 120_000;
+
 /** Physical keys held or pressed here; W/S move along x, D/A along z, V switches the camera. */
 const FORWARD_KEY = 'KeyW';
 const BACK_KEY = 'KeyS';
@@ -253,6 +267,103 @@ async function startWalkToKitchen(page: Page): Promise<void> {
   await expect(getViewRegion(page)).toBeFocused();
 }
 
+/**
+ * Opens the room list and names every room that cannot be brought inside the window.
+ *
+ * **Why this is measured, and why in a browser.** The list is `position: absolute`, and an
+ * absolute box with no offset falls back to its *static* position — where it would have sat
+ * in the panel's centring flex row. That centred a 256 px list on a ~44 px panel and put its
+ * top at −106 px, so the first rooms were above the top of the screen and stayed there:
+ * focusing one scrolled nothing, because `main` is `overflow: hidden` and the `<ul>` has no
+ * room to scroll upward, which left them unreachable by pointer *and* by keyboard. jsdom
+ * computes no layout and cannot see any of it; the earlier specs missed it because the one
+ * room they pick happened to land inside the visible band.
+ *
+ * Each item is focused before it is measured, which is exactly the distinction that matters:
+ * a room merely scrolled out of a list that *can* scroll comes into view and is operable,
+ * while a room parked outside the window does not move and is not. Every item, not a sample:
+ * which rooms fall off depends on the viewport and on how many rooms the plan has.
+ *
+ * @param page - The page, already in the interior view.
+ * @returns One line per unreachable room, naming it and the box it was stuck at.
+ */
+async function getUnreachableRooms(page: Page): Promise<string[]> {
+  const viewport = page.viewportSize();
+  if (viewport === null) {
+    throw new Error('the page has no viewport size to measure the room list against');
+  }
+
+  const trigger = page.getByRole('button', { name: ROOM_MENU_NAME });
+  await trigger.click();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  const items = page.locator(ROOM_LIST_SELECTOR).getByRole('button');
+  await expect(items).toHaveCount(ROOM_COUNT);
+
+  const unreachable: string[] = [];
+  for (const item of await items.all()) {
+    const name = ((await item.textContent()) ?? '').trim();
+    await item.focus();
+    const box = await item.boundingBox();
+    if (box === null) {
+      unreachable.push(`${name}: no box at all`);
+      continue;
+    }
+    const isInside =
+      box.x >= VIEWPORT_ORIGIN_PX &&
+      box.y >= VIEWPORT_ORIGIN_PX &&
+      box.x + box.width <= viewport.width &&
+      box.y + box.height <= viewport.height;
+    if (!isInside) {
+      unreachable.push(
+        `${name}: x ${String(box.x)}…${String(box.x + box.width)}, y ${String(box.y)}…${String(box.y + box.height)}`,
+      );
+    }
+  }
+  return unreachable;
+}
+
+/**
+ * Asserts the open list hangs below its trigger and sits wholly inside the window.
+ *
+ * The panel it is anchored to is near the top of the screen, so the list's own 256 px cap is
+ * what keeps its scroll port on screen; a list that overflowed the bottom edge would have
+ * rows nothing could scroll to, the same defect the other way up.
+ */
+async function expectListAnchoredInsideViewport(page: Page): Promise<void> {
+  const viewport = page.viewportSize();
+  if (viewport === null) {
+    throw new Error('the page has no viewport size to measure the room list against');
+  }
+  const triggerBox = await page.getByRole('button', { name: ROOM_MENU_NAME }).boundingBox();
+  const listBox = await page.locator(ROOM_LIST_SELECTOR).boundingBox();
+  expect(triggerBox, 'the trigger should have a box').not.toBeNull();
+  expect(listBox, 'the open list should have a box').not.toBeNull();
+  if (triggerBox === null || listBox === null) {
+    return;
+  }
+
+  expect(
+    listBox.y,
+    'the open list should start below the trigger, not on top of the controls above it',
+  ).toBeGreaterThanOrEqual(triggerBox.y + triggerBox.height);
+  expect(
+    listBox.y,
+    'the open list should not hang off the top of the window',
+  ).toBeGreaterThanOrEqual(VIEWPORT_ORIGIN_PX);
+  expect(
+    listBox.y + listBox.height,
+    'the open list should not hang off the bottom of the window',
+  ).toBeLessThanOrEqual(viewport.height);
+  expect(
+    listBox.x,
+    'the open list should not hang off the left of the window',
+  ).toBeGreaterThanOrEqual(VIEWPORT_ORIGIN_PX);
+  expect(
+    listBox.x + listBox.width,
+    'the open list should not hang off the right of the window',
+  ).toBeLessThanOrEqual(viewport.width);
+}
+
 /** Waits until the readout stops announcing a walk, i.e. the walk has been abandoned. */
 async function expectWalkAbandoned(page: Page): Promise<void> {
   await expect
@@ -312,6 +423,26 @@ test.describe('exploring the floor', () => {
     //    arrival is the destination turning up as the room the explorer is in.
     await startWalkToKitchen(page);
     await expectRoomLine(page, KITCHEN_LINE, KITCHEN_WALK_TIMEOUT_MS);
+
+    expect(pageErrors).toEqual([]);
+  });
+
+  test('keeps every room of the open list reachable, at both widths', async ({ page }) => {
+    test.setTimeout(LIST_LAYOUT_TEST_TIMEOUT_MS);
+    const pageErrors: Error[] = [];
+    page.on('pageerror', (error) => pageErrors.push(error));
+
+    await enterInterior(page);
+    expect(await getUnreachableRooms(page), 'rooms off screen at the default viewport').toEqual([]);
+    await expectListAnchoredInsideViewport(page);
+
+    // Again at a phone width, where the HUD band is shorter still. Reloaded rather than
+    // resized, as the accessibility audit does it: the layout is settled at mount, so
+    // resizing an already-open list would not exercise the same thing.
+    await page.setViewportSize(PHONE_VIEWPORT);
+    await enterInterior(page);
+    expect(await getUnreachableRooms(page), 'rooms off screen at a phone width').toEqual([]);
+    await expectListAnchoredInsideViewport(page);
 
     expect(pageErrors).toEqual([]);
   });

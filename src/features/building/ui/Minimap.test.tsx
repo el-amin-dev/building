@@ -8,6 +8,7 @@ import type { EyePose } from '../domain/eyeNavigation.ts';
 import { FLOOR_PLAN } from '../domain/floorPlan/index.ts';
 import type { SpaceId } from '../domain/floorPlan/index.ts';
 import { getSlabs } from '../domain/slabs.ts';
+import { INTERIOR_REGION_ID } from './hudIds.ts';
 import { Minimap } from './Minimap.tsx';
 import { MINIMAP_SAMPLE_INTERVAL_MS, getMinimapShapes } from './minimapShapes.ts';
 
@@ -17,17 +18,29 @@ const IN_KITCHEN: EyePose = Object.freeze({ x: 13, z: 7, yaw: -Math.PI / 2, pitc
 /** The same room, half a metre on: a pose change with no room change. */
 const FURTHER_IN_KITCHEN: EyePose = Object.freeze({ ...IN_KITCHEN, x: 13.5 });
 
+/** The same spot, turned about-face: a heading change with no room change and no step. */
+const TURNED_IN_KITCHEN: EyePose = Object.freeze({ ...IN_KITCHEN, yaw: Math.PI / 2 });
+
 /** A point inside the corridor's first rect (x 5.60–20.20, z 4.00–5.50). */
 const IN_CORRIDOR: EyePose = Object.freeze({ x: 10, z: 4.5, yaw: 0, pitch: 0 });
 
 /** What the label says once the explorer stands in the kitchen facing +x. */
 const KITCHEN_SUMMARY = 'Floor minimap. You are in R11/KIT · Kitchen, facing toward side D.';
 
+/** What it says after the about-face, which points the eye the other way along x. */
+const TURNED_KITCHEN_SUMMARY = 'Floor minimap. You are in R11/KIT · Kitchen, facing toward side A.';
+
 /** What it says in the interior view before the first room resolves. */
 const UNKNOWN_SUMMARY = 'Floor minimap. Your position on the floor is not known yet.';
 
 /** The highlight the room the explorer is in wears. */
 const CURRENT_ROOM_CLASS = 'fill-amber-400';
+
+/** The id of the region the pointer hands focus back to, as a test stand-in. */
+const REGION_TEST_ID = 'interior-region';
+
+/** `tabIndex` making that stand-in focusable, as the real view region is. */
+const FOCUSABLE_TAB_INDEX = 0;
 
 /** The classes that keep the minimap off a phone-width screen. */
 const PHONE_HIDDEN_CLASS = 'hidden';
@@ -98,6 +111,26 @@ function roomRects(spaceId: SpaceId): readonly Element[] {
   return rects.filter((_rect, index) => shapes[index].spaceId === spaceId);
 }
 
+/** The arrow showing the heading: the only polygon in the drawing. */
+function arrow(): Element {
+  const element = document.querySelector('polygon');
+  if (element === null) {
+    throw new Error('the minimap drew no heading arrow');
+  }
+  return element;
+}
+
+/** Renders a focusable stand-in for the interior region before the minimap, as in the app. */
+function renderWithRegion(): HTMLElement {
+  render(
+    <>
+      <div id={INTERIOR_REGION_ID} data-testid={REGION_TEST_ID} tabIndex={FOCUSABLE_TAB_INDEX} />
+      <Minimap />
+    </>,
+  );
+  return screen.getByTestId(REGION_TEST_ID);
+}
+
 describe('Minimap', () => {
   beforeEach(() => {
     pendingFrame = undefined;
@@ -162,28 +195,86 @@ describe('Minimap', () => {
     enterInterior();
 
     standAt(IN_KITCHEN);
+    runFrame(FIRST_FRAME_MS);
 
     expect(screen.getByRole('img')).toHaveAccessibleName(KITCHEN_SUMMARY);
+  });
+
+  it('names the room without a heading until the first pose has been sampled', () => {
+    render(<Minimap />);
+    enterInterior();
+
+    // The room resolves from the report; the heading arrives with the next frame. Said
+    // short rather than guessed at in between.
+    standAt(IN_KITCHEN);
+
+    expect(screen.getByRole('img')).toHaveAccessibleName(
+      'Floor minimap. You are in R11/KIT · Kitchen.',
+    );
   });
 
   it('carries the same summary in a title, for a pointer user hovering it', () => {
     render(<Minimap />);
     enterInterior();
     standAt(IN_KITCHEN);
+    runFrame(FIRST_FRAME_MS);
 
     expect(document.querySelector('title')).toHaveTextContent(KITCHEN_SUMMARY);
   });
 
-  it('re-announces the heading when the room changes, not when the eye turns', () => {
+  it('re-announces the heading when the room changes', () => {
     render(<Minimap />);
     enterInterior();
     standAt(IN_KITCHEN);
+    runFrame(FIRST_FRAME_MS);
 
     standAt(IN_CORRIDOR);
+    runFrame(AFTER_INTERVAL_MS);
 
     expect(screen.getByRole('img')).toHaveAccessibleName(
       'Floor minimap. You are in R07/COR · Corridor, facing toward side C.',
     );
+  });
+
+  it('re-announces the heading when the eye turns in place, in the same room', () => {
+    render(<Minimap />);
+    enterInterior();
+    standAt(IN_KITCHEN);
+    runFrame(FIRST_FRAME_MS);
+    expect(screen.getByRole('img')).toHaveAccessibleName(KITCHEN_SUMMARY);
+
+    // An about-face without a step. The name used to be frozen at the last room change, so
+    // a screen-reader user was told the old heading as current fact.
+    standAt(TURNED_IN_KITCHEN);
+    runFrame(AFTER_INTERVAL_MS);
+
+    expect(screen.getByRole('img')).toHaveAccessibleName(TURNED_KITCHEN_SUMMARY);
+  });
+
+  it('leaves the name alone while the eye turns inside one heading bucket', () => {
+    let renders = 0;
+    render(
+      <Profiler
+        id="minimap"
+        onRender={() => {
+          renders += 1;
+        }}
+      >
+        <Minimap />
+      </Profiler>,
+    );
+    enterInterior();
+    standAt(IN_KITCHEN);
+    runFrame(FIRST_FRAME_MS);
+    const rendersBefore = renders;
+
+    // A step with no turn: same bucket, same words, so no render is asked for at all —
+    // which is what keeps eight buckets from costing sixty renders a second.
+    standAt(FURTHER_IN_KITCHEN);
+    runFrame(AFTER_INTERVAL_MS);
+
+    expect(screen.getByRole('img')).toHaveAccessibleName(KITCHEN_SUMMARY);
+    expect(renders).toBe(rendersBefore);
   });
 
   it('draws one rectangle per floor slab', () => {
@@ -232,6 +323,19 @@ describe('Minimap', () => {
     expect(useRoomWalkStore.getState().target).toBe('utilityRoom');
   });
 
+  it('hands focus back to the view after a pick, so Escape still stops the walk', () => {
+    const region = renderWithRegion();
+    enterInterior();
+    region.focus();
+
+    // A rect is not focusable, so the pointer-down blurs the region; without the hand-back
+    // Escape — one of the three ways to stop a walk — would do nothing until a Tab.
+    fireEvent.click(roomRect('kitchen'));
+
+    expect(useRoomWalkStore.getState().status).toBe('walking');
+    expect(region).toHaveFocus();
+  });
+
   it('highlights the room the explorer is in, every rectangle of it', () => {
     render(<Minimap />);
     enterInterior();
@@ -253,6 +357,23 @@ describe('Minimap', () => {
 
     expect(roomRect('corridor')).toHaveClass(CURRENT_ROOM_CLASS);
     expect(roomRect('kitchen')).not.toHaveClass(CURRENT_ROOM_CLASS);
+  });
+
+  it('keeps the arrow legible on the room it always stands on', () => {
+    render(<Minimap />);
+    enterInterior();
+
+    standAt(IN_KITCHEN);
+    runFrame(FIRST_FRAME_MS);
+
+    // The marker is by definition inside the highlighted room, so an arrow wearing the
+    // highlight's own fill read only by its hairline outline.
+    expect(arrow()).not.toHaveClass(CURRENT_ROOM_CLASS);
+    expect(arrow()).toHaveClass('fill-slate-900');
+    expect(arrow()).toHaveClass('stroke-white');
+    for (const rect of roomRects('kitchen')) {
+      expect(rect).toHaveClass(CURRENT_ROOM_CLASS);
+    }
   });
 
   it('hides the marker until a pose is known, so it never sits in the plot corner', () => {

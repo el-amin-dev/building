@@ -33,6 +33,26 @@ const ROOM_ITEM_CLASS_NAME =
   'block min-h-6 w-full cursor-pointer rounded-md px-2 py-1 text-left text-sm text-white hover:bg-slate-700 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-amber-400';
 
 /**
+ * The open list: a panel anchored below the trigger, tall enough to scroll.
+ *
+ * **`top-full left-0` is load-bearing, not decoration.** Without an explicit offset an
+ * `absolute` box falls back to its *static* position — where it would have sat in the
+ * wrapper's `flex flex-wrap items-center` row — and that row centres its items, so a
+ * 256 px-tall list was centred on a ~44 px panel: the computed `top` came out at −106 px
+ * (−112 px at a phone width), which put the first rooms above the top edge of the window.
+ * There they stayed, unreachable by pointer *and* by keyboard, because nothing between the
+ * list and `<main class="overflow-hidden">` can scroll in that direction — and the rest of
+ * the list covered the toggles and the hint. The offsets resolve against the wrapper below,
+ * which carries `relative`.
+ *
+ * `max-h-64` with `overflow-y-auto` is what keeps twenty rooms inside the window: the
+ * panel sits near the top of the viewport, so 256 px below it clears the bottom edge at
+ * every viewport these tests cover (`tests/e2e/explore.spec.ts` measures every item).
+ */
+const ROOM_LIST_CLASS_NAME =
+  'absolute top-full left-0 z-20 mt-1 max-h-64 w-56 overflow-y-auto rounded-lg bg-slate-900 p-2 shadow-lg';
+
+/**
  * HUD control that walks the viewer to a room they pick.
  *
  * A disclosure button and a plain list of native buttons, one per room of
@@ -148,7 +168,13 @@ export function RoomMenu() {
         type="button"
         ref={triggerRef}
         aria-expanded={isOpen}
-        aria-controls={ROOM_LIST_ID}
+        // Only while the list exists. The `<ul>` is mounted with the disclosure, so a
+        // permanent `aria-controls` names an element that is not in the document for most of
+        // the control's life — an IDREF assistive technology has to resolve and cannot. No
+        // automated check catches it: axe downgrades `aria-controls` on an element whose
+        // `aria-expanded` is `false` to *incomplete* rather than a violation, by design, so
+        // all four audits in `tests/e2e/accessibility.spec.ts` pass either way.
+        aria-controls={isOpen ? ROOM_LIST_ID : undefined}
         onClick={handleTriggerClick}
         className={HUD_BUTTON_CLASS_NAME}
       >
@@ -160,10 +186,7 @@ export function RoomMenu() {
         </button>
       ) : null}
       {isOpen ? (
-        <ul
-          id={ROOM_LIST_ID}
-          className="absolute z-20 mt-1 max-h-64 w-56 overflow-y-auto rounded-lg bg-slate-900 p-2 shadow-lg"
-        >
+        <ul id={ROOM_LIST_ID} className={ROOM_LIST_CLASS_NAME}>
           {ROOM_TARGETS.map((space) => (
             <li key={space.id}>
               <button type="button" onClick={handlePick(space.id)} className={ROOM_ITEM_CLASS_NAME}>

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useExplorerPoseStore } from '../application/explorerPoseStore.ts';
 import { useRoomWalkStore } from '../application/roomWalkStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
 import { FLOOR_PLAN, PLOT_RECT, getSpace, getSpaceLabel } from '../domain/floorPlan/index.ts';
 import type { SpaceId } from '../domain/floorPlan/index.ts';
+import { INTERIOR_REGION_ID } from './hudIds.ts';
 import {
   MINIMAP_SAMPLE_INTERVAL_MS,
   formatMinimapNumber,
@@ -57,8 +58,19 @@ const ROOM_CLASS_NAME = 'cursor-pointer fill-slate-700 stroke-slate-300 hover:fi
  */
 const CURRENT_ROOM_CLASS_NAME = 'cursor-pointer fill-amber-400 stroke-slate-900';
 
-/** The viewer's arrow: amber like the current room, outlined against it. */
-const VIEWER_CLASS_NAME = 'fill-amber-400 stroke-slate-900';
+/**
+ * The viewer's arrow: dark on the amber it always stands on, haloed in white.
+ *
+ * **Not amber.** The marker is by definition inside
+ * {@link CURRENT_ROOM_CLASS_NAME}'s room — that is the room the pose resolves to —
+ * so an amber arrow on an amber fill left the heading readable only by its own
+ * hairline outline. `slate-900` on `amber-400` is about 11:1, well past the 3:1
+ * of WCAG 1.4.11, and the 2 px white stroke carries the same separation the other
+ * way for the frames where the arrow overhangs a neighbouring `slate-700` room or
+ * the panel's own ground (about 10:1 and 21:1). Both halves are the HUD's palette
+ * already: the panel's `slate-900` and the `text-white` it writes on it.
+ */
+const VIEWER_CLASS_NAME = 'fill-slate-900 stroke-white stroke-2';
 
 /** Distance from the viewer's position forward to the arrow's tip, in metres. */
 const ARROW_TIP_METRES = 0.9;
@@ -112,23 +124,26 @@ const HIDDEN = 'hidden';
  * spelling of a room name exists anywhere in the app, and `getFacingSideLabel`
  * for the heading, in the plan's own side vocabulary.
  *
+ * Pure: both facts are handed in, so the string cannot be older than the render
+ * that built it.
+ *
  * @param spaceId - The room the explorer is in, or `undefined` before the first
  *   room resolves.
+ * @param facing - The heading as {@link getFacingSideLabel} words it, or
+ *   `undefined` before the first pose has been sampled.
  * @returns e.g. `Floor minimap. You are in R11/KIT · Kitchen, facing toward side
  *   D.`, or {@link UNKNOWN_POSITION_SUMMARY} while the position is unknown. The
- *   heading is left off in the impossible case of a known room with no pose,
- *   rather than guessed at.
+ *   heading is left off while no pose has been sampled, rather than guessed at.
  */
-function getMinimapSummary(spaceId: SpaceId | undefined): string {
+function getMinimapSummary(spaceId: SpaceId | undefined, facing: string | undefined): string {
   if (spaceId === undefined) {
     return UNKNOWN_POSITION_SUMMARY;
   }
   const label = getSpaceLabel(getSpace(FLOOR_PLAN, spaceId));
-  const pose = useExplorerPoseStore.getState().getLatestPose();
-  if (pose === undefined) {
+  if (facing === undefined) {
     return `${SUMMARY_PREFIX} You are in ${label}.`;
   }
-  return `${SUMMARY_PREFIX} You are in ${label}, facing ${getFacingSideLabel(pose.yaw)}.`;
+  return `${SUMMARY_PREFIX} You are in ${label}, facing ${facing}.`;
 }
 
 /**
@@ -146,14 +161,23 @@ function getMinimapSummary(spaceId: SpaceId | undefined): string {
  * control exists elsewhere on the same screen. Do not "fix" this by making the
  * rectangles focusable.
  *
- * **Why it does not re-render.** The pose changes sixty times a second, so the
+ * **Why it barely re-renders.** The pose changes sixty times a second, so the
  * marker is moved by writing attributes on a ref'd `<g>` from one
  * `requestAnimationFrame` loop that samples the non-reactive channel
  * (`getLatestPose`) every {@link MINIMAP_SAMPLE_INTERVAL_MS} and writes only
  * when the transform string actually changed (ADR-004, ADR-007). React renders
- * only when the *room* changes: that is what repaints the highlight and rewrites
- * the summary, a handful of times per walk instead of per degree of yaw — which
- * also keeps the announcement from chattering.
+ * only when something a *reader* would notice changes: the room, which repaints
+ * the highlight, and the heading *bucket*, which rewrites the accessible name.
+ *
+ * **Why the heading is state and not a memo on the room.** It used to be read
+ * once per room change, which froze "facing toward side D" at the moment the room
+ * last changed: a viewer who turned 180° on the spot was then told the wrong
+ * heading as current fact, which is worse than not being told one. The bucket is
+ * therefore sampled in the same frame loop as the marker and kept in state.
+ * {@link getFacingSideLabel} quantises a full turn to eight words, and the loop
+ * only calls `setState` when the word changes, so the whole cost of being correct
+ * is at most eight renders per revolution instead of one per degree — and the
+ * announcement still cannot chatter.
  *
  * @returns The minimap in the interior view at `sm` and wider, otherwise `null`.
  */
@@ -162,12 +186,9 @@ export function Minimap() {
   const currentSpaceId = useExplorerPoseStore((state) => state.currentSpaceId);
   const startWalkTo = useRoomWalkStore((state) => state.startWalkTo);
   const markerRef = useRef<SVGGElement | null>(null);
+  const [facingLabel, setFacingLabel] = useState<string | undefined>(undefined);
 
-  // Keyed on the room alone: the heading is read once, when the room changes, so
-  // turning in place never rewrites the announcement. Memoised rather than held as
-  // state written from an effect, which would add a cascading render to every room
-  // change (`react-hooks/set-state-in-effect`) for a value that is purely derived.
-  const summary = useMemo(() => getMinimapSummary(currentSpaceId), [currentSpaceId]);
+  const summary = getMinimapSummary(currentSpaceId, facingLabel);
 
   useEffect(() => {
     if (!isInterior) {
@@ -175,6 +196,8 @@ export function Minimap() {
     }
     /** The last string written, so an unchanged frame touches no attribute at all. */
     let lastTransform: string | undefined;
+    /** The last heading word announced, so an unchanged bucket asks for no render. */
+    let lastFacingLabel: string | undefined;
     /** When the pose was last sampled, to space the samples out. */
     let lastSampleTime: number | undefined;
     let frameHandle = 0;
@@ -191,6 +214,14 @@ export function Minimap() {
       if (marker === null || pose === undefined) {
         return;
       }
+      // The heading first: it is the only thing here a screen reader is told, and it must
+      // not be skipped by the transform's own early return.
+      const facing = getFacingSideLabel(pose.yaw);
+      if (facing !== lastFacingLabel) {
+        lastFacingLabel = facing;
+        setFacingLabel(facing);
+      }
+
       const transform = getViewerTransform(pose);
       if (transform === lastTransform) {
         return;
@@ -212,6 +243,24 @@ export function Minimap() {
   if (!isInterior) {
     return null;
   }
+
+  /**
+   * Asks for a walk to one room and hands focus back to the 3D view.
+   *
+   * The focus move is `RoomMenu`'s pointer behaviour, for `RoomMenu`'s reason: the keys
+   * and the pad have to keep working while the viewer watches the walk. Here it is not
+   * merely convenient. These rects are not focusable, so a pointer-down on one *blurs*
+   * the view region, and `Escape` — one of the three documented ways to stop a walk —
+   * then silently does nothing until the viewer Tabs back. A pick is pointer-only by
+   * design (see the note above), so there is no keyboard route to tell apart.
+   *
+   * @param spaceId - The room whose rectangle was clicked.
+   * @returns The click handler for that rectangle.
+   */
+  const handlePick = (spaceId: SpaceId) => () => {
+    startWalkTo(spaceId);
+    document.getElementById(INTERIOR_REGION_ID)?.focus();
+  };
 
   return (
     <div className={PANEL_CLASS_NAME}>
@@ -235,9 +284,7 @@ export function Minimap() {
             height={shape.height}
             vectorEffect={NON_SCALING_STROKE}
             className={shape.spaceId === currentSpaceId ? CURRENT_ROOM_CLASS_NAME : ROOM_CLASS_NAME}
-            onClick={() => {
-              startWalkTo(shape.spaceId);
-            }}
+            onClick={handlePick(shape.spaceId)}
           />
         ))}
         <g ref={markerRef} aria-hidden visibility={HIDDEN}>

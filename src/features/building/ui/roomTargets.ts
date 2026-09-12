@@ -21,20 +21,22 @@ import type { PlanPoint } from '../domain/planGeometry.ts';
 import { PORT_SCHEDULE } from '../domain/ports/index.ts';
 import type { Port } from '../domain/ports/index.ts';
 import { getReachableSpaceIds } from '../domain/reachability.ts';
-import { getStairsLayout } from '../domain/stairs.ts';
+import { BUILT_FLOOR } from './floorInstance.ts';
 
 /**
  * Where the stairs deliver a viewer onto this floor: the middle of the arrival landing.
  *
  * Entry is through the stairs only (brief §4.2, ADR-006), so this is where every visit to the
- * floor begins and the natural point to resolve {@link ROOM_TARGETS} from. Derived from
- * `getStairsLayout` rather than written down, so moving the stair moves this with it; the
- * landing's `yaw` is dropped, because reachability asks where a viewer stands and not which
- * way they face.
+ * floor begins and the natural point to resolve {@link ROOM_TARGETS} from.
+ *
+ * Read off `BUILT_FLOOR`, the floor of the page, rather than derived again here: that module
+ * exists precisely to forbid a second derivation of anything about the live floor, and the
+ * arrival is already one of the things it owns (`floorInstance.ts`). The landing's `yaw` is
+ * dropped, because reachability asks where a viewer stands and not which way they face.
  */
 const STAIRS_ARRIVAL_POINT: PlanPoint = Object.freeze({
-  x: getStairsLayout(FLOOR_PLAN).arrival.x,
-  z: getStairsLayout(FLOOR_PLAN).arrival.z,
+  x: BUILT_FLOOR.stairs.arrival.x,
+  z: BUILT_FLOOR.stairs.arrival.z,
 });
 
 /**

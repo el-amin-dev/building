@@ -3,6 +3,7 @@ import { FLOOR_PLAN, SPACE_IDS, getSpace, hasFloor } from '../domain/floorPlan/i
 import type { SpaceId } from '../domain/floorPlan/index.ts';
 import type { PlanPoint } from '../domain/planGeometry.ts';
 import { PORT_SCHEDULE } from '../domain/ports/index.ts';
+import { BUILT_FLOOR } from './floorInstance.ts';
 import { ROOM_TARGETS, getRoomTargets } from './roomTargets.ts';
 
 /** The two spaces of the plan with no floor: open to the sky, not places a person can be. */
@@ -69,6 +70,12 @@ describe('ROOM_TARGETS', () => {
     const inPlanOrder = SPACE_IDS.filter((id) => offered.includes(id));
 
     expect(offered).toEqual(inPlanOrder);
+  });
+
+  it('resolves from the shared floor instance, not from a second derivation of the stair', () => {
+    const { arrival } = BUILT_FLOOR.stairs;
+
+    expect(idsOf(getRoomTargets(FLOOR_PLAN, PORT_SCHEDULE, arrival))).toEqual(idsOf(ROOM_TARGETS));
   });
 
   it('carries the matricule and the name of every room it offers', () => {
