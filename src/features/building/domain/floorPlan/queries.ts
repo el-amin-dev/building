@@ -62,6 +62,22 @@ export function getSpace(plan: FloorPlan, id: SpaceId): Space {
   return space;
 }
 
+/** Separates the matricule from the name in a space label. */
+export const SPACE_LABEL_SEPARATOR = '·';
+
+/**
+ * Formats a space for a readout: its matricule, then its name.
+ *
+ * The one label formatter of the model, so a readout cannot invent a second
+ * format: everything that shows a space to a person comes through here.
+ *
+ * @param space - The space to label.
+ * @returns e.g. `R11/KIT · Kitchen`.
+ */
+export function getSpaceLabel(space: Space): string {
+  return `${space.matricule} ${SPACE_LABEL_SEPARATOR} ${space.name}`;
+}
+
 /**
  * Returns the clear floor area of a space.
  *

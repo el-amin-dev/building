@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { makeRect, rectArea, rectDepth, rectWidth, toPlanLength } from '../planGeometry.ts';
 import type { PlanRect } from '../planGeometry.ts';
+import { ROOMS } from '../sourceOfTruth/plan.ts';
 import { WALL_SPEC } from '../wallSpec.ts';
 import { FLOOR_PLAN, INTERIOR_RECT, PLOT_RECT } from './floorPlanData.ts';
 import { getSpace, getSpaceArea, hasFloor } from './queries.ts';
@@ -139,6 +140,48 @@ const EXPECTED_KINDS: Record<SpaceId, SpaceKind> = {
   mainBathCubicle: 'room',
   mainShowerCubicle: 'room',
 };
+
+/**
+ * The matricule of every space, written out as literal strings.
+ *
+ * Deliberately NOT derived from `ROOMS` here: a derived table would agree with
+ * a broken formatter. The derivation is cross-checked separately below, so the
+ * two have to meet in the middle.
+ */
+const EXPECTED_MATRICULES: Record<SpaceId, string> = {
+  balconyA: 'R01/BAL',
+  masterBedroom: 'R02/BED',
+  livingRoom: 'R03/LIV',
+  bedroomMaleKids: 'R04/BED',
+  bedroomFemaleKids: 'R05/BED',
+  stairs: 'R06/STR',
+  corridor: 'R07/COR',
+  controlCenter: 'R08/CTR',
+  guestRoom: 'R09/GST',
+  guestSanitair: 'R10/BTH',
+  kitchen: 'R11/KIT',
+  laundry: 'R12/LND',
+  mainSanitair: 'R13/BTH',
+  utilityRoom: 'R14/UTL',
+  ccBalcony: 'R15/BAL',
+  balconySlabB: 'R16/BAL',
+  voidWest: 'R17/VOID',
+  voidEast: 'R18/VOID',
+  guestBathCubicle: 'R19/BAT',
+  guestShowerCubicle: 'R20/SHW',
+  mainBathCubicle: 'R21/BAT',
+  mainShowerCubicle: 'R22/SHW',
+};
+
+/**
+ * Shape of a matricule: `R`, two digits, `/`, then a three- or four-letter type
+ * code (`VOID` is the four-letter one).
+ */
+const MATRICULE_PATTERN = /^R\d{2}\/[A-Z]{3,4}$/u;
+/** Digits the matricule number is padded to. */
+const MATRICULE_DIGITS = 2;
+/** Highest matricule number that has to be zero-padded: R01…R09. */
+const LAST_PADDED_NUMBER = 9;
 
 /**
  * The clear area of every space, in square metres, measured from
@@ -337,6 +380,43 @@ describe('floorPlanData', () => {
 
     it.each(SPACE_IDS)('gives %s its kind', (id) => {
       expect(getSpace(FLOOR_PLAN, id).kind).toBe(EXPECTED_KINDS[id]);
+    });
+  });
+
+  describe('matricules', () => {
+    it.each(SPACE_IDS)('gives %s its matricule', (id) => {
+      expect(getSpace(FLOOR_PLAN, id).matricule).toBe(EXPECTED_MATRICULES[id]);
+    });
+
+    it('spot-checks the kitchen, the stairs and the side-A balcony', () => {
+      expect(getSpace(FLOOR_PLAN, 'kitchen').matricule).toBe('R11/KIT');
+      expect(getSpace(FLOOR_PLAN, 'stairs').matricule).toBe('R06/STR');
+      expect(getSpace(FLOOR_PLAN, 'balconyA').matricule).toBe('R01/BAL');
+    });
+
+    it('numbers the spaces in SPACE_IDS order, as ROOMS numbers them', () => {
+      expect(FLOOR_PLAN.spaces.map((space) => space.matricule)).toEqual(
+        ROOMS.map((room) => `R${String(room.n).padStart(MATRICULE_DIGITS, '0')}/${room.type}`),
+      );
+    });
+
+    it('zero-pads the nine single-digit numbers', () => {
+      const padded = ROOMS.filter((room) => room.n <= LAST_PADDED_NUMBER);
+
+      expect(padded).toHaveLength(LAST_PADDED_NUMBER);
+      padded.forEach((room) => {
+        expect(getSpace(FLOOR_PLAN, room.id).matricule).toMatch(/^R0[1-9]\//u);
+      });
+    });
+
+    it('gives all 22 spaces a unique, well-shaped matricule', () => {
+      const matricules = FLOOR_PLAN.spaces.map((space) => space.matricule);
+
+      expect(matricules).toHaveLength(SPACE_IDS.length);
+      expect(new Set(matricules).size).toBe(SPACE_IDS.length);
+      matricules.forEach((matricule) => {
+        expect(matricule).toMatch(MATRICULE_PATTERN);
+      });
     });
   });
 

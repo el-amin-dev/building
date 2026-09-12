@@ -74,6 +74,8 @@ export type SpaceKind = (typeof SPACE_KINDS)[number];
 export interface Space {
   /** Unique identifier of the space. */
   readonly id: SpaceId;
+  /** Matricule of the space, as the source of truth numbers it: `R` + two digits + `/` + type code, e.g. `R11/KIT`. */
+  readonly matricule: string;
   /** Human-readable name of the space. */
   readonly name: string;
   /** What the space is used for, which drives its walls and floor. */

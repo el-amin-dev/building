@@ -25,6 +25,10 @@ const BEYOND_PLOT_X = 12.3;
 const SPLIT_Z = 5;
 const OVERLAP_Z = 4.9;
 const NEGATIVE_THICKNESS = -0.2;
+/** A matricule with the number and the type code the wrong way round. */
+const MALFORMED_MATRICULE = 'KIT/11';
+/** No matricule at all. */
+const EMPTY_MATRICULE = '';
 const KITCHEN_SHIFT_X = -0.25;
 const FIRST_RECT = 0;
 const HALF = 0.5;
@@ -40,12 +44,16 @@ const UTILITY_RECT = makeRect(UTILITY_MIN_X, INTERIOR_MAX_X, INTERIOR_MIN, INTER
 /**
  * Builds a room with the given rects.
  *
+ * The matricule is the real one {@link FLOOR_PLAN} carries for that id, so the
+ * synthetic plans below satisfy the matricule check without restating a second
+ * numbering: every distinct id brings a distinct, well-shaped matricule.
+ *
  * @param id - Identifier of the space.
  * @param rects - Clear rects of the space.
  * @returns A space named after its id.
  */
 function room(id: SpaceId, rects: readonly PlanRect[]): Space {
-  return { id, name: id, kind: 'room', rects };
+  return { id, matricule: floorSpace(id).matricule, name: id, kind: 'room', rects };
 }
 
 /**
@@ -133,6 +141,21 @@ const REJECTION_CASES: readonly { label: string; plan: FloorPlan; offender: stri
     label: 'a duplicate id',
     plan: smallPlan({ spaces: [KITCHEN, room('kitchen', [LAUNDRY_RECT])] }),
     offender: 'kitchen',
+  },
+  {
+    label: 'the same matricule on two different spaces',
+    plan: smallPlan({ spaces: [KITCHEN, { ...LAUNDRY, matricule: KITCHEN.matricule }] }),
+    offender: KITCHEN.matricule,
+  },
+  {
+    label: 'a malformed matricule',
+    plan: smallPlan({ spaces: [KITCHEN, { ...LAUNDRY, matricule: MALFORMED_MATRICULE }] }),
+    offender: MALFORMED_MATRICULE,
+  },
+  {
+    label: 'an empty matricule',
+    plan: smallPlan({ spaces: [KITCHEN, { ...LAUNDRY, matricule: EMPTY_MATRICULE }] }),
+    offender: 'laundry',
   },
   {
     label: 'a space with no rects',
@@ -264,6 +287,14 @@ describe('validateFloorPlan', () => {
     const plan = smallPlan();
 
     expect(validateFloorPlan(plan)).toBe(plan);
+  });
+
+  it('accepts the four-letter VOID matricules of the two void spaces', () => {
+    // `VOID` is the one type code of the source of truth that is not three
+    // letters, so it is the case a `[A-Z]{3}` check would reject outright.
+    expect(floorSpace('voidWest').matricule).toBe('R17/VOID');
+    expect(floorSpace('voidEast').matricule).toBe('R18/VOID');
+    expect(validateFloorPlan(FLOOR_PLAN)).toBe(FLOOR_PLAN);
   });
 
   it.each(REJECTION_CASES)('rejects $label', ({ plan, offender }) => {
