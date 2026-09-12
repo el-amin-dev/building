@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import {
+  CAMERA_TOGGLE_NAME,
+  EXTERIOR_REGION_NAME,
   EXTERIOR_STATUS,
   FIRST_PERSON_STATUS,
   INTERIOR_REGION_NAME,
@@ -14,12 +16,10 @@ import {
 
 /** Compact key summary shown on the HUD; `aria-hidden`, so it is found by text, not by role. */
 const INTERIOR_HINT_TEXT =
-  'Move: W A S D · Look: I J K L · Person view: V · or use the on-screen remote control';
-/** Full key description the interior region is described by (visually hidden). */
+  'Move: W A S D · Look: I J K L · Person view: V · Escape stops a walk · or use the on-screen remote control';
+/** Full key description the view region is described by, in both views (visually hidden). */
 const INTERIOR_HINT_DESCRIPTION =
-  'W moves forward, S moves back, A steps left, D steps right, J turns left, L turns right, I looks up, K looks down. V switches between first-person and third-person view. Keys follow their positions on a QWERTY keyboard. Every movement is also available on the on-screen remote control in the HUD, which needs no keyboard: hold one of its buttons with a pointer or a finger, or with Space or Enter while the button has focus. Press Tab to reach the view toggle, then the Third person toggle, then the remote control buttons. After using the Third person toggle with the keyboard, press Shift+Tab twice to return to the view.';
-/** Accessible name of the camera mode toggle button, shown in the interior view only. */
-const CAMERA_TOGGLE_NAME = 'Third person';
+  'W moves forward, S moves back, A steps left, D steps right, J turns left, L turns right, I looks up, K looks down. V switches between first-person and third-person view. Keys follow their positions on a QWERTY keyboard. Every movement is also available on the on-screen remote control in the HUD, which needs no keyboard: hold one of its buttons with a pointer or a finger, or with Space or Enter while the button has focus. The "Go to room" button in the HUD lists every room of the floor and walks you to the one you pick, through the doors; that walk stops when you activate the "Stop walking" button beside it, when you press Escape while the view has focus, or as soon as you move yourself with any key or pad button. In the exterior view the left and right arrows orbit the camera around the building, the up and down arrows tilt it, and the plus and minus keys zoom in and out; the on-screen camera pad offers those same six movements. Press Tab to reach the view toggle, then the Third person toggle, then "Go to room", then the remote control buttons. After using the Third person toggle with the keyboard, press Shift+Tab twice to return to the view.';
 /** Status line of the interior view in third person. */
 const THIRD_PERSON_STATUS = 'View: Interior · Third person';
 /** Physical key switching between first and third person. */
@@ -76,8 +76,9 @@ test.describe('interior navigation', () => {
     await expect(hint).toBeVisible();
     await expect(status).toHaveText(FIRST_PERSON_STATUS);
 
-    // The eye starts in the centre of the walkable area looking along its longer axis, with
-    // half the room's length of floor ahead, so holding W walks forward and changes the frame.
+    // The eye starts on the stair arrival landing, (5.10, 5.00) facing the corridor, so forward
+    // is +x and the corridor runs some 15 m ahead of it through a join that carries no wall at
+    // all: holding W walks into it and changes the frame.
     const beforeWalk = await captureSettledScene(page);
     await expectKeyChangesScene(page, beforeWalk, 'KeyW');
 
@@ -90,7 +91,10 @@ test.describe('interior navigation', () => {
 
     await page.keyboard.press('Enter');
     await expect(status).toHaveText(EXTERIOR_STATUS);
-    await expect(page.getByRole('application')).toHaveCount(0);
+    // The region is a focusable `role="application"` in both views now (ADR-013), so leaving the
+    // interior renames it rather than removing it: what goes is the interior name, not the role.
+    await expect(page.getByRole('application', { name: EXTERIOR_REGION_NAME })).toBeVisible();
+    await expect(page.getByRole('application', { name: INTERIOR_REGION_NAME })).toHaveCount(0);
     await expect(hint).toBeHidden();
 
     expect(pageErrors).toEqual([]);
@@ -118,9 +122,9 @@ test.describe('interior navigation', () => {
     await expect(cameraToggle).toHaveAttribute('aria-pressed', 'false');
     await expect(status).toHaveText(FIRST_PERSON_STATUS);
 
-    // At the start pose, right after entering, with the room's length free behind the person:
-    // pressing V must change the rendered 3D frame (HUD masked). The unit tests guard the
-    // distance the follow camera keeps there.
+    // At the start pose, right after entering: pressing V must change the rendered 3D frame
+    // (HUD masked). The unit tests guard the distance the follow camera keeps on the arrival
+    // landing, where the stair shaft close behind the person pulls it in.
     const firstPersonScene = await captureSettledScene(page);
     await page.keyboard.press(CAMERA_MODE_KEY);
     await expect(cameraToggle).toHaveAttribute('aria-pressed', 'true');
@@ -146,11 +150,13 @@ test.describe('interior navigation', () => {
     await expect(cameraToggle).toHaveAttribute('aria-pressed', 'true');
     await expect(status).toHaveText(THIRD_PERSON_STATUS);
     await expect(region).toBeFocused();
-    // S, not W: each hold above lasts until the software renderer draws a changed frame, which
-    // is long enough to walk the person into the wall it faces, and a walk key with no room
-    // left ahead cannot change anything. Backward is the direction the whole room is free in.
+    // W, not S: each hold lasts until the software renderer draws a changed frame, which can be
+    // long enough to walk the person as far as whatever it faces, so this leg has to be the
+    // direction with room left in it. From the arrival landing that is forward, where the
+    // corridor runs some 15 m ahead; backward reaches the brink of the stair shaft a body radius
+    // behind the start pose, where the walk field stops the body and no frame changes any more.
     const afterClick = await captureSettledScene(page);
-    await expectKeyChangesScene(page, afterClick, 'KeyS');
+    await expectKeyChangesScene(page, afterClick, 'KeyW');
 
     await viewToggle.click();
     await expect(status).toHaveText(EXTERIOR_STATUS);
