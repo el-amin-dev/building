@@ -33,6 +33,51 @@ const FIRST_MANNEQUIN_FRAME_TIMEOUT_MS = 15_000;
 /** How long a key is held while asserting that it has no effect. */
 const UNFOCUSED_KEY_HOLD_MS = 500;
 
+/**
+ * Budget for the camera-mode test, the heaviest in this file.
+ *
+ * ## Where the number comes from
+ *
+ * Measured on this machine, serially, with the reporter's own per-test clock: **23 s**. It
+ * settles the scene four times (each settle is a series of canvas screenshots until two come
+ * back byte-identical), polls canvas screenshots three times until a held key or a pressed V
+ * changes one, and one of those three is the mannequin's first visible frame, where its
+ * shaders compile — see {@link FIRST_MANNEQUIN_FRAME_TIMEOUT_MS}.
+ *
+ * CI has no GPU, so every frame of the whole floor is rasterised in software on the CPU, and
+ * the same suite takes **12.8 min** there against **4.5 min** here: a **3× slowdown**, paid by
+ * exactly that per-frame work. 23 s here is therefore some **70 s** there, against the 90 s
+ * that `test.slow()` (three times the 30 s default) allowed — it passes, but with barely 20 s
+ * left, which is no margin at all on a shared runner. It and the unfocused-keys test below are
+ * the two that starve first here when the suite is run in parallel, which is the same thing
+ * measured a different way: they are the closest to their budgets.
+ *
+ * 180 s is nearly **8×** the local time and some **2.5×** the projected CI time.
+ *
+ * ## Why this is not a mask over a slow app
+ *
+ * Nothing here waits out one of the product's own timings. Every poll ends the instant a
+ * changed frame is captured, so a faster renderer finishes sooner and the budget is never
+ * reached; it is an upper bound on how long a frame may take to arrive, not a pause. What is
+ * being paid for is the rasteriser, not the renderer.
+ */
+const CAMERA_MODE_TEST_TIMEOUT_MS = 180_000;
+/**
+ * Budget for the unfocused-keys test.
+ *
+ * Measured on this machine, serially: **11.5 s** — two held keys that must do nothing, so most
+ * of it is the page load, the view flight and three settled captures. It is the one test in
+ * this file that never called `test.slow()`, so it ran on the bare 30 s default; at the 3× CI
+ * slowdown described on {@link CAMERA_MODE_TEST_TIMEOUT_MS} that is some **35 s** on a runner,
+ * already past its budget before any bad luck. That it has not failed yet is margin that was
+ * never there, not margin that holds.
+ *
+ * 120 s is some **10×** the local time and **3×** the projected CI time. It masks nothing for
+ * the same reason the constant above does not: every wait here but the two deliberate
+ * {@link UNFOCUSED_KEY_HOLD_MS} holds ends as soon as the frame it is waiting for arrives.
+ */
+const UNFOCUSED_KEYS_TEST_TIMEOUT_MS = 120_000;
+
 /** Holds a key until the masked scene no longer matches the baseline, then releases it. */
 async function expectKeyChangesScene(page: Page, baseline: Buffer, code: string): Promise<void> {
   await page.keyboard.down(code);
@@ -101,9 +146,9 @@ test.describe('interior navigation', () => {
   });
 
   test('switches between first and third person with V and the HUD button', async ({ page }) => {
-    // Several settled captures plus the mannequin's first frame (shader compilation, see
-    // FIRST_MANNEQUIN_FRAME_TIMEOUT_MS) exceed the default test timeout under parallel workers.
-    test.slow();
+    // Sized for a GPU-less CI runner rather than left to `test.slow()`; the arithmetic is in
+    // the constant's docblock.
+    test.setTimeout(CAMERA_MODE_TEST_TIMEOUT_MS);
     const pageErrors: Error[] = [];
     page.on('pageerror', (error) => pageErrors.push(error));
 
@@ -173,6 +218,9 @@ test.describe('interior navigation', () => {
   test('ignores movement and camera mode keys while the interior view is not focused', async ({
     page,
   }) => {
+    // The one test here that ran on the bare default, which a CI runner does not fit into; the
+    // arithmetic is in the constant's docblock.
+    test.setTimeout(UNFOCUSED_KEYS_TEST_TIMEOUT_MS);
     const pageErrors: Error[] = [];
     page.on('pageerror', (error) => pageErrors.push(error));
 
