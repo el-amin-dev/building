@@ -44,13 +44,23 @@ const DETACHED = makeRect(12, 14, 0.3, 5.3);
 /**
  * Builds a frozen space whose name is its id.
  *
+ * The matricule is the real one {@link FLOOR_PLAN} carries for that id, so no
+ * second numbering is invented here. Nothing in `joins.ts` reads it — a join is
+ * measured from the rects — but {@link Space} requires it.
+ *
  * @param id - Identifier of the space.
  * @param kind - Kind of the space.
  * @param rects - Clear rects of the space; the join is measured between them.
  * @returns A frozen {@link Space}.
  */
 function makeSpace(id: SpaceId, kind: SpaceKind, rects: readonly PlanRect[]): Space {
-  return Object.freeze({ id, name: id, kind, rects: Object.freeze([...rects]) });
+  return Object.freeze({
+    id,
+    matricule: getSpace(FLOOR_PLAN, id).matricule,
+    name: id,
+    kind,
+    rects: Object.freeze([...rects]),
+  });
 }
 
 /**

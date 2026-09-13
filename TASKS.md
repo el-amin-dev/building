@@ -128,7 +128,7 @@ A task below keeps its `[x]` when the thing it built still stands and only its d
 - [x] Rewrite the ~20 test files whose numbers moved; the heaviest are `walls.test.ts` (403 numeric literals), `floorPlanData.test.ts`, `stairs.test.ts`, `windows.test.ts`, `builtFloor.test.ts`
 - [x] ADR: the source of truth inverted — the plan defines the floor and the drawing is generated from it; the model and the drawing share one copy (**ADR-010**, which also records the four-part closure, isolation as width, the 18-riser through-stair, the declared windows and what it supersedes in ADR-003/005/006/008)
 - [x] Cover `scripts/` with typecheck, lint and format — the code that generates the drawing is currently in none of the three
-- [ ] DoD gate → PR merged
+- [x] DoD gate → PR merged (pull request #11, squashed onto `main` as `b333280`)
 
 > Note: the planned `ui/SpaceModel.tsx` (one component per space) was deliberately dropped. Boxes sharing a material are baked into one merged geometry instead (`ui/mergeBoxes.ts`, `ui/MergedBoxesMesh.tsx`), so the floor costs one draw call per material rather than one per space (ADR-008).
 
@@ -140,20 +140,20 @@ A task below keeps its `[x]` when the thing it built still stands and only its d
 - depends-on: Part 2
 - exit: **movement crosses a wall at a port and nowhere else** — never through a wall, never through a window; entry → every room reachable that way; ADR-002 superseded; axe reports no violations
 
-- [ ] `domain/collision.ts` — body circle vs wall segments with sliding + tests
-- [ ] Walkable area = slabs; void edges and blocked volumes stop movement; doorways pass only if wider than the body + tests
-- [ ] Movement crosses a wall only through a **port**, never a window: a window's sill leaves the wall solid at body height, so this falls out of the geometry rather than needing a rule
-- [ ] `stepEyePose` uses floor collision instead of the single-chamber clamp; third-person camera pull-in uses the same wall collision
-- [ ] `getCurrentSpace(pose)` and HUD room name in a polite live region + tests
-- [ ] Interior start pose at the stairs arrival — on `landingEast`, the only part of the bay that is floor at this level — facing the corridor; replaces the interim master-bedroom pose Part 2 ships (`createRoomCentrePose`, ADR-008)
-- [ ] Exterior orbit keyboard controls (rotate, tilt, zoom), scoped to the focused view + tests
+- [x] `domain/collision.ts` — one **walk field**, swept once from the plot, the slabs and the wall pieces, classifying every cell as `floor` / `solid` / `fall`; a body circle moved against it axis by axis, **swept rather than sampled** so no step can tunnel a 0.15 m wall, with sliding + tests
+- [x] Walkable area is that field's `floor` cells — **the slabs plus every door threshold block**, not the slabs alone: no slab is poured inside a wall, so a body crossing a 0.30 m threshold is off-slab by construction. Void edges and the stair shaft are `fall` cells and stop movement a body radius short of the brink, so `getBlockedRects` was **deleted rather than consumed** (a second hand-written description of a hole the sweep already blocks); doorways pass only if wider than the body + tests
+- [x] Movement crosses a wall only through a **port**, never a window: a window's sill leaves the wall solid at body height, so this falls out of the geometry rather than needing a rule — `collision.ts` imports nothing from `domain/ports/`
+- [x] `stepEyePose` uses floor collision instead of the single-chamber clamp; third-person camera pull-in uses the same wall collision (`CameraRoomBox` gone, so the follow camera now follows through a doorway instead of being trapped in one convex room)
+- [x] `getCurrentSpace(pose)` and HUD room name in a polite live region + tests — `matricule + name` (`R11/KIT · Kitchen`) from the one `getSpaceLabel` formatter, and `aria-live="polite"` on an element with **no role**, so the page keeps exactly one `role="status"`
+- [x] Interior start pose at the stairs arrival — on `landingEast`, the only part of the bay that is floor at this level — facing the corridor, (5.10, 5.00); replaces the interim master-bedroom pose Part 2 shipped (`createRoomCentrePose` and `interimWalkArea.ts` deleted, ADR-008, ADR-013)
+- [x] Exterior orbit keyboard controls (rotate, tilt, zoom), scoped to the focused view + tests — arrows orbit and tilt, `Equal`/`Minus` and the numpad zoom, with the exterior camera remembering its angle across a round trip through the interior
 - [x] On-screen hold-to-act move / turn / look buttons (WCAG 2.5.7) + tests — **delivered early in Part 2** (`ui/RemoteControl.tsx`, `application/remoteControlStore.ts`, `tests/e2e/remoteControl.spec.ts`, ADR-008)
-- [ ] "Go to room" menu operable by keyboard and single click + tests
-- [ ] Animated exterior ↔ interior transitions, instant under `prefers-reduced-motion`
-- [ ] SVG minimap from the model with position and heading; select a room to jump there + tests
-- [ ] HUD usable at 400 px width with touch targets ≥ 24 × 24 px
-- [ ] Playwright axe check on both views; e2e walk stairs arrival → corridor → guest room → kitchen (the link corridor it used to cross no longer exists)
-- [ ] ADR superseding ADR-002; RUNBOOK "Controls" updated
+- [x] "Go to room" menu operable by keyboard and single click + tests — it **walks** the viewer there through the real doorways rather than teleporting (owner decision), with three ways to stop: the "Stop walking" button, `Escape`, and any manual movement input
+- [x] Animated exterior ↔ interior transitions (0.9 s, eased, from the live camera to the pose the arriving controls will hold), instant under `prefers-reduced-motion` — which governs that flight and **nothing else**: an automatic walk still walks at normal pace
+- [x] SVG minimap from the model with position and heading; pick a room to **walk** there + tests — interior only, `sm` and wider, and its rooms are pointer-only targets with the full-size "Go to room" menu as the keyboard and touch equivalent (WCAG 2.5.8's equivalent-control exception)
+- [x] HUD usable at 400 px width with touch targets ≥ 24 × 24 px — measured at 400 × 800: the 3D view keeps 67 % of the height against a 0.6 floor, the smallest pad button is 44 CSS px, and `tests/e2e/remoteControl.spec.ts` asserts every button visible, ≥ 24 × 24 px, hit-testable and free of horizontal page scroll
+- [x] Playwright axe check on both views; e2e walk stairs arrival → corridor → guest room → kitchen (the link corridor it used to cross no longer exists) — `tests/e2e/accessibility.spec.ts` over four states, zero violations; the walk is `tests/e2e/explore.spec.ts`
+- [x] ADR superseding ADR-002 (**ADR-013**, which also records the one-walk-field collision model, the automatic walk and its along-track arrival fix, the remembered orbit angle, the view flight and the exact scope of `prefers-reduced-motion`, the two ADR-008 promises this part breaks, and the accepted costs); RUNBOOK "Controls" updated
 - [ ] DoD gate → PR merged
 
 ## Part 4 — Furnished release: fixtures, hardening, v1.0.0
@@ -174,6 +174,7 @@ A task below keeps its `[x]` when the thing it built still stands and only its d
 - [ ] Lazy-load the 3D scene chunk, instance/merge static geometry, bundle-size budget in CI
 - [ ] WebGL-unsupported fallback and a canvas error boundary with structured logging
 - [ ] Add eslint-plugin-jsx-a11y if it supports ESLint 10, otherwise record the deferral
+- [ ] Re-instrument the geometry screenshot baselines: a 1 % diff-pixel ratio does not answer "did the geometry move" — 1 % of a 1280 × 720 frame is over 9,000 pixels, room for an entire corner of the building to change unnoticed, which is how a whole floor rebuild sat unseen behind the exterior baseline until Part 3's wider HUD mask used up the headroom (ADR-013). Either tighten the ratio toward the measured noise floor (0 px by Playwright's own metric when a baseline matches its own commit) or assert something that does not average over the frame
 - [ ] ADR self-hosted target + deploy workflow; e2e full tour of every room
 - [ ] README (controls, sources of truth, screenshots), `CHANGELOG.md`, tag `v1.0.0`
 - [ ] DoD gate → release published

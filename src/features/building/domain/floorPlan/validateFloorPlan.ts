@@ -17,6 +17,16 @@ const BOUNDARY_FIELDS: readonly ('plot' | 'interior')[] = Object.freeze(['plot',
 /** Separator between the two ids of an unordered override pair key. */
 const PAIR_KEY_SEPARATOR = '|';
 
+/**
+ * Shape of a space matricule: `R`, two digits, `/`, then the type code.
+ *
+ * The type code is three or four letters, not three: every `PlanRoomType` of
+ * the source of truth is three letters except `VOID`, which is four, so the two
+ * void spaces carry `R17/VOID` and `R18/VOID`. `walls.test.ts` pins the derived
+ * wall matricules with the same widened class, for the same reason.
+ */
+const MATRICULE_PATTERN = /^R\d{2}\/[A-Z]{3,4}$/u;
+
 /** One rect of one space, with where it came from. */
 interface LocatedRect {
   /** Identifier of the space the rect belongs to. */
@@ -90,6 +100,32 @@ function checkUniqueIds(plan: FloorPlan): void {
       throw new RangeError(`space id "${space.id}" appears more than once`);
     }
     seen.add(space.id);
+  }
+}
+
+/**
+ * Checks that every space carries a non-empty, unique, well-shaped matricule.
+ *
+ * @param plan - The plan to check.
+ * @throws RangeError naming the space and its matricule.
+ */
+function checkMatricules(plan: FloorPlan): void {
+  const seen = new Set<string>();
+  for (const space of plan.spaces) {
+    if (space.matricule === '') {
+      throw new RangeError(`space "${space.id}" must have a matricule`);
+    }
+    if (!MATRICULE_PATTERN.test(space.matricule)) {
+      throw new RangeError(
+        `space "${space.id}" matricule "${space.matricule}" must look like "R11/KIT"`,
+      );
+    }
+    if (seen.has(space.matricule)) {
+      throw new RangeError(
+        `space matricule "${space.matricule}" appears more than once, on space "${space.id}"`,
+      );
+    }
+    seen.add(space.matricule);
   }
 }
 
@@ -229,13 +265,14 @@ function checkJoinOverrides(plan: FloorPlan): void {
  * 1. `plot` and `interior` are finite and not inverted, and `plot` contains
  *    `interior`;
  * 2. space ids are unique;
- * 3. every space has at least one rect;
- * 4. every rect coordinate is finite and on the centimetre grid, with
+ * 3. every space matricule is non-empty, unique and shaped like `R11/KIT`;
+ * 4. every space has at least one rect;
+ * 5. every rect coordinate is finite and on the centimetre grid, with
  *    `minX < maxX` and `minZ < maxZ` after snapping to the grid;
- * 5. every rect lies within `interior`;
- * 6. no two rects overlap, across spaces or within one space (touching edges
+ * 6. every rect lies within `interior`;
+ * 7. no two rects overlap, across spaces or within one space (touching edges
  *    are allowed);
- * 7. every join override references two distinct ids present in the plan, has
+ * 8. every join override references two distinct ids present in the plan, has
  *    a finite thickness `>= 0` on the grid, and no unordered pair is listed
  *    twice.
  *
@@ -250,6 +287,7 @@ function checkJoinOverrides(plan: FloorPlan): void {
 export function validateFloorPlan(plan: FloorPlan): FloorPlan {
   checkBoundaries(plan);
   checkUniqueIds(plan);
+  checkMatricules(plan);
   checkNonEmptySpaces(plan);
   const rects = locateRects(plan);
   checkRectShapes(rects);

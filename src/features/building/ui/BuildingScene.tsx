@@ -1,15 +1,12 @@
 import { Canvas } from '@react-three/fiber';
 import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
+import { useRoomWalkStore } from '../application/roomWalkStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
-import { EYE_NAVIGATION_CONFIG } from '../domain/eyeNavigation.ts';
-import { FLOOR_PLAN } from '../domain/floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from '../domain/heights.ts';
-import { getRoomWalkArea, INTERIM_WALK_SPACE_ID } from '../domain/interimWalkArea.ts';
 import { getSlabThickness } from '../domain/slabs.ts';
-import { THIRD_PERSON_CAMERA_CONFIG } from '../domain/thirdPersonCamera.ts';
 import { CAMERA_MODE_TOGGLE_KEY_CODE } from '../domain/viewMode.ts';
-import type { InteriorCameraMode } from '../domain/viewMode.ts';
+import type { InteriorCameraMode, ViewMode } from '../domain/viewMode.ts';
 import { ExteriorCameraControls } from './ExteriorCameraControls.tsx';
 import { FloorModel } from './FloorModel.tsx';
 import { INTERIOR_REGION_ID, NAVIGATION_HINT_ID } from './hudIds.ts';
@@ -17,6 +14,7 @@ import { InteriorExplorer } from './InteriorExplorer.tsx';
 import { SceneLighting } from './SceneLighting.tsx';
 import { CAMERA_FOV_DEGREES, useExteriorFraming } from './useExteriorFraming.ts';
 import { useKeyAction } from './useKeyAction.ts';
+import { ViewTransition } from './ViewTransition.tsx';
 
 const CAMERA_NEAR = 0.1;
 const CAMERA_FAR = 500;
@@ -32,18 +30,36 @@ const CAMERA_OPTIONS = {
   far: CAMERA_FAR,
 };
 const EXTERIOR_DESCRIPTION =
-  '3D view of the whole floor from outside: its rooms, balconies, corridors and stairs, seen from above the open side of the building. The camera moves by dragging and scrolling; keyboard camera controls are not available in this view yet.';
+  '3D view of the whole floor from outside: its rooms, balconies, corridors and stairs, seen from above the open side of the building. Drag to orbit and scroll to zoom, or use the keyboard while this view has focus: the left and right arrows orbit around the building, the up and down arrows tilt over it, and the plus and minus keys zoom in and out. The on-screen camera pad in the HUD offers the same six movements without a keyboard.';
 /** What the interior view shows, per camera mode. */
 const INTERIOR_DESCRIPTIONS: Readonly<Record<InteriorCameraMode, string>> = Object.freeze({
   firstPerson:
-    'Eye-level 3D view inside the master bedroom of the floor. Move and look around with the keys listed in the navigation hint. Walking is limited to that room for now.',
+    'Eye-level 3D view inside the floor, opening on the stair arrival landing facing the corridor. Move and look around with the keys listed in the navigation hint; the whole floor is walkable, through its doors. The room readout in the HUD names the room you are standing in, "Go to room" walks you to any room of the floor, and the minimap shows where you are on it.',
   thirdPerson:
-    'Third-person 3D view following your person inside the master bedroom of the floor. Move and look around with the keys listed in the navigation hint. Walking is limited to that room for now.',
+    'Third-person 3D view following your person inside the floor, opening on the stair arrival landing facing the corridor. Move and look around with the keys listed in the navigation hint; the whole floor is walkable, through its doors. The room readout in the HUD names the room you are standing in, "Go to room" walks you to any room of the floor, and the minimap shows where you are on it.',
 });
-/** Distinct from the "Interior view" toggle, so voice control never sees two targets with one name. */
+/**
+ * Accessible name of the view region per view mode.
+ *
+ * Distinct from the "Interior view" toggle, so voice control never sees two targets with
+ * one name. The interior name is matched verbatim by the end-to-end specs.
+ */
 const INTERIOR_REGION_LABEL = 'Interior 3D view';
-const INTERIOR_REGION_ROLE = 'application';
-const INTERIOR_REGION_TAB_INDEX = 0;
+const EXTERIOR_REGION_LABEL = 'Exterior 3D view';
+const REGION_ROLE = 'application';
+const REGION_TAB_INDEX = 0;
+/** Physical key that abandons an automatic walk while the view has focus. */
+const CANCEL_WALK_KEY_CODE = 'Escape';
+/**
+ * The two values of `data-camera-transition`, the attribute the end-to-end capture helper
+ * gates on.
+ *
+ * A 0.9 s camera travel would otherwise be caught mid-flight by a screenshot, which no
+ * "two identical captures" rule can rule out on its own; the region says out loud whether
+ * the camera is still moving, so "settled" can mean it.
+ */
+const CAMERA_IDLE = 'idle';
+const CAMERA_RUNNING = 'running';
 /**
  * Full-size region around the canvas. The focus indicator is drawn by an `::after` layer
  * stacked above the WebGL canvas (which would paint over an outline on the region
@@ -89,25 +105,16 @@ export const GROUND_LEVEL = -(
   FLOOR_HEIGHTS.floorToFloor * GROUND_STOREYS_BELOW_SLAB
 );
 
-/**
- * Where the interior viewer may stand and where its follow camera may go: one room.
- *
- * The whole floor is rendered, but there is no wall collision yet, so walking is clamped to
- * the master bedroom — the room the start pose sits in — until Part 3 brings collision
- * against the real plan and this clamp (with `interimWalkArea.ts` itself) is deleted.
- */
-const WALK_AREA = getRoomWalkArea(
-  FLOOR_PLAN,
-  INTERIM_WALK_SPACE_ID,
-  EYE_NAVIGATION_CONFIG.bodyRadius,
-  FLOOR_HEIGHTS.wall,
-  THIRD_PERSON_CAMERA_CONFIG.wallMargin,
-);
-
 /** Props of the scene graph rendered inside the canvas. */
 interface SceneContentProps {
   /** Whether the interior view is active. */
   readonly isInterior: boolean;
+  /**
+   * Whether the camera is travelling between the two views, in which case neither view's
+   * controls are mounted: both write the camera every frame while mounted, so they would
+   * simply overwrite the travel.
+   */
+  readonly isTravelling: boolean;
   /** The focusable region whose key presses drive the interior camera. */
   readonly regionRef: RefObject<HTMLDivElement | null>;
 }
@@ -120,10 +127,15 @@ interface SceneContentProps {
  * (through `SceneLighting`), the side of the ground plane, and — inside
  * `ExteriorCameraControls` — the orbit target, the start position and the zoom limits.
  *
+ * `ViewTransition` is mounted here for the whole life of the scene, outside the view
+ * ternary, because it is the one thing that has to survive a change of view: it owns the
+ * camera while the travel between the two runs, and the controls it replaces are exactly
+ * the sides of that ternary.
+ *
  * @param props - {@link SceneContentProps}
  * @returns The scene graph of the active view.
  */
-function SceneContent({ isInterior, regionRef }: SceneContentProps) {
+function SceneContent({ isInterior, isTravelling, regionRef }: SceneContentProps) {
   const framing = useExteriorFraming();
 
   return (
@@ -140,14 +152,12 @@ function SceneContent({ isInterior, regionRef }: SceneContentProps) {
 
       <FloorModel showCeilings={isInterior} />
 
-      {isInterior ? (
-        <InteriorExplorer
-          targetRef={regionRef}
-          bounds={WALK_AREA.bounds}
-          roomBox={WALK_AREA.roomBox}
-        />
+      <ViewTransition />
+
+      {isTravelling ? null : isInterior ? (
+        <InteriorExplorer targetRef={regionRef} />
       ) : (
-        <ExteriorCameraControls />
+        <ExteriorCameraControls targetRef={regionRef} />
       )}
     </>
   );
@@ -156,40 +166,66 @@ function SceneContent({ isInterior, regionRef }: SceneContentProps) {
 /**
  * Full-size 3D canvas showing the whole built floor, switched by the view mode.
  *
- * - Exterior view: pointer-only orbit camera outside the unroofed floor, framed so the
- *   whole plot fits whatever the viewport shape. The region has no role and is not
- *   focusable (ADR-002).
+ * - Exterior view: an orbit camera outside the unroofed floor, framed so the whole plot
+ *   fits whatever the viewport shape, driven by pointer drag and wheel, by the arrow and
+ *   zoom keys of `orbitNavigation.ts` while the region has focus, and by the on-screen
+ *   camera pad.
  * - Interior view: ceilings added and a person driven by W/A/S/D (move), J/L (turn) and
- *   I/K (look), stopped by the walls of the master bedroom (walking is clamped to that one
- *   room until Part 3, see {@link WALK_AREA}), seen at eye level (first person) or from
- *   behind (third person). V switches the camera mode while the region has focus. The
- *   region becomes a focusable `role="application"` named "Interior 3D view" (distinct from
- *   the "Interior view" toggle), described by the full key description of the navigation
- *   hint, and takes focus as soon as the view opens, with a visible focus indicator.
+ *   I/K (look), stopped by the walls of the whole floor and free to walk through its
+ *   doors, seen at eye level (first person) or from behind (third person). V switches the
+ *   camera mode and Escape abandons an automatic "go to room" walk, both while the region
+ *   has focus.
  *
- * The region carries `INTERIOR_REGION_ID`, so HUD controls can hand focus back to it after
- * a pointer click. The canvas stays mounted across view changes. A visually hidden description tells
- * assistive technology what the current view and camera mode show.
+ * **The region is focusable in both views.** It is a `role="application"` tab stop named
+ * "Interior 3D view" or "Exterior 3D view" (each distinct from the toggle that switches
+ * to it), described by the full key description of the navigation hint, with a visible
+ * focus indicator. This supersedes ADR-002, which left the exterior view roleless and
+ * unfocusable precisely because it had no keyboard controls; it now has them. It keeps the
+ * id `INTERIOR_REGION_ID` although it serves both views: renaming it would touch six files
+ * for no change in behaviour, and the naming debt is recorded in ADR-013 instead.
+ *
+ * Focus follows a change of view and never a first paint: entering the interior takes
+ * focus, as it always has, and so does coming back out to the exterior, so the keys of the
+ * view just opened work without hunting for it. Arriving on the page does not, so no focus
+ * ring is drawn over the building before the viewer has asked for anything (owner
+ * decision). The previous view mode is kept in a ref to tell the two apart.
+ *
+ * The region also stamps `data-camera-transition`, so a screenshot is never taken while the
+ * camera is still flying between the views. The canvas stays mounted across view changes. A
+ * visually hidden description tells assistive technology what the current view and camera
+ * mode show.
  *
  * @returns The scene description and the canvas region.
  */
 export function BuildingScene() {
-  const isInterior = useViewStore((state) => state.viewMode === 'interior');
+  const viewMode = useViewStore((state) => state.viewMode);
   const cameraMode = useViewStore((state) => state.interiorCameraMode);
+  const cameraTransition = useViewStore((state) => state.cameraTransition);
   const toggleCameraMode = useViewStore((state) => state.toggleInteriorCameraMode);
+  const cancelWalk = useRoomWalkStore((state) => state.cancelWalk);
   const regionRef = useRef<HTMLDivElement>(null);
+  /** The view of the previous render, `undefined` until the first change: see the docblock. */
+  const previousViewRef = useRef<ViewMode | undefined>(undefined);
+
+  const isInterior = viewMode === 'interior';
+  const isTravelling = cameraTransition !== 'none';
 
   useEffect(() => {
-    if (isInterior) {
-      regionRef.current?.focus();
+    const previousView = previousViewRef.current;
+    previousViewRef.current = viewMode;
+    if (previousView === undefined || previousView === viewMode) {
+      return;
     }
-  }, [isInterior]);
+    regionRef.current?.focus();
+  }, [viewMode]);
 
   useKeyAction(regionRef, CAMERA_MODE_TOGGLE_KEY_CODE, () => {
     if (isInterior) {
       toggleCameraMode();
     }
   });
+
+  useKeyAction(regionRef, CANCEL_WALK_KEY_CODE, cancelWalk);
 
   return (
     <>
@@ -200,13 +236,14 @@ export function BuildingScene() {
         ref={regionRef}
         id={INTERIOR_REGION_ID}
         className={REGION_CLASS_NAME}
-        tabIndex={isInterior ? INTERIOR_REGION_TAB_INDEX : undefined}
-        role={isInterior ? INTERIOR_REGION_ROLE : undefined}
-        aria-label={isInterior ? INTERIOR_REGION_LABEL : undefined}
-        aria-describedby={isInterior ? NAVIGATION_HINT_ID : undefined}
+        tabIndex={REGION_TAB_INDEX}
+        role={REGION_ROLE}
+        aria-label={isInterior ? INTERIOR_REGION_LABEL : EXTERIOR_REGION_LABEL}
+        aria-describedby={NAVIGATION_HINT_ID}
+        data-camera-transition={isTravelling ? CAMERA_RUNNING : CAMERA_IDLE}
       >
         <Canvas camera={CAMERA_OPTIONS}>
-          <SceneContent isInterior={isInterior} regionRef={regionRef} />
+          <SceneContent isInterior={isInterior} isTravelling={isTravelling} regionRef={regionRef} />
         </Canvas>
       </div>
     </>

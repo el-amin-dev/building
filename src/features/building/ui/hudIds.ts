@@ -19,3 +19,19 @@ export const NAVIGATION_HINT_ID = 'navigation-hint';
  * working without prop drilling a ref.
  */
 export const INTERIOR_REGION_ID = 'interior-3d-view';
+
+/**
+ * DOM id of the room readout, the live region announcing the room the explorer is in.
+ *
+ * Kept here so the readout and anything pointing at it (a label, an `aria-describedby`)
+ * name the same element without importing the component.
+ */
+export const ROOM_READOUT_ID = 'current-room';
+
+/**
+ * DOM id of the "go to room" list in the HUD.
+ *
+ * Its own control and the readout above it are separate components, so the id lives
+ * outside both of them.
+ */
+export const ROOM_LIST_ID = 'room-list';

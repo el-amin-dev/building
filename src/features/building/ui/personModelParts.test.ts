@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import { makeWalkField } from '../domain/collision.ts';
 import { EYE_NAVIGATION_CONFIG } from '../domain/eyeNavigation.ts';
 import type { EyePose } from '../domain/eyeNavigation.ts';
-import { FLOOR_PLAN } from '../domain/floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from '../domain/heights.ts';
-import { getRoomWalkArea, INTERIM_WALK_SPACE_ID } from '../domain/interimWalkArea.ts';
 import { PERSON_SPEC } from '../domain/person.ts';
-import { THIRD_PERSON_CAMERA_CONFIG } from '../domain/thirdPersonCamera.ts';
+import type { PlanRect } from '../domain/planGeometry.ts';
+import {
+  createCameraField,
+  getThirdPersonCamera,
+  THIRD_PERSON_CAMERA_CONFIG,
+} from '../domain/thirdPersonCamera.ts';
+import type { CameraField } from '../domain/thirdPersonCamera.ts';
 import {
   getMannequinPartHalfExtent,
   getMannequinParts,
@@ -17,7 +22,6 @@ import type { MannequinPart } from './personModelParts.ts';
 const LENGTH_PRECISION_DIGITS = 9;
 /** A diameter is two radii. */
 const DIAMETER_PER_RADIUS = 2;
-const HALF = 0.5;
 const FLOOR_LEVEL = 0;
 const SCALED_HEIGHT = 2;
 const HEAD_NAME = 'head';
@@ -25,27 +29,74 @@ const LEVEL_PITCH = 0;
 const FACING_NEGATIVE_Z_YAW = 0;
 const INVALID_HEIGHTS = [0, -PERSON_SPEC.height, Number.NaN, Number.POSITIVE_INFINITY];
 
-/** The room walking is clamped to, in floor coordinates: the same one `BuildingScene` uses. */
-const WALK_AREA = getRoomWalkArea(
-  FLOOR_PLAN,
-  INTERIM_WALK_SPACE_ID,
-  EYE_NAVIGATION_CONFIG.bodyRadius,
+/**
+ * A synthetic field rather than the live floor: what the visibility rule turns on is how much
+ * room the follow camera has straight behind the person, so one wall at a known distance says
+ * more than a real room whose walls would have to be looked up to read the test.
+ */
+const ROOM_HALF_SIZE = 20;
+/** Plan x of every test pose: the middle of the room, far from its side walls. */
+const ROOM_CENTRE_X = 0;
+/** The z of the face of the one wall these poses stand in front of. */
+const WALL_FACE_Z = 0;
+/** Thickness of that wall, metres; any positive value blocks the same way. */
+const WALL_THICKNESS = 0.2;
+
+/** Open floor in front of the wall: plenty of room to stand anywhere these poses need. */
+const FLOOR_RECT: PlanRect = {
+  minX: -ROOM_HALF_SIZE,
+  maxX: ROOM_HALF_SIZE,
+  minZ: -ROOM_HALF_SIZE,
+  maxZ: WALL_FACE_Z,
+};
+/** The wall itself, on the +z side of the floor: the only thing behind a person facing −z. */
+const WALL_RECT: PlanRect = {
+  minX: -ROOM_HALF_SIZE,
+  maxX: ROOM_HALF_SIZE,
+  minZ: WALL_FACE_Z,
+  maxZ: WALL_FACE_Z + WALL_THICKNESS,
+};
+const CAMERA_FIELD: CameraField = createCameraField(
+  makeWalkField([FLOOR_RECT], [WALL_RECT]),
   FLOOR_HEIGHTS.wall,
-  THIRD_PERSON_CAMERA_CONFIG.wallMargin,
 );
-const WALKABLE_BOUNDS = WALK_AREA.bounds;
-const ROOM_BOX = WALK_AREA.roomBox;
-/** In the middle of the room, facing −z: the follow camera backs away along +z freely. */
-const CENTRE_POSE: EyePose = {
-  x: (WALKABLE_BOUNDS.minX + WALKABLE_BOUNDS.maxX) * HALF,
-  z: (WALKABLE_BOUNDS.minZ + WALKABLE_BOUNDS.maxZ) * HALF,
+
+/**
+ * Clearance left behind the camera's own circle in the roomy pose, metres: more than the
+ * follow distance, so nothing pulls the camera in at all.
+ */
+const ROOMY_CLEARANCE = 3;
+
+/**
+ * Far from the wall, facing −z: the camera backs away along +z for its full follow distance.
+ *
+ * The camera keeps `wallMargin` from the wall face, so the pose is placed that much further
+ * again than the clearance being asked for.
+ */
+const CENTRE_POSE: EyePose = Object.freeze({
+  x: ROOM_CENTRE_X,
+  z: WALL_FACE_Z - THIRD_PERSON_CAMERA_CONFIG.wallMargin - ROOMY_CLEARANCE,
   yaw: FACING_NEGATIVE_Z_YAW,
   pitch: LEVEL_PITCH,
-};
-/** Back against the +z wall at the walking limit: the follow camera rises above the head. */
-const BACK_TO_WALL_POSE: EyePose = { ...CENTRE_POSE, z: WALKABLE_BOUNDS.maxZ };
-/** On the camera box's +z face, beyond the walking limit: no room at all behind the head. */
-const NO_ROOM_BEHIND_POSE: EyePose = { ...BACK_TO_WALL_POSE, z: ROOM_BOX.plan.maxZ };
+});
+
+/**
+ * Back flat against the wall: the tightest pose the collision model allows, since a body stops
+ * with its centre at `face − PERSON_SPEC.radius`. It leaves the camera 0.10 m of plan clearance,
+ * so the camera rises to nearly its elevation limit and reaches exactly `minBodyVisibleDistance`
+ * — the boundary the model is hidden at (`thirdPersonCamera.ts` sizes that distance on this very
+ * pose, as the one the raise must still be able to reach).
+ */
+const BACK_TO_WALL_POSE: EyePose = Object.freeze({
+  ...CENTRE_POSE,
+  z: WALL_FACE_Z - PERSON_SPEC.radius,
+});
+
+/**
+ * Standing on the wall face itself: closer than a body can ever legally get, so the camera's
+ * own circle already overlaps the wall and there is no room behind the person at all.
+ */
+const NO_ROOM_BEHIND_POSE: EyePose = Object.freeze({ ...CENTRE_POSE, z: WALL_FACE_Z });
 
 const PARTS = getMannequinParts(PERSON_SPEC.height);
 
@@ -163,18 +214,29 @@ describe('getMannequinParts', () => {
 
 describe('isPersonModelVisible', () => {
   it('hides the model in first person', () => {
-    expect(isPersonModelVisible('firstPerson', CENTRE_POSE, ROOM_BOX)).toBe(false);
+    expect(isPersonModelVisible('firstPerson', CENTRE_POSE, CAMERA_FIELD)).toBe(false);
   });
 
   it('shows the model in third person when the camera has room behind the person', () => {
-    expect(isPersonModelVisible('thirdPerson', CENTRE_POSE, ROOM_BOX)).toBe(true);
+    // Guards the fixture as much as the rule: nothing pulls the camera in at this pose.
+    expect(getThirdPersonCamera(CENTRE_POSE, CAMERA_FIELD).distance).toBeCloseTo(
+      THIRD_PERSON_CAMERA_CONFIG.followDistance,
+    );
+    expect(isPersonModelVisible('thirdPerson', CENTRE_POSE, CAMERA_FIELD)).toBe(true);
   });
 
-  it('shows the model in third person with the back against a wall, the camera raised', () => {
-    expect(isPersonModelVisible('thirdPerson', BACK_TO_WALL_POSE, ROOM_BOX)).toBe(true);
+  it('hides the model with the back against a wall, where the raise lands on the threshold', () => {
+    const camera = getThirdPersonCamera(BACK_TO_WALL_POSE, CAMERA_FIELD);
+
+    expect(camera.elevation).toBeGreaterThan(THIRD_PERSON_CAMERA_CONFIG.baseElevation);
+    expect(camera.distance).toBeCloseTo(THIRD_PERSON_CAMERA_CONFIG.minBodyVisibleDistance);
+    // The visibility threshold is inclusive (`shouldHidePersonModel`): at exactly that
+    // distance the body still covers the middle of the frame, so the model goes and the
+    // viewer looks out from just behind the head.
+    expect(isPersonModelVisible('thirdPerson', BACK_TO_WALL_POSE, CAMERA_FIELD)).toBe(false);
   });
 
   it('hides the model in third person when there is no room at all behind the person', () => {
-    expect(isPersonModelVisible('thirdPerson', NO_ROOM_BEHIND_POSE, ROOM_BOX)).toBe(false);
+    expect(isPersonModelVisible('thirdPerson', NO_ROOM_BEHIND_POSE, CAMERA_FIELD)).toBe(false);
   });
 });

@@ -3,11 +3,13 @@ import { makeRect } from '../planGeometry.ts';
 import type { PlanPoint, PlanRect } from '../planGeometry.ts';
 import { FLOOR_PLAN } from './floorPlanData.ts';
 import {
+  SPACE_LABEL_SEPARATOR,
   findSpaceAt,
   getNeighbours,
   getSpace,
   getSpaceArea,
   getSpaceBounds,
+  getSpaceLabel,
   hasFloor,
 } from './queries.ts';
 import type { FloorPlan, Space, SpaceContact, SpaceId, SpaceKind } from './types.ts';
@@ -88,13 +90,22 @@ const GUEST_SANITAIR_POINT: PlanPoint = { x: 9.0, z: 7.3 };
 /**
  * Builds a frozen space whose name is its id.
  *
+ * The matricule is the real one {@link FLOOR_PLAN} carries for that id, so no
+ * second numbering is invented here.
+ *
  * @param id - Identifier of the space.
  * @param kind - Kind of the space.
  * @param rects - Clear rects of the space.
  * @returns A frozen {@link Space}.
  */
 function makeSpace(id: SpaceId, kind: SpaceKind, rects: readonly PlanRect[]): Space {
-  return Object.freeze({ id, name: id, kind, rects: Object.freeze([...rects]) });
+  return Object.freeze({
+    id,
+    matricule: getSpace(FLOOR_PLAN, id).matricule,
+    name: id,
+    kind,
+    rects: Object.freeze([...rects]),
+  });
 }
 
 /**
@@ -142,6 +153,26 @@ describe('floorPlan queries', () => {
     it('throws a RangeError naming an absent id', () => {
       expect(() => getSpace(plan, 'laundry')).toThrow(RangeError);
       expect(() => getSpace(plan, 'laundry')).toThrow('laundry');
+    });
+  });
+
+  describe('getSpaceLabel', () => {
+    it('separates the matricule from the name with a middle dot', () => {
+      expect(SPACE_LABEL_SEPARATOR).toBe('·');
+    });
+
+    it('labels the kitchen "R11/KIT · Kitchen"', () => {
+      expect(getSpaceLabel(getSpace(FLOOR_PLAN, 'kitchen'))).toBe('R11/KIT · Kitchen');
+    });
+
+    it.each([
+      ['stairs', 'R06/STR', 'Stairwell'],
+      ['balconyA', 'R01/BAL', 'Side-A balcony'],
+      ['voidWest', 'R17/VOID', 'Void (west)'],
+    ] as const)('puts %s as "%s · %s"', (id, matricule, name) => {
+      expect(getSpaceLabel(getSpace(FLOOR_PLAN, id))).toBe(
+        `${matricule} ${SPACE_LABEL_SEPARATOR} ${name}`,
+      );
     });
   });
 

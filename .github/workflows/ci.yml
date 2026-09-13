@@ -16,7 +16,15 @@ jobs:
   ci:
     name: ci
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Sized for the whole chain, which the end-to-end suite dominates: 18 tests, each
+    # rendering the floor through a software WebGL rasteriser because the runner has no
+    # GPU, and run one at a time on purpose - parallel workers are CPU-bound and starve
+    # each other into their own timeouts, so serial is both faster overall and the only
+    # arrangement whose local result predicts this one. That suite went from 9 tests to
+    # 18 and now takes some 13 of the 15 minutes this job used to allow, leaving nothing
+    # for the install, typecheck, lint, plan check, unit tests and build ahead of it, nor
+    # for a retry. 25 restores the margin.
+    timeout-minutes: 25
     steps:
       - name: Check out repository
         uses: actions/checkout@v7

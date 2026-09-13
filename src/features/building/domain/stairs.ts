@@ -61,9 +61,10 @@
  *   closed-riser step rather than a block filling everything under it, so the
  *   shaft stays open and the headroom over the lower flight is not filled in.
  *
- * The bay is a hole through this floor except at the arrival landing:
- * {@link getBlockedRects} hands every other piece to the collision model of
- * Part 3.
+ * The bay is a hole through this floor except at the arrival landing, which
+ * {@link StairsLayout.blockedRects} records piece by piece. Collision does not
+ * read it: `collision.ts` sweeps the plot for itself and the shaft comes out as
+ * fall cells, because no slab is poured there (ADR-013).
  *
  * Pure geometry: plan coordinates in metres with the conventions of
  * `floorPlan/types.ts`, vertical levels in metres relative to this finished
@@ -792,21 +793,4 @@ export function getStairsLayout(
       yaw: YAW_FACING_OUT[arrivalLanding.openSide],
     }),
   });
-}
-
-/**
- * Lists the rects of the stairs bay a person cannot walk into.
- *
- * Everything but the arrival landing. The flights and the turn carry their
- * walking surfaces half a storey above and half a storey below this floor, so at
- * this storey the rest of the bay is a hole with a stair passing through it.
- * Part 3 feeds these rects to wall collision.
- *
- * @param plan - The floor plan to read. Not mutated.
- * @returns A frozen array of the blocked rects, in declaration order.
- * @throws RangeError naming the offending value when the bay cannot hold the
- *   stairs (see the rejections of `getStairsLayout`).
- */
-export function getBlockedRects(plan: FloorPlan): readonly PlanRect[] {
-  return getStairsLayout(plan).blockedRects;
 }

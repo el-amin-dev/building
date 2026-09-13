@@ -45,6 +45,39 @@ const FULL_DESCRIPTION_PHRASE = /hold one of its buttons with a pointer or a fin
  */
 const AFTER_RELEASE_MS = 700;
 
+/**
+ * Budget for the test that walks and turns with the mouse alone.
+ *
+ * ## Where the number comes from
+ *
+ * Measured on this machine, serially, with the reporter's own per-test clock: **32 s**, and
+ * 34–45 s across earlier runs — call the slowest local run 45 s.
+ *
+ * CI has no GPU, so every frame of the whole floor is rasterised in software on the CPU. The
+ * same suite takes **12.8 min** there against **4.5 min** here: a **3× slowdown**, and it lands
+ * squarely on what this test spends its time doing. It settles the scene four times (each
+ * settle is a series of canvas screenshots until two come back byte-identical), polls canvas
+ * screenshots twice until a held button changes one, and waits out two fixed
+ * {@link AFTER_RELEASE_MS} windows — all of it paid for one rendered frame at a time.
+ *
+ * So 45 s here is some **135 s** there, against the 90 s that `test.slow()` (three times the
+ * 30 s default) used to allow. That is why this test, and only this test, failed on CI through
+ * both retries while passing locally every time: the budget was smaller than the work, not the
+ * work larger than it should be.
+ *
+ * 240 s is a little over **5×** the slowest local run and nearly **2×** the projected CI time,
+ * so a runner having a worse-than-usual day costs wall clock rather than a red build.
+ *
+ * ## Why this is not a mask over a slow app
+ *
+ * Nothing here waits out one of the product's own timings. Every hold ends the instant a
+ * changed frame is captured, so a faster renderer finishes sooner and the budget is never
+ * reached; it is an upper bound on how long a frame may take to arrive, not a pause. The
+ * proof is the same test on hardware that draws the floor with a GPU, where it takes half a
+ * minute. What is being paid for is the rasteriser, not the renderer.
+ */
+const MOUSE_WALK_TEST_TIMEOUT_MS = 240_000;
+
 /** A point in page coordinates, for a real mouse press. */
 interface Point {
   readonly x: number;
@@ -180,8 +213,9 @@ async function enterInteriorWithMouse(page: Page) {
 
 test.describe('on-screen remote control', () => {
   test('moves and turns with the mouse alone, and stops on release', async ({ page }) => {
-    // Polling frames rendered by software WebGL comes close to the default test timeout.
-    test.slow();
+    // Sized for a GPU-less CI runner rather than left to `test.slow()`; the arithmetic is in
+    // the constant's docblock.
+    test.setTimeout(MOUSE_WALK_TEST_TIMEOUT_MS);
     const pageErrors: Error[] = [];
     page.on('pageerror', (error) => pageErrors.push(error));
 

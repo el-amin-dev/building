@@ -11,11 +11,13 @@ export type { FloorPlan, JoinOverride, Space, SpaceContact, SpaceId, SpaceKind }
 export { FLOOR_PLAN, INTERIOR_RECT, PLOT_RECT } from './floorPlanData.ts';
 export { validateFloorPlan } from './validateFloorPlan.ts';
 export {
+  SPACE_LABEL_SEPARATOR,
   findSpaceAt,
   getNeighbours,
   getSpace,
   getSpaceArea,
   getSpaceBounds,
+  getSpaceLabel,
   hasFloor,
 } from './queries.ts';
 export { getJoinThickness } from './joins.ts';

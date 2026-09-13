@@ -12,7 +12,8 @@
  * What the derivation actually does, and nothing more:
  * - the plot is the source of truth's `PLOT`, and the interior is that plot
  *   inset by its own exterior wall thickness, so the two can never disagree;
- * - every room becomes a {@link Space}, in matricule order R01…R22;
+ * - every room becomes a {@link Space}, in matricule order R01…R22, carrying
+ *   the matricule the plan numbers it by (`R11/KIT`);
  * - the plan's `stairwell` kind maps to `circulation` (see below);
  * - each join override keeps its thickness and the owner's reason for it.
  *
@@ -28,7 +29,7 @@ import {
   ROOMS,
   WALLS,
 } from '../sourceOfTruth/plan.ts';
-import type { PlanRectCoordinates, PlanRoomKind } from '../sourceOfTruth/plan.ts';
+import type { PlanRectCoordinates, PlanRoomKind, PlanRoomType } from '../sourceOfTruth/plan.ts';
 import type { FloorPlan, JoinOverride, Space, SpaceId, SpaceKind } from './types.ts';
 
 /**
@@ -48,10 +49,29 @@ const SPACE_KIND_OF: Readonly<Record<PlanRoomKind, SpaceKind>> = Object.freeze({
   void: 'void',
 });
 
+/** Digits the matricule number is padded to: the plan numbers rooms R01…R22. */
+const MATRICULE_DIGITS = 2;
+
+/**
+ * Formats a room's matricule the way the source of truth numbers it.
+ *
+ * This module is the only one licensed to read the source of truth, so it is
+ * the only place the matricule can be built: `ROOMS` holds `n` and `type`, and
+ * {@link Space} carries the formatted result instead of the two raw parts.
+ *
+ * @param n - Matricule number of the room, 1…22.
+ * @param type - Type code of the room, as it appears in its matricule.
+ * @returns The matricule, for example `R11/KIT`.
+ */
+function formatMatricule(n: number, type: PlanRoomType): string {
+  return `R${String(n).padStart(MATRICULE_DIGITS, '0')}/${type}`;
+}
+
 /**
  * Builds a frozen space whose rects are frozen through `makeRect`.
  *
  * @param id - Identifier of the space.
+ * @param matricule - Matricule of the space, from {@link formatMatricule}.
  * @param name - Human-readable name.
  * @param kind - Kind of the space.
  * @param rects - Clear rect coordinates, in order.
@@ -59,6 +79,7 @@ const SPACE_KIND_OF: Readonly<Record<PlanRoomKind, SpaceKind>> = Object.freeze({
  */
 function defineSpace(
   id: SpaceId,
+  matricule: string,
   name: string,
   kind: SpaceKind,
   rects: readonly PlanRectCoordinates[],
@@ -66,7 +87,7 @@ function defineSpace(
   const frozenRects: readonly PlanRect[] = Object.freeze(
     rects.map(([minX, maxX, minZ, maxZ]) => makeRect(minX, maxX, minZ, maxZ)),
   );
-  return Object.freeze({ id, name, kind, rects: frozenRects });
+  return Object.freeze({ id, matricule, name, kind, rects: frozenRects });
 }
 
 /**
@@ -99,7 +120,15 @@ export const INTERIOR_RECT: PlanRect = insetRect(PLOT_RECT, WALLS.exterior);
 
 /** The spaces of the floor, in `SPACE_IDS` order. */
 const SPACES: readonly Space[] = Object.freeze(
-  ROOMS.map((room) => defineSpace(room.id, room.name, SPACE_KIND_OF[room.kind], room.rects)),
+  ROOMS.map((room) =>
+    defineSpace(
+      room.id,
+      formatMatricule(room.n, room.type),
+      room.name,
+      SPACE_KIND_OF[room.kind],
+      room.rects,
+    ),
+  ),
 );
 
 /** Joins whose wall thickness deviates from the kind-based default. */
