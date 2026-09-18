@@ -1,24 +1,73 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useFloorCountStore } from '../application/floorCountStore.ts';
 import { useRoomWalkStore } from '../application/roomWalkStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
+import type { ExteriorFraming } from '../domain/exteriorFraming.ts';
 import { FLOOR_HEIGHTS } from '../domain/heights.ts';
 import { getSlabThickness } from '../domain/slabs.ts';
-import { BuildingScene, GROUND_LEVEL, GROUND_STOREYS_BELOW_SLAB } from './BuildingScene.tsx';
+import { MAX_FLOOR_COUNT, MIN_FLOOR_COUNT } from '../domain/storeys.ts';
+import {
+  BuildingScene,
+  CAMERA_FAR,
+  GROUND_LEVEL,
+  GROUND_STOREYS_BELOW_SLAB,
+} from './BuildingScene.tsx';
+import type { FloorModelProps } from './FloorModel.tsx';
 import { INTERIOR_REGION_ID, NAVIGATION_HINT_ID } from './hudIds.ts';
 import { NavigationHint } from './NavigationHint.tsx';
 
-const { CANVAS_TEST_ID } = vi.hoisted(() => ({ CANVAS_TEST_ID: 'scene-canvas' }));
+const { CANVAS_TEST_ID, STUB_FRAMING } = vi.hoisted(() => ({
+  CANVAS_TEST_ID: 'scene-canvas',
+  /**
+   * The only two things `BuildingScene` itself reads off the framing: where the ground plane
+   * is centred, and how wide it is. Everything else the framing carries is consumed by the
+   * scene's children, which are mocked out below.
+   */
+  STUB_FRAMING: { target: { x: 6, y: 0, z: 4 }, groundSize: 120 },
+}));
 
-// jsdom has no WebGL: the canvas is replaced by a plain element and its scene graph is never
-// rendered, so the hooks used inside it are inert and drei (and the CommonJS three build it
-// would load) is skipped.
+/** Every `FloorModel` rendered inside the canvas, in order, with the props it was handed. */
+const { floorModels } = vi.hoisted(() => ({ floorModels: [] as unknown[] }));
+
+// jsdom has no WebGL: the canvas is replaced by a plain element, so drei (and the CommonJS
+// three build it would load) is skipped and the r3f hooks are inert. It does render its
+// children, because the scene graph is where the storey count has to arrive.
 vi.mock('@react-three/fiber', () => ({
-  Canvas: () => <div data-testid={CANVAS_TEST_ID} />,
+  Canvas: ({ children }: { children?: ReactNode }) => (
+    <div data-testid={CANVAS_TEST_ID}>{children}</div>
+  ),
   useFrame: vi.fn(),
   useThree: vi.fn(),
 }));
 vi.mock('@react-three/drei', () => ({ OrbitControls: () => null }));
+
+// The framing reads the live canvas size through `useThree`, which the mock above leaves
+// inert, so it is answered with a stand-in instead. A stand-in rather than a real framing
+// because the framing is `exteriorFraming.ts`'s subject and is tested there: here it is only
+// the two numbers the ground plane is placed with, so nothing in this file has to be kept in
+// step with how a framing is derived.
+vi.mock('./useExteriorFraming.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./useExteriorFraming.ts')>();
+  return {
+    ...actual,
+    useExteriorFraming: () => STUB_FRAMING as unknown as ExteriorFraming,
+  };
+});
+
+// The rest of the scene graph is covered by its own files and needs a renderer; here only the
+// props `BuildingScene` hands down are of interest.
+vi.mock('./SceneLighting.tsx', () => ({ SceneLighting: () => null }));
+vi.mock('./ViewTransition.tsx', () => ({ ViewTransition: () => null }));
+vi.mock('./InteriorExplorer.tsx', () => ({ InteriorExplorer: () => null }));
+vi.mock('./ExteriorCameraControls.tsx', () => ({ ExteriorCameraControls: () => null }));
+vi.mock('./FloorModel.tsx', () => ({
+  FloorModel: (props: FloorModelProps) => {
+    floorModels.push(props);
+    return null;
+  },
+}));
 
 const INTERIOR_REGION_NAME = 'Interior 3D view';
 const EXTERIOR_REGION_NAME = 'Exterior 3D view';
@@ -32,6 +81,12 @@ const CANCEL_WALK_CODE = 'Escape';
 const CAMERA_TRANSITION_ATTRIBUTE = 'data-camera-transition';
 /** A room to ask for a walk to, so Escape has something to abandon. */
 const WALK_TARGET = 'kitchen';
+/** One built floor is mounted per canvas: the whole building is that one component. */
+const ONE_MODEL = 1;
+/** Far clipping distance the scene camera must have, in metres. */
+const EXPECTED_CAMERA_FAR = 800;
+/** What it was while the building was one storey tall. */
+const PREVIOUS_CAMERA_FAR = 500;
 const EXTERIOR_DESCRIPTION =
   '3D view of the whole floor from outside: its rooms, balconies, corridors and stairs, seen from above the open side of the building. Drag to orbit and scroll to zoom, or use the keyboard while this view has focus: the left and right arrows orbit around the building, the up and down arrows tilt over it, and the plus and minus keys zoom in and out. The on-screen camera pad in the HUD offers the same six movements without a keyboard.';
 const INTERIOR_DESCRIPTION =
@@ -67,6 +122,25 @@ function getCameraMode() {
   return useViewStore.getState().interiorCameraMode;
 }
 
+/** The props every `FloorModel` in the canvas was rendered with, in order. */
+function builtModels(): readonly FloorModelProps[] {
+  return floorModels as readonly FloorModelProps[];
+}
+
+/**
+ * Reads the props of the most recent `FloorModel` render.
+ *
+ * @returns What the scene last asked the building to draw.
+ * @throws Error when no built floor was rendered at all.
+ */
+function lastModel(): FloorModelProps {
+  const model = builtModels().at(-ONE_MODEL);
+  if (model === undefined) {
+    throw new Error('No FloorModel was rendered inside the canvas');
+  }
+  return model;
+}
+
 /** The element wrapping the (mocked) canvas: the view region. */
 function getRegion(): HTMLElement {
   const region = screen.getByTestId(CANVAS_TEST_ID).parentElement;
@@ -80,6 +154,8 @@ describe('BuildingScene', () => {
   beforeEach(() => {
     useViewStore.setState(useViewStore.getInitialState(), true);
     useRoomWalkStore.setState(useRoomWalkStore.getInitialState(), true);
+    useFloorCountStore.setState(useFloorCountStore.getInitialState(), true);
+    floorModels.length = 0;
   });
 
   it('exposes the exterior view as a focusable application region, unfocused on arrival', () => {
@@ -269,5 +345,52 @@ describe('the ground plane', () => {
     expect(GROUND_STOREYS_BELOW_SLAB).toBeGreaterThanOrEqual(MINIMUM_STOREYS_BELOW);
     expect(slabUnderside - GROUND_LEVEL).toBeGreaterThanOrEqual(FLOOR_HEIGHTS.floorToFloor);
     expect(GROUND_LEVEL).toBeLessThan(slabUnderside);
+  });
+});
+
+describe('the storey count in the scene', () => {
+  beforeEach(() => {
+    useViewStore.setState(useViewStore.getInitialState(), true);
+    useFloorCountStore.setState(useFloorCountStore.getInitialState(), true);
+    floorModels.length = 0;
+  });
+
+  it('hands the built floor the count the store holds', () => {
+    renderScene();
+
+    expect(builtModels()).toHaveLength(ONE_MODEL);
+    expect(lastModel().floorCount).toBe(MIN_FLOOR_COUNT);
+    expect(lastModel().showCeilings).toBe(false);
+  });
+
+  it('hands down a new count as soon as the stepper changes it', () => {
+    renderScene();
+
+    act(() => {
+      useFloorCountStore.getState().setFloorCount(MAX_FLOOR_COUNT);
+    });
+
+    expect(lastModel().floorCount).toBe(MAX_FLOOR_COUNT);
+  });
+
+  it('keeps the count through a change of view, with the ceilings inside', () => {
+    renderScene();
+    act(() => {
+      useFloorCountStore.getState().setFloorCount(MAX_FLOOR_COUNT);
+    });
+
+    toggleView();
+
+    expect(lastModel().floorCount).toBe(MAX_FLOOR_COUNT);
+    expect(lastModel().showCeilings).toBe(true);
+  });
+});
+
+describe('the scene camera', () => {
+  it('sees far enough for a ten-storey building to stay inside the fog', () => {
+    expect(CAMERA_FAR).toBe(EXPECTED_CAMERA_FAR);
+    // It was 500 while one storey was drawn, and the fog already reaches ~365 m there; the
+    // fog grows with the height of the stack and would pass 500 well before ten storeys.
+    expect(CAMERA_FAR).toBeGreaterThan(PREVIOUS_CAMERA_FAR);
   });
 });
