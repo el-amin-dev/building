@@ -1,11 +1,18 @@
 import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
+import { useFloorCountStore } from '../application/floorCountStore.ts';
 import { useRemoteControlStore } from '../application/remoteControlStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
+import { placeInStack } from '../domain/eyeNavigation.ts';
 import type { EyePose } from '../domain/eyeNavigation.ts';
 import { ExplorerPoseReporter } from './ExplorerPoseReporter.tsx';
 import { EyeCameraControls } from './EyeCameraControls.tsx';
-import { CAMERA_FIELD, INTERIOR_START_POSE, WALK_FIELD } from './floorInstance.ts';
+import {
+  CAMERA_FIELD,
+  getCameraFields,
+  getWalkSurfaces,
+  INTERIOR_START_POSE,
+} from './floorInstance.ts';
 import { PersonModel } from './PersonModel.tsx';
 
 /** Props of {@link InteriorExplorer}. */
@@ -29,9 +36,20 @@ export interface InteriorExplorerProps {
  * mount, which is what makes a remount start over rather than resume. Switching between first
  * and third person (`interiorCameraMode` in the view store) keeps the pose.
  *
- * The collision field and the camera field are handed down as props rather than imported by
- * the children: the children stay unit-testable against a small synthetic field, while the
- * live floor is derived exactly once (`floorInstance.ts`) and shared by identity.
+ * The walking surfaces and the camera fields are handed down as props rather than imported by
+ * the children: the children stay unit-testable against a small synthetic surface, while the
+ * live floor is derived exactly once (`floorInstance.ts`) and shared by identity. One entry per
+ * storey, so the frame loop can index the storey the pose stands on without deriving anything.
+ *
+ * ## The storey count, and what a reduction does to the viewer
+ *
+ * The count is the one thing here that IS subscribed to: it changes a handful of times in a
+ * session — never per frame — and it decides how tall the lists handed down are. Adding
+ * storeys never moves anybody. Taking them away below the viewer does: the owner's rule is
+ * that you land on the new top storey keeping your plan position, or back at the arrival if
+ * you were caught mid-flight, which is exactly what `placeInStack` answers. It is applied in
+ * an effect keyed on the count, so the pose is rewritten **once** per change rather than once
+ * per render, and a pose already inside the stack is returned by identity and left alone.
  *
  * It owns `poseRef`, so it is also where `ExplorerPoseReporter` is mounted — the reporter
  * pushes that same pose out to the HUD once per frame, after the controls have stepped it.
@@ -46,8 +64,13 @@ export interface InteriorExplorerProps {
  */
 export function InteriorExplorer({ targetRef }: InteriorExplorerProps) {
   const cameraMode = useViewStore((state) => state.interiorCameraMode);
+  const floorCount = useFloorCountStore((state) => state.floorCount);
   const releaseAllActions = useRemoteControlStore((state) => state.releaseAllActions);
   const poseRef = useRef<EyePose>(INTERIOR_START_POSE);
+
+  useEffect(() => {
+    poseRef.current = placeInStack(poseRef.current, floorCount, INTERIOR_START_POSE);
+  }, [floorCount]);
 
   useEffect(
     () => () => {
@@ -60,10 +83,10 @@ export function InteriorExplorer({ targetRef }: InteriorExplorerProps) {
     <>
       <EyeCameraControls
         targetRef={targetRef}
-        field={WALK_FIELD}
         poseRef={poseRef}
         cameraMode={cameraMode}
-        cameraField={CAMERA_FIELD}
+        surfaces={getWalkSurfaces(floorCount)}
+        cameraFields={getCameraFields(floorCount)}
       />
       <PersonModel poseRef={poseRef} field={CAMERA_FIELD} cameraMode={cameraMode} />
       <ExplorerPoseReporter poseRef={poseRef} />

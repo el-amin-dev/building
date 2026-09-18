@@ -3,10 +3,14 @@ import type { RefObject } from 'react';
 import type { EulerOrder } from 'three';
 import { useRemoteControlStore } from '../application/remoteControlStore.ts';
 import { useRoomWalkStore } from '../application/roomWalkStore.ts';
-import type { WalkField } from '../domain/collision.ts';
-import { getMovementIntent, isEyeNavigationKey, stepEyePose } from '../domain/eyeNavigation.ts';
-import type { EyeAction, EyePose } from '../domain/eyeNavigation.ts';
-import { PERSON_SPEC } from '../domain/person.ts';
+import {
+  getEyeLevel,
+  getMovementIntent,
+  isEyeNavigationKey,
+  stepEyePose,
+} from '../domain/eyeNavigation.ts';
+import type { EyeAction, EyePose, WalkSurface } from '../domain/eyeNavigation.ts';
+import { MIN_FLOOR_COUNT } from '../domain/storeys.ts';
 import { getThirdPersonCamera } from '../domain/thirdPersonCamera.ts';
 import type { CameraField } from '../domain/thirdPersonCamera.ts';
 import type { InteriorCameraMode } from '../domain/viewMode.ts';
@@ -24,6 +28,12 @@ const NO_ROLL = 0;
  */
 const POSE_STEP_FRAME_PRIORITY = -1;
 
+/** Index of the lowest storey in a per-storey list: floor `MIN_FLOOR_COUNT` is the first entry. */
+const FIRST_STOREY_INDEX = 0;
+
+/** How far back from the end of a list its last entry sits. */
+const LAST_INDEX_OFFSET = 1;
+
 /** Props of {@link EyeCameraControls}. */
 export interface EyeCameraControlsProps {
   /**
@@ -31,8 +41,6 @@ export interface EyeCameraControlsProps {
    * when this component mounts (see `usePressedKeys`).
    */
   readonly targetRef: RefObject<HTMLElement | null>;
-  /** Where a body may stand and what stops it (see `getWalkField`). */
-  readonly field: WalkField;
   /**
    * The person's pose, owned by the parent. Replaced by the stepped pose every frame, so
    * the person model and a camera mode switch share one pose.
@@ -40,8 +48,14 @@ export interface EyeCameraControlsProps {
   readonly poseRef: RefObject<EyePose>;
   /** Whether the camera looks through the person's eyes or follows from behind. */
   readonly cameraMode: InteriorCameraMode;
-  /** Where the third-person camera may go (see `createCameraField`). */
-  readonly cameraField: CameraField;
+  /**
+   * What each storey of the stack offers underfoot, lowest first (see
+   * `getWalkSurfaces`). One entry per storey: the walker's own storey is indexed
+   * out of it every frame.
+   */
+  readonly surfaces: readonly WalkSurface[];
+  /** Where the third-person camera may go on each storey, lowest first (see `getCameraFields`). */
+  readonly cameraFields: readonly CameraField[];
 }
 
 /**
@@ -50,12 +64,27 @@ export interface EyeCameraControlsProps {
  * Every frame it collects the movement intent, advances the pose in `poseRef` once with
  * `stepEyePose` and writes the stepped pose back. Then it places the default camera:
  *
- * - first person: at `PERSON_SPEC.eyeHeight` above the pose, with Euler order `YXZ` and
- *   rotation `(pitch, yaw, 0)`;
+ * - first person: at `getEyeLevel(pose)` — the pose's own storey level plus the rise it
+ *   stands at plus the eye height, never the eye height alone, or the viewer on the third
+ *   storey would look out of the first — with Euler order `YXZ` and rotation `(pitch, yaw, 0)`;
  * - third person: at the position given by `getThirdPersonCamera(pose, cameraField)`, looking
  *   at its target (the head); the camera is pulled in when a wall, the floor or the
  *   ceiling is closer than the follow distance, and rises above the person when a wall
  *   close behind leaves too little room to see the body.
+ *
+ * ## One surface per storey, indexed by the pose
+ *
+ * The walker's storey is not a prop: it lives in the pose, which the frame loop owns, so the
+ * surface and the camera field are indexed out of `surfaces` and `cameraFields` by
+ * `pose.floor` every frame (see {@link atFloor}). That is also what re-indexes them the frame
+ * after a step reports `storeyChanged` — the step's own pose carries the new storey, and the
+ * camera is placed with that storey's field in the very same frame.
+ *
+ * The index is **clamped** into the list rather than trusted. The lists are handed down from a
+ * store the viewer steps, and a pose is a ref: reducing the count re-renders the parent, but
+ * the pose it relocates is only read on the next frame, so for one frame a pose may name a
+ * storey the new stack no longer has. Clamping walks that frame on the top storey instead of
+ * throwing inside the render loop.
  *
  * ## One intent, three sources, one winner
  *
@@ -90,10 +119,10 @@ export interface EyeCameraControlsProps {
  */
 export function EyeCameraControls({
   targetRef,
-  field,
   poseRef,
   cameraMode,
-  cameraField,
+  surfaces,
+  cameraFields,
 }: EyeCameraControlsProps) {
   const pressedKeys = usePressedKeys(targetRef, isEyeNavigationKey);
   const advanceWalk = useRouteFollower();
@@ -110,21 +139,45 @@ export function EyeCameraControls({
     }
 
     const intent = isManual ? manual : (auto ?? manual);
-    const step = stepEyePose(poseRef.current, intent, delta, field);
+    const from = poseRef.current;
+    const step = stepEyePose(from, intent, delta, atFloor(surfaces, from.floor));
     poseRef.current = step.pose;
 
     const { camera } = state;
     if (cameraMode === 'thirdPerson') {
-      const { position, target } = getThirdPersonCamera(step.pose, cameraField);
+      // Indexed by the pose the step ENDS on, so a flight that changed storey is followed
+      // in the field of the storey arrived at rather than the one left behind.
+      const field = atFloor(cameraFields, step.pose.floor);
+      const { position, target } = getThirdPersonCamera(step.pose, field);
       camera.position.set(position.x, position.y, position.z);
       camera.lookAt(target.x, target.y, target.z);
       return;
     }
-    camera.position.set(step.pose.x, PERSON_SPEC.eyeHeight, step.pose.z);
+    camera.position.set(step.pose.x, getEyeLevel(step.pose), step.pose.z);
     camera.rotation.set(step.pose.pitch, step.pose.yaw, NO_ROLL, EYE_EULER_ORDER);
   }, POSE_STEP_FRAME_PRIORITY);
 
   return null;
+}
+
+/**
+ * Reads the entry of a per-storey list the pose stands on.
+ *
+ * @param entries - One entry per storey of the stack, lowest first.
+ * @param floor - The storey the pose names, 1…N.
+ * @returns The entry of that storey, or of the nearest storey the stack has: a pose can be
+ *   one frame ahead of a count the viewer has just reduced, and a frame loop must place a
+ *   camera rather than throw.
+ * @throws RangeError when the list is empty, which would mean a stack of no storeys at all.
+ */
+function atFloor<T>(entries: readonly T[], floor: number): T {
+  const highest = entries.length - LAST_INDEX_OFFSET;
+  const index = Math.min(Math.max(floor - MIN_FLOOR_COUNT, FIRST_STOREY_INDEX), highest);
+  const entry: T | undefined = entries[index];
+  if (entry === undefined) {
+    throw new RangeError('the interior camera was given no storey to walk on');
+  }
+  return entry;
 }
 
 /**

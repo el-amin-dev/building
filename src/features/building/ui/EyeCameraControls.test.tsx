@@ -6,18 +6,21 @@ import { useRemoteControlStore } from '../application/remoteControlStore.ts';
 import { useRoomWalkStore } from '../application/roomWalkStore.ts';
 import { makeWalkField } from '../domain/collision.ts';
 import type { WalkField } from '../domain/collision.ts';
-import { EYE_KEY_BINDINGS, EYE_NAVIGATION_CONFIG } from '../domain/eyeNavigation.ts';
-import type { EyeAction, EyePose, MovementIntent } from '../domain/eyeNavigation.ts';
+import { EYE_KEY_BINDINGS, EYE_NAVIGATION_CONFIG, getEyeLevel } from '../domain/eyeNavigation.ts';
+import type { EyeAction, EyePose, MovementIntent, WalkSurface } from '../domain/eyeNavigation.ts';
 import type { SpaceId } from '../domain/floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from '../domain/heights.ts';
 import { PERSON_SPEC } from '../domain/person.ts';
+import { makeRect } from '../domain/planGeometry.ts';
 import type { PlanRect } from '../domain/planGeometry.ts';
+import type { Stairwell } from '../domain/stairwell.ts';
+import { MIN_FLOOR_COUNT } from '../domain/storeys.ts';
 import { createCameraField, getThirdPersonCamera } from '../domain/thirdPersonCamera.ts';
 import type { CameraField, ScenePoint } from '../domain/thirdPersonCamera.ts';
 import { CAMERA_MODE_TOGGLE_KEY_CODE } from '../domain/viewMode.ts';
 import type { InteriorCameraMode } from '../domain/viewMode.ts';
 import { EyeCameraControls } from './EyeCameraControls.tsx';
-import { CAMERA_FIELD, INTERIOR_START_POSE, WALK_FIELD } from './floorInstance.ts';
+import { getCameraFields, getWalkSurfaces, INTERIOR_START_POSE } from './floorInstance.ts';
 
 type FrameCallback = (state: RootState, delta: number) => void;
 
@@ -89,14 +92,72 @@ const ROOM_RECT: PlanRect = {
   maxZ: ROOM_HALF_SIZE,
 };
 const OPEN_FIELD: WalkField = makeWalkField([ROOM_RECT], []);
-const OPEN_CAMERA_FIELD: CameraField = createCameraField(OPEN_FIELD, FLOOR_HEIGHTS.wall);
+
+/**
+ * A stair bay far from the synthetic room, so no test pose is ever near one.
+ *
+ * The stairwell is `eyeNavigation.test.ts`'s subject; here the storey is the flat floor the
+ * frame loop has always walked, and what matters is only WHICH surface of the list is picked.
+ */
+const FAR_AWAY = 1000;
+const BAY_SIZE = 1;
+const REACH = 0.25;
+const NO_STAIR_WELL: Stairwell = Object.freeze({
+  bay: makeRect(FAR_AWAY, FAR_AWAY + BAY_SIZE, FAR_AWAY, FAR_AWAY + BAY_SIZE),
+  ramps: [],
+  landings: [],
+  reach: REACH,
+});
+
+/** Wraps a plan field as the walking surface of one storey, with no stair anywhere near. */
+function surfaceOf(field: WalkField): WalkSurface {
+  return Object.freeze({
+    field,
+    bayField: field,
+    well: NO_STAIR_WELL,
+    floorToFloor: FLOOR_HEIGHTS.floorToFloor,
+  });
+}
+
+const OPEN_SURFACE: WalkSurface = surfaceOf(OPEN_FIELD);
+const OPEN_CAMERA_FIELD: CameraField = createCameraField(OPEN_SURFACE, FLOOR_HEIGHTS.wall);
+/** A one-storey stack of the open room: what every test walks unless it says otherwise. */
+const OPEN_STOREYS: readonly WalkSurface[] = Object.freeze([OPEN_SURFACE]);
+const OPEN_CAMERA_FIELDS: readonly CameraField[] = Object.freeze([OPEN_CAMERA_FIELD]);
+
+/**
+ * A storey walled off straight ahead of a pose at yaw 0: the face stands exactly one body
+ * radius away, so the body cannot advance along −z by any amount at all.
+ */
+const WALLED_SURFACE: WalkSurface = surfaceOf(
+  makeWalkField(
+    [ROOM_RECT],
+    [makeRect(-ROOM_HALF_SIZE, ROOM_HALF_SIZE, -ROOM_HALF_SIZE, -PERSON_SPEC.radius)],
+  ),
+);
+
+/** The storey a synthetic pose stands on unless the case says otherwise. */
+const GROUND_FLOOR = MIN_FLOOR_COUNT;
+/** Standing on the finished floor of that storey, not part way up a flight. */
+const FLOOR_PLANE_RISE = 0;
 
 const START_POSE: EyePose = Object.freeze({
   x: ROOM_CENTRE,
   z: ROOM_CENTRE,
   yaw: START_POSE_YAW,
   pitch: LEVEL_PITCH,
+  floor: GROUND_FLOOR,
+  rise: FLOOR_PLANE_RISE,
 });
+
+/** Facing straight along −z, so a wall across the room is a wall straight ahead. */
+const FACING_WALL_YAW = 0;
+/** The storey a two-storey test pose stands on: the upper one. */
+const UPPER_FLOOR = GROUND_FLOOR + 1;
+/** A storey far above any stack these tests build, to be clamped back into the list. */
+const OFF_THE_TOP_FLOOR = 3;
+/** The eye level of a pose standing on the third storey, in metres: 2 × 3.00 + 1.68. */
+const THIRD_STOREY_EYE_LEVEL = 7.68;
 
 /** An intent asking for nothing: what every dictated automatic intent is built from. */
 const NO_INTENT: MovementIntent = Object.freeze({ move: 0, strafe: 0, turn: 0, look: 0 });
@@ -117,7 +178,7 @@ const FRAME_SECONDS = 1 / 60;
 const REAL_WALK_FRAMES = 60;
 
 /** The keys of an {@link EyePose}, sorted: what the pose ref must hold, and nothing more. */
-const EYE_POSE_KEYS = ['pitch', 'x', 'yaw', 'z'];
+const EYE_POSE_KEYS = ['floor', 'pitch', 'rise', 'x', 'yaw', 'z'];
 
 /**
  * The physical key bound to a navigation action.
@@ -149,10 +210,10 @@ interface RenderOptions {
   readonly cameraMode?: InteriorCameraMode;
   /** The pose the test-owned ref starts at. */
   readonly initialPose?: EyePose;
-  /** The collision field walking is resolved against. */
-  readonly field?: WalkField;
-  /** The field the follow camera is placed in. */
-  readonly cameraField?: CameraField;
+  /** The walking surface of every storey of the stack, lowest first. */
+  readonly surfaces?: readonly WalkSurface[];
+  /** The field the follow camera is placed in, per storey. */
+  readonly cameraFields?: readonly CameraField[];
 }
 
 describe('EyeCameraControls', () => {
@@ -184,18 +245,18 @@ describe('EyeCameraControls', () => {
   const renderControls = ({
     cameraMode = 'firstPerson',
     initialPose = START_POSE,
-    field = OPEN_FIELD,
-    cameraField = OPEN_CAMERA_FIELD,
+    surfaces = OPEN_STOREYS,
+    cameraFields = OPEN_CAMERA_FIELDS,
   }: RenderOptions = {}) => {
     const targetRef = { current: target };
     const poseRef = { current: initialPose };
     const renderWith = (mode: InteriorCameraMode) => (
       <EyeCameraControls
         targetRef={targetRef}
-        field={field}
         poseRef={poseRef}
         cameraMode={mode}
-        cameraField={cameraField}
+        surfaces={surfaces}
+        cameraFields={cameraFields}
       />
     );
     const { rerender } = render(renderWith(cameraMode));
@@ -223,7 +284,7 @@ describe('EyeCameraControls', () => {
   };
 
   const expectFirstPersonCamera = (pose: EyePose) => {
-    expectCameraAt({ x: pose.x, y: PERSON_SPEC.eyeHeight, z: pose.z });
+    expectCameraAt({ x: pose.x, y: getEyeLevel(pose), z: pose.z });
     expect(camera.rotation.order).toBe(EYE_EULER_ORDER);
     expect(camera.rotation.x).toBeCloseTo(pose.pitch);
     expect(camera.rotation.y).toBeCloseTo(pose.yaw);
@@ -260,7 +321,7 @@ describe('EyeCameraControls', () => {
     runFrame(SETTLE_DELTA_SECONDS);
 
     expectFirstPersonCamera(START_POSE);
-    expect(camera.position.y).toBeCloseTo(PERSON_SPEC.eyeHeight);
+    expect(camera.position.y).toBeCloseTo(getEyeLevel(START_POSE));
     expect(camera.rotation.x).toBeCloseTo(LEVEL_PITCH);
   });
 
@@ -271,7 +332,7 @@ describe('EyeCameraControls', () => {
     fireEvent.keyDown(target, { code: FORWARD_CODE });
     runFrame(WALK_DELTA_SECONDS);
 
-    expect(camera.position.y).toBeCloseTo(PERSON_SPEC.eyeHeight);
+    expect(camera.position.y).toBeCloseTo(getEyeLevel(START_POSE));
     const walked = Math.hypot(camera.position.x - START_POSE.x, camera.position.z - START_POSE.z);
     expect(walked).toBeCloseTo(EYE_NAVIGATION_CONFIG.walkSpeed * WALK_DELTA_SECONDS);
     expect(camera.rotation.y).toBeCloseTo(START_POSE.yaw);
@@ -300,7 +361,7 @@ describe('EyeCameraControls', () => {
     runFrame(SETTLE_DELTA_SECONDS);
 
     expectThirdPersonCamera(START_POSE);
-    expect(camera.position.y).toBeGreaterThan(PERSON_SPEC.eyeHeight);
+    expect(camera.position.y).toBeGreaterThan(getEyeLevel(START_POSE));
   });
 
   it('keeps following while walking in third person', () => {
@@ -576,8 +637,8 @@ describe('EyeCameraControls', () => {
       useRoomWalkStore.getState().startWalkTo(REAL_WALK_TARGET);
       const { poseRef } = renderControls({
         initialPose: INTERIOR_START_POSE,
-        field: WALK_FIELD,
-        cameraField: CAMERA_FIELD,
+        surfaces: getWalkSurfaces(MIN_FLOOR_COUNT),
+        cameraFields: getCameraFields(MIN_FLOOR_COUNT),
       });
 
       for (let frame = 0; frame < REAL_WALK_FRAMES; frame += 1) {
@@ -587,6 +648,85 @@ describe('EyeCameraControls', () => {
       expect(poseRef.current).not.toBe(INTERIOR_START_POSE);
       expect(poseRef.current).not.toEqual(INTERIOR_START_POSE);
       expect(poseRef.current.pitch).toBe(LEVEL_PITCH);
+    });
+  });
+
+  describe('the storey the pose stands on', () => {
+    /** The two-storey stack these cases walk: walled below, open above. */
+    const TWO_STOREYS: readonly WalkSurface[] = Object.freeze([WALLED_SURFACE, OPEN_SURFACE]);
+    /** Facing the wall of the lower storey, standing on the lower storey. */
+    const WALL_POSE: EyePose = Object.freeze({ ...START_POSE, yaw: FACING_WALL_YAW });
+    /** The same plan position, one storey up. */
+    const UPPER_POSE: EyePose = Object.freeze({ ...WALL_POSE, floor: UPPER_FLOOR });
+
+    it('walks the surface of the storey the pose names, not the first of the list', () => {
+      const { poseRef } = renderControls({ initialPose: UPPER_POSE, surfaces: TWO_STOREYS });
+
+      fireEvent.keyDown(target, { code: FORWARD_CODE });
+      runFrame(WALK_DELTA_SECONDS);
+
+      // The upper storey is open, so the step is taken in full: the wall belongs to the
+      // storey below and must not stop a body walking above it.
+      expect(walkedFrom(poseRef.current, UPPER_POSE)).toBeCloseTo(
+        EYE_NAVIGATION_CONFIG.walkSpeed * WALK_DELTA_SECONDS,
+      );
+      expect(poseRef.current.floor).toBe(UPPER_FLOOR);
+    });
+
+    it('is stopped by the blocker of its own storey', () => {
+      const { poseRef } = renderControls({ initialPose: WALL_POSE, surfaces: TWO_STOREYS });
+
+      fireEvent.keyDown(target, { code: FORWARD_CODE });
+      runFrame(WALK_DELTA_SECONDS);
+
+      expect(walkedFrom(poseRef.current, WALL_POSE)).toBeCloseTo(0);
+    });
+
+    it('clamps a pose standing a storey above the stack it is handed', () => {
+      // A reduction of the storey count re-renders the parent, but the pose it relocates is
+      // a ref read on the next frame: for one frame the pose can name a storey that is gone.
+      const ahead: EyePose = { ...START_POSE, floor: OFF_THE_TOP_FLOOR };
+      const { poseRef } = renderControls({ initialPose: ahead });
+
+      fireEvent.keyDown(target, { code: FORWARD_CODE });
+      expect(() => {
+        runFrame(WALK_DELTA_SECONDS);
+      }).not.toThrow();
+
+      expect(walkedFrom(poseRef.current, ahead)).toBeCloseTo(
+        EYE_NAVIGATION_CONFIG.walkSpeed * WALK_DELTA_SECONDS,
+      );
+    });
+
+    it('places the first-person camera at the eye level of the storey, not at eye height', () => {
+      const onThirdStorey: EyePose = { ...START_POSE, floor: OFF_THE_TOP_FLOOR };
+      renderControls({ initialPose: onThirdStorey });
+
+      runFrame(SETTLE_DELTA_SECONDS);
+
+      // Two storeys of 3.00 m under the feet, plus the 1.68 m eye height of the person.
+      expect(camera.position.y).toBeCloseTo(THIRD_STOREY_EYE_LEVEL);
+      expect(camera.position.y).toBeCloseTo(getEyeLevel(onThirdStorey));
+      expect(camera.position.y).toBeGreaterThan(PERSON_SPEC.eyeHeight);
+    });
+
+    it('follows in the camera field of the storey the step ends on', () => {
+      const LOW_CEILING = FLOOR_HEIGHTS.wall / 2;
+      const upperField = createCameraField(OPEN_SURFACE, LOW_CEILING);
+      renderControls({
+        cameraMode: 'thirdPerson',
+        initialPose: UPPER_POSE,
+        surfaces: TWO_STOREYS,
+        cameraFields: [OPEN_CAMERA_FIELD, upperField],
+      });
+
+      runFrame(SETTLE_DELTA_SECONDS);
+
+      const expected = getThirdPersonCamera(UPPER_POSE, upperField);
+      expectCameraAt(expected.position);
+      expect(expected.position.y).not.toBeCloseTo(
+        getThirdPersonCamera(UPPER_POSE, OPEN_CAMERA_FIELD).position.y,
+      );
     });
   });
 

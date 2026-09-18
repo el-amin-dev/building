@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { makeWalkField } from '../domain/collision.ts';
 import { EYE_NAVIGATION_CONFIG } from '../domain/eyeNavigation.ts';
-import type { EyePose } from '../domain/eyeNavigation.ts';
+import type { EyePose, WalkSurface } from '../domain/eyeNavigation.ts';
 import { FLOOR_HEIGHTS } from '../domain/heights.ts';
 import { PERSON_SPEC } from '../domain/person.ts';
+import { makeRect } from '../domain/planGeometry.ts';
 import type { PlanRect } from '../domain/planGeometry.ts';
+import type { Stairwell } from '../domain/stairwell.ts';
+import { MIN_FLOOR_COUNT } from '../domain/storeys.ts';
 import {
   createCameraField,
   getThirdPersonCamera,
@@ -56,10 +59,34 @@ const WALL_RECT: PlanRect = {
   minZ: WALL_FACE_Z,
   maxZ: WALL_FACE_Z + WALL_THICKNESS,
 };
-const CAMERA_FIELD: CameraField = createCameraField(
-  makeWalkField([FLOOR_RECT], [WALL_RECT]),
-  FLOOR_HEIGHTS.wall,
-);
+/**
+ * A stair bay far from the room, so no pose here is ever near one: the storey below is the
+ * flat floor these cases stand on, and the stairwell is `stairwell.ts`'s subject.
+ */
+const FAR_AWAY = 1000;
+const BAY_SIZE = 1;
+const REACH = 0.25;
+const NO_STAIR_WELL: Stairwell = Object.freeze({
+  bay: makeRect(FAR_AWAY, FAR_AWAY + BAY_SIZE, FAR_AWAY, FAR_AWAY + BAY_SIZE),
+  ramps: [],
+  landings: [],
+  reach: REACH,
+});
+
+const WALLED_SURFACE: WalkSurface = Object.freeze({
+  field: makeWalkField([FLOOR_RECT], [WALL_RECT]),
+  bayField: makeWalkField([FLOOR_RECT], [WALL_RECT]),
+  well: NO_STAIR_WELL,
+  floorToFloor: FLOOR_HEIGHTS.floorToFloor,
+});
+
+const CAMERA_FIELD: CameraField = createCameraField(WALLED_SURFACE, FLOOR_HEIGHTS.wall);
+
+/** The storey every pose of this file stands on, on its finished floor. */
+const GROUND_FLOOR = MIN_FLOOR_COUNT;
+const FLOOR_PLANE_RISE = 0;
+/** A storey well up the stack, for the cases asking whether the height changes the answer. */
+const UPPER_FLOOR = 3;
 
 /**
  * Clearance left behind the camera's own circle in the roomy pose, metres: more than the
@@ -78,6 +105,8 @@ const CENTRE_POSE: EyePose = Object.freeze({
   z: WALL_FACE_Z - THIRD_PERSON_CAMERA_CONFIG.wallMargin - ROOMY_CLEARANCE,
   yaw: FACING_NEGATIVE_Z_YAW,
   pitch: LEVEL_PITCH,
+  floor: GROUND_FLOOR,
+  rise: FLOOR_PLANE_RISE,
 });
 
 /**
@@ -238,5 +267,15 @@ describe('isPersonModelVisible', () => {
 
   it('hides the model in third person when there is no room at all behind the person', () => {
     expect(isPersonModelVisible('thirdPerson', NO_ROOM_BEHIND_POSE, CAMERA_FIELD)).toBe(false);
+  });
+
+  it('answers the same on every storey: the rule reads the plan, not the height', () => {
+    const upstairs: EyePose = { ...CENTRE_POSE, floor: UPPER_FLOOR };
+    const againstTheWall: EyePose = { ...BACK_TO_WALL_POSE, floor: UPPER_FLOOR };
+
+    // The storey is the same floor repeated, so what room the camera has behind the person
+    // cannot depend on which one they are standing on — which is why one field serves them all.
+    expect(isPersonModelVisible('thirdPerson', upstairs, CAMERA_FIELD)).toBe(true);
+    expect(isPersonModelVisible('thirdPerson', againstTheWall, CAMERA_FIELD)).toBe(false);
   });
 });
