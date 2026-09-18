@@ -11,8 +11,11 @@ export type { FloorPlan, JoinOverride, Space, SpaceContact, SpaceId, SpaceKind }
 export { FLOOR_PLAN, INTERIOR_RECT, PLOT_RECT } from './floorPlanData.ts';
 export { validateFloorPlan } from './validateFloorPlan.ts';
 export {
+  FLOOR_MATRICULE_SEPARATOR,
+  FLOOR_PREFIX,
   SPACE_LABEL_SEPARATOR,
   findSpaceAt,
+  getFloorMatricule,
   getNeighbours,
   getSpace,
   getSpaceArea,

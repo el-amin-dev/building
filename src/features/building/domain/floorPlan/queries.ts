@@ -14,6 +14,7 @@ import {
   toPlanLength,
 } from '../planGeometry.ts';
 import type { PlanPoint, PlanRect, RectSide } from '../planGeometry.ts';
+import { MIN_FLOOR_COUNT } from '../storeys.ts';
 import { WALL_SPEC } from '../wallSpec.ts';
 import type { FloorPlan, Space, SpaceContact, SpaceId, SpaceKind } from './types.ts';
 
@@ -65,17 +66,61 @@ export function getSpace(plan: FloorPlan, id: SpaceId): Space {
 /** Separates the matricule from the name in a space label. */
 export const SPACE_LABEL_SEPARATOR = '·';
 
+/** Marks the storey in a floor-stamped matricule, as the wall matricules do: `F2-…`. */
+export const FLOOR_PREFIX = 'F';
+
+/** Separates the storey from the rest of a floor-stamped matricule: `F2-R11/KIT`. */
+export const FLOOR_MATRICULE_SEPARATOR = '-';
+
 /**
- * Formats a space for a readout: its matricule, then its name.
+ * Stamps a storey onto a matricule.
+ *
+ * The plan is one plan and the storeys repeat it, so `R11/KIT` names the
+ * kitchen of the typical floor and not a place: from two storeys up there are
+ * two of it. The storey is therefore written into the matricule the way the
+ * wall register already writes it — `F1-R11-KIT-W3` — so a room and the walls
+ * around it read as belonging to the same floor.
+ *
+ * The prefix appears from one storey up, `F1-R11/KIT` in a single-floor
+ * building: one spelling everywhere beats a room that is named differently
+ * depending on how tall the building happens to be.
+ *
+ * @param matricule - The matricule of the typical floor, e.g. `R11/KIT`.
+ * @param floor - Storey the room is on, an integer of at least
+ *   {@link MIN_FLOOR_COUNT}.
+ * @returns e.g. `F2-R11/KIT`.
+ * @throws RangeError naming the floor when it is not an integer of at least
+ *   {@link MIN_FLOOR_COUNT} — which rejects `0`, a negative storey and `1.5` alike.
+ */
+export function getFloorMatricule(matricule: string, floor: number): string {
+  if (!Number.isInteger(floor) || floor < MIN_FLOOR_COUNT) {
+    throw new RangeError(
+      `a matricule can only be stamped with a floor of at least ${String(MIN_FLOOR_COUNT)}, got ${String(floor)}`,
+    );
+  }
+  return `${FLOOR_PREFIX}${String(floor)}${FLOOR_MATRICULE_SEPARATOR}${matricule}`;
+}
+
+/**
+ * Formats a space for a readout: its floor-stamped matricule, then its name.
  *
  * The one label formatter of the model, so a readout cannot invent a second
  * format: everything that shows a space to a person comes through here.
  *
+ * The floor is required and not optional on purpose. Required, the compiler
+ * finds every call site the day the building gains a storey; optional, a room's
+ * name would depend on whether the caller bothered to pass one, which is two
+ * spellings of the same room.
+ *
  * @param space - The space to label.
- * @returns e.g. `R11/KIT · Kitchen`.
+ * @param floor - Storey the space is on, an integer of at least
+ *   {@link MIN_FLOOR_COUNT}.
+ * @returns e.g. `F2-R11/KIT · Kitchen`.
+ * @throws RangeError naming the floor when it is not an integer of at least
+ *   {@link MIN_FLOOR_COUNT}.
  */
-export function getSpaceLabel(space: Space): string {
-  return `${space.matricule} ${SPACE_LABEL_SEPARATOR} ${space.name}`;
+export function getSpaceLabel(space: Space, floor: number): string {
+  return `${getFloorMatricule(space.matricule, floor)} ${SPACE_LABEL_SEPARATOR} ${space.name}`;
 }
 
 /**

@@ -9,6 +9,8 @@ import type { EyePose, MovementIntent, WalkSurface } from '../domain/eyeNavigati
 import { FLOOR_HEIGHTS } from '../domain/heights.ts';
 import { findSpaceAt, FLOOR_PLAN } from '../domain/floorPlan/index.ts';
 import type { SpaceId } from '../domain/floorPlan/index.ts';
+import { makeFloorSpaceRef } from '../domain/floorSpace.ts';
+import type { FloorSpaceRef } from '../domain/floorSpace.ts';
 import type { PlanRect } from '../domain/planGeometry.ts';
 import { hasAnyInput } from '../domain/routeFollower.ts';
 import { getStairsLayout, getStairwell, getStairwellEnds } from '../domain/stairs.ts';
@@ -107,6 +109,19 @@ const FRAMES_COMPARED = 30;
 
 /** Frames driven to check that a request answered without a route is planned only once. */
 const FRAMES_AFTER_FAILED_PLAN = 10;
+
+/** The storey above the one these walks happen on: the plan repeated, out of routing's reach. */
+const UPPER_FLOOR = GROUND_FLOOR + 1;
+
+/** A room of the storey the walks happen on. */
+function here(spaceId: SpaceId): FloorSpaceRef {
+  return makeFloorSpaceRef(GROUND_FLOOR, spaceId);
+}
+
+/** The same room of the plan, one storey up: a place this follower cannot route to. */
+function upstairs(spaceId: SpaceId): FloorSpaceRef {
+  return makeFloorSpaceRef(UPPER_FLOOR, spaceId);
+}
 
 /** The request id of the first walk asked for after the store is reset. */
 const FIRST_REQUEST_ID = 1;
@@ -209,7 +224,7 @@ function collectIntents(
  * whereas one that kept or extended its old route steers along the old waypoints instead.
  */
 function collectFreshIntents(
-  target: SpaceId,
+  target: FloorSpaceRef,
   pose: EyePose,
   frames: number,
 ): readonly (MovementIntent | undefined)[] {
@@ -240,7 +255,7 @@ describe('useRouteFollower', () => {
   });
 
   it('asks for something and keeps walking when the room asked for can be reached', () => {
-    state().startWalkTo('kitchen');
+    state().startWalkTo(here('kitchen'));
     const advance = renderFollower();
 
     const intent = advance(STAIRS_ARRIVAL, FRAME_SECONDS);
@@ -248,11 +263,11 @@ describe('useRouteFollower', () => {
     expect(intent).toBeDefined();
     expect(hasAnyInput(intent as MovementIntent)).toBe(true);
     expect(state().status).toBe('walking');
-    expect(state().target).toBe('kitchen');
+    expect(state().target).toEqual(here('kitchen'));
   });
 
   it('reports a space with no floor unreachable and follows nothing', () => {
-    state().startWalkTo('voidWest');
+    state().startWalkTo(here('voidWest'));
     const liveId = state().requestId;
     const advance = renderFollower();
 
@@ -265,7 +280,7 @@ describe('useRouteFollower', () => {
   });
 
   it('reports arrival without moving when the room asked for is the one it stands in', () => {
-    state().startWalkTo('stairs');
+    state().startWalkTo(here('stairs'));
     const advance = renderFollower();
 
     const run = drive(advance, STAIRS_ARRIVAL, FRAMES_AFTER_FAILED_PLAN);
@@ -277,7 +292,7 @@ describe('useRouteFollower', () => {
 
   it('reports arrival exactly once and then asks for nothing', () => {
     const reports = spyOnReports();
-    state().startWalkTo('corridor');
+    state().startWalkTo(here('corridor'));
     const advance = renderFollower();
 
     const run = drive(advance, STAIRS_ARRIVAL, FRAME_LIMIT);
@@ -298,7 +313,7 @@ describe('useRouteFollower', () => {
 
     reachable.forEach((target) => {
       useRoomWalkStore.setState(useRoomWalkStore.getInitialState(), true);
-      state().startWalkTo(target);
+      state().startWalkTo(here(target));
 
       const run = drive(renderFollower(), STAIRS_ARRIVAL, FRAME_LIMIT);
 
@@ -308,34 +323,36 @@ describe('useRouteFollower', () => {
   });
 
   it('replaces the route when another room is chosen mid-walk', () => {
-    state().startWalkTo('guestRoom');
+    state().startWalkTo(here('guestRoom'));
     const advance = renderFollower();
     const midway = drive(advance, STAIRS_ARRIVAL, FRAMES_BEFORE_SWITCHING).pose;
 
-    state().startWalkTo('kitchen');
+    state().startWalkTo(here('kitchen'));
     const switched = collectIntents(advance, midway, FRAMES_COMPARED);
 
     expect(state().requestId).toBe(SECOND_REQUEST_ID);
     expect(switched[0]).toBeDefined();
-    expect(switched).toEqual(collectFreshIntents('kitchen', midway, FRAMES_COMPARED));
+    expect(switched).toEqual(collectFreshIntents(here('kitchen'), midway, FRAMES_COMPARED));
   });
 
   it('re-plans when the same room is chosen twice', () => {
-    state().startWalkTo('kitchen');
+    state().startWalkTo(here('kitchen'));
     const advance = renderFollower();
     const midway = drive(advance, STAIRS_ARRIVAL, FRAMES_BEFORE_SWITCHING).pose;
 
-    state().startWalkTo('kitchen');
+    state().startWalkTo(here('kitchen'));
     const replanned = collectIntents(advance, STAIRS_ARRIVAL, FRAMES_COMPARED);
 
     // Planned from the stairs again, not continued from `midway`: the second request is a new
     // walk, so the route is the one a hook handed that request from this pose would follow.
     expect(midway).not.toEqual(STAIRS_ARRIVAL);
-    expect(replanned).toEqual(collectFreshIntents('kitchen', STAIRS_ARRIVAL, FRAMES_COMPARED));
+    expect(replanned).toEqual(
+      collectFreshIntents(here('kitchen'), STAIRS_ARRIVAL, FRAMES_COMPARED),
+    );
   });
 
   it('abandons the walk when it unmounts', () => {
-    state().startWalkTo('kitchen');
+    state().startWalkTo(here('kitchen'));
     const { unmount } = renderHook(() => useRouteFollower());
 
     unmount();
@@ -346,7 +363,7 @@ describe('useRouteFollower', () => {
 
   it('reports unreachable instead of throwing when the body stands inside a wall', () => {
     const reports = spyOnReports();
-    state().startWalkTo('kitchen');
+    state().startWalkTo(here('kitchen'));
     const advance = renderFollower();
 
     expect(() => advance(INSIDE_A_WALL, FRAME_SECONDS)).not.toThrow();
@@ -358,7 +375,7 @@ describe('useRouteFollower', () => {
 
   it('plans a request it cannot route only once, however many frames follow', () => {
     const reports = spyOnReports();
-    state().startWalkTo('voidWest');
+    state().startWalkTo(here('voidWest'));
     const advance = renderFollower();
 
     const run = drive(advance, STAIRS_ARRIVAL, FRAMES_AFTER_FAILED_PLAN);
@@ -367,5 +384,44 @@ describe('useRouteFollower', () => {
     expect(reports.reportUnreachable).toHaveBeenCalledTimes(ONE_CALL);
     expect(reports.reportArrived).not.toHaveBeenCalled();
     expect(reports.reportBlocked).not.toHaveBeenCalled();
+  });
+
+  it('refuses a room on another storey rather than walking to the one on this floor', () => {
+    // Routing is single-floor. The kitchen upstairs is a real room and a perfectly good
+    // target — just not one this follower can reach — so it is refused outright rather than
+    // answered with the kitchen underfoot, which is not the room the viewer picked.
+    const reports = spyOnReports();
+    state().startWalkTo(upstairs('kitchen'));
+    const advance = renderFollower();
+
+    const run = drive(advance, STAIRS_ARRIVAL, FRAMES_AFTER_FAILED_PLAN);
+
+    expect(run.steps).toBe(0);
+    expect(run.pose).toBe(STAIRS_ARRIVAL);
+    expect(state().status).toBe('unreachable');
+    expect(reports.reportUnreachable).toHaveBeenCalledTimes(ONE_CALL);
+    expect(reports.reportUnreachable).toHaveBeenCalledWith(FIRST_REQUEST_ID);
+    expect(reports.reportArrived).not.toHaveBeenCalled();
+  });
+
+  it('refuses the very room it stands in when it is asked for on another storey', () => {
+    // The strongest form of the same rule: `stairs` from the stairs is an arrival on this
+    // floor, so a follower that dropped the storey would report `arrived` here.
+    state().startWalkTo(upstairs('stairs'));
+    const advance = renderFollower();
+
+    expect(advance(STAIRS_ARRIVAL, FRAME_SECONDS)).toBeUndefined();
+    expect(state().status).toBe('unreachable');
+    expect(state().target).toEqual(upstairs('stairs'));
+  });
+
+  it('walks a room of the storey the body is actually on', () => {
+    // The mirror of the two above: same room id, reachable once the storeys agree.
+    state().startWalkTo(here('kitchen'));
+
+    const run = drive(renderFollower(), STAIRS_ARRIVAL, FRAME_LIMIT);
+
+    expect(state().status).toBe('arrived');
+    expect(findSpaceAt(FLOOR_PLAN, run.pose)?.id).toBe('kitchen');
   });
 });
