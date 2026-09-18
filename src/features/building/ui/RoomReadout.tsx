@@ -3,7 +3,7 @@ import { useRoomWalkStore } from '../application/roomWalkStore.ts';
 import type { RoomWalkStatus } from '../application/roomWalkStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
 import { FLOOR_PLAN, getSpace, getSpaceLabel } from '../domain/floorPlan/index.ts';
-import type { SpaceId } from '../domain/floorPlan/index.ts';
+import type { FloorSpaceRef } from '../domain/floorSpace.ts';
 import { ROOM_READOUT_ID } from './hudIds.ts';
 
 /** Introduces the room the explorer is standing in. */
@@ -43,17 +43,19 @@ const HIDDEN_CLASSES = 'sr-only';
 /**
  * Builds the announcement for a space.
  *
- * @param spaceId - The space to name, or `undefined` when there is nothing to announce.
- * @param prefix - What the line says about that space.
- * @returns e.g. `Room: R11/KIT · Kitchen` or `Walking to R11/KIT · Kitchen`, or the empty
- *   message. The label always comes from `getSpaceLabel`, so no second spelling of a room
- *   name can appear anywhere in the app — failure messages included.
+ * @param ref - The room to name — which storey, and which room of the typical floor — or
+ *   `undefined` when there is nothing to announce.
+ * @param prefix - What the line says about that room.
+ * @returns e.g. `Room: F2-R11/KIT · Kitchen` or `Walking to F2-R11/KIT · Kitchen`, or the
+ *   empty message. The label always comes from `getSpaceLabel`, storey prefix and all, so no
+ *   second spelling of a room name can appear anywhere in the app — failure messages
+ *   included, and no storey prefix is ever pasted on here.
  */
-function getMessage(spaceId: SpaceId | undefined, prefix: string): string {
-  if (spaceId === undefined) {
+function getMessage(ref: FloorSpaceRef | undefined, prefix: string): string {
+  if (ref === undefined) {
     return NO_MESSAGE;
   }
-  return `${prefix} ${getSpaceLabel(getSpace(FLOOR_PLAN, spaceId))}`;
+  return `${prefix} ${getSpaceLabel(getSpace(FLOOR_PLAN, ref.spaceId), ref.floor)}`;
 }
 
 /**
@@ -87,14 +89,14 @@ function getMessage(spaceId: SpaceId | undefined, prefix: string): string {
  */
 export function RoomReadout() {
   const viewMode = useViewStore((state) => state.viewMode);
-  const currentSpaceId = useExplorerPoseStore((state) => state.currentSpaceId);
+  const currentSpace = useExplorerPoseStore((state) => state.currentSpace);
   const walkTarget = useRoomWalkStore((state) => state.target);
   const walkStatus = useRoomWalkStore((state) => state.status);
 
   const isInterior = viewMode === 'interior';
   const walkPrefix = WALK_PREFIX[walkStatus];
-  const announcedId = walkPrefix === undefined ? currentSpaceId : walkTarget;
-  const message = isInterior ? getMessage(announcedId, walkPrefix ?? ROOM_PREFIX) : NO_MESSAGE;
+  const announced = walkPrefix === undefined ? currentSpace : walkTarget;
+  const message = isInterior ? getMessage(announced, walkPrefix ?? ROOM_PREFIX) : NO_MESSAGE;
   /** The panel is worn only when it has something in it; see {@link HIDDEN_CLASSES}. */
   const hasMessage = isInterior && message !== NO_MESSAGE;
 

@@ -1,10 +1,14 @@
 import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { useExplorerPoseStore } from '../application/explorerPoseStore.ts';
+import { useFloorCountStore } from '../application/floorCountStore.ts';
 import { useRoomWalkStore } from '../application/roomWalkStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
 import { FLOOR_PLAN, getSpace, getSpaceLabel } from '../domain/floorPlan/index.ts';
 import type { SpaceId } from '../domain/floorPlan/index.ts';
+import { makeFloorSpaceRef } from '../domain/floorSpace.ts';
+import { MAX_FLOOR_COUNT, MIN_FLOOR_COUNT } from '../domain/storeys.ts';
 import { INTERIOR_REGION_ID, ROOM_LIST_ID } from './hudIds.ts';
 import { RoomMenu } from './RoomMenu.tsx';
 import { ROOM_TARGETS } from './roomTargets.ts';
@@ -20,8 +24,30 @@ const MIN_TARGET_CLASS = 'min-h-6';
 /** The room picked in the tests below. */
 const PICKED_ROOM_ID: SpaceId = 'kitchen';
 
-/** Its label, as the model formats it: `R11/KIT · Kitchen`. */
-const PICKED_ROOM_LABEL = getSpaceLabel(getSpace(FLOOR_PLAN, PICKED_ROOM_ID));
+/**
+ * The storey the explorer is on in most tests.
+ *
+ * Not the ground floor on purpose: a menu that ignored the storey would still print `F1-`
+ * there, so every label assertion would pass on a component that read nothing.
+ */
+const CURRENT_FLOOR = 3;
+
+/** A second storey, to show the list follows the viewer up the stairs. */
+const OTHER_FLOOR = 7;
+
+/** Its label on {@link CURRENT_FLOOR}, as the model formats it: `F3-R11/KIT · Kitchen`. */
+const PICKED_ROOM_LABEL = getSpaceLabel(getSpace(FLOOR_PLAN, PICKED_ROOM_ID), CURRENT_FLOOR);
+
+/** What the open list is called, once the storey number is on the end. */
+const LIST_NAME = `Rooms on floor ${String(CURRENT_FLOOR)}`;
+
+/**
+ * How many buttons ten storeys of rooms would be: the number this menu must never show.
+ *
+ * Every storey repeats the typical floor, so a list of all of them would be the same twenty
+ * rooms said ten times over.
+ */
+const EVERY_FLOOR_ROOM_COUNT = ROOM_TARGETS.length * MAX_FLOOR_COUNT;
 
 /** The request id of the first walk asked for after a store reset. */
 const FIRST_REQUEST_ID = 1;
@@ -37,7 +63,18 @@ function enterInterior() {
 
 function startWalking() {
   act(() => {
-    useRoomWalkStore.getState().startWalkTo(PICKED_ROOM_ID);
+    useRoomWalkStore.getState().startWalkTo(makeFloorSpaceRef(CURRENT_FLOOR, PICKED_ROOM_ID));
+  });
+}
+
+/**
+ * Puts the explorer on a storey, the way the pose store reports one.
+ *
+ * @param floor - The storey the viewer is standing on.
+ */
+function standOnFloor(floor: number): void {
+  act(() => {
+    useExplorerPoseStore.setState({ currentFloor: floor });
   });
 }
 
@@ -64,6 +101,9 @@ describe('RoomMenu', () => {
   beforeEach(() => {
     useViewStore.setState(useViewStore.getInitialState(), true);
     useRoomWalkStore.setState(useRoomWalkStore.getInitialState(), true);
+    useExplorerPoseStore.setState(useExplorerPoseStore.getInitialState(), true);
+    useFloorCountStore.setState(useFloorCountStore.getInitialState(), true);
+    standOnFloor(CURRENT_FLOOR);
   });
 
   it('renders nothing in the exterior view', () => {
@@ -141,7 +181,7 @@ describe('RoomMenu', () => {
     expect(container.firstElementChild).toHaveClass('relative');
   });
 
-  it('offers one button per walkable room, named by the model', async () => {
+  it('offers one button per walkable room, named by the model with the storey', async () => {
     const user = userEvent.setup();
     enterInterior();
     render(<RoomMenu />);
@@ -151,7 +191,9 @@ describe('RoomMenu', () => {
 
     expect(within(list).getAllByRole('button')).toHaveLength(ROOM_TARGETS.length);
     ROOM_TARGETS.forEach((space) => {
-      expect(within(list).getByRole('button', { name: getSpaceLabel(space) })).toBeInTheDocument();
+      expect(
+        within(list).getByRole('button', { name: getSpaceLabel(space, CURRENT_FLOOR) }),
+      ).toBeInTheDocument();
     });
   });
 
@@ -189,7 +231,9 @@ describe('RoomMenu', () => {
     await user.click(getTrigger());
     await user.click(screen.getByRole('button', { name: PICKED_ROOM_LABEL }));
 
-    expect(useRoomWalkStore.getState().target).toBe(PICKED_ROOM_ID);
+    expect(useRoomWalkStore.getState().target).toEqual(
+      makeFloorSpaceRef(CURRENT_FLOOR, PICKED_ROOM_ID),
+    );
     expect(useRoomWalkStore.getState().status).toBe('walking');
     expect(useRoomWalkStore.getState().requestId).toBe(FIRST_REQUEST_ID);
     expect(queryList()).toBeNull();
@@ -204,11 +248,11 @@ describe('RoomMenu', () => {
     await user.click(getTrigger());
     await user.tab();
     const first = ROOM_TARGETS[0];
-    expect(screen.getByRole('button', { name: getSpaceLabel(first) })).toHaveFocus();
+    expect(screen.getByRole('button', { name: getSpaceLabel(first, CURRENT_FLOOR) })).toHaveFocus();
 
     await user.keyboard('{Enter}');
 
-    expect(useRoomWalkStore.getState().target).toBe(first.id);
+    expect(useRoomWalkStore.getState().target).toEqual(makeFloorSpaceRef(CURRENT_FLOOR, first.id));
     expect(useRoomWalkStore.getState().status).toBe('walking');
     expect(queryList()).toBeNull();
     expect(getTrigger()).toHaveFocus();
@@ -288,5 +332,137 @@ describe('RoomMenu', () => {
     controls.forEach((control) => {
       expect(control).toHaveClass(MIN_TARGET_CLASS);
     });
+  });
+
+  it('names the open list after the storey whose rooms it holds', async () => {
+    const user = userEvent.setup();
+    enterInterior();
+    render(<RoomMenu />);
+
+    await user.click(getTrigger());
+
+    // The trigger cannot say it — two e2e specs match `Go to room` verbatim — so the list
+    // itself carries the storey, where a screen reader reads it before the first room.
+    expect(getTrigger()).toHaveAccessibleName(TRIGGER_NAME);
+    expect(screen.getByRole('list')).toHaveAccessibleName(LIST_NAME);
+  });
+
+  it('renames the list when the viewer climbs a storey', async () => {
+    const user = userEvent.setup();
+    enterInterior();
+    render(<RoomMenu />);
+    standOnFloor(OTHER_FLOOR);
+
+    await user.click(getTrigger());
+
+    expect(screen.getByRole('list')).toHaveAccessibleName(`Rooms on floor ${String(OTHER_FLOOR)}`);
+  });
+
+  it('falls back to the ground floor until the first pose says which storey', async () => {
+    const user = userEvent.setup();
+    act(() => {
+      useExplorerPoseStore.setState({ currentFloor: undefined });
+    });
+    enterInterior();
+    render(<RoomMenu />);
+
+    await user.click(getTrigger());
+
+    expect(screen.getByRole('list')).toHaveAccessibleName(
+      `Rooms on floor ${String(MIN_FLOOR_COUNT)}`,
+    );
+  });
+
+  it('lists the rooms of one storey however many storeys there are', async () => {
+    const user = userEvent.setup();
+    enterInterior();
+    render(<RoomMenu />);
+
+    for (const count of [MIN_FLOOR_COUNT, MAX_FLOOR_COUNT]) {
+      act(() => {
+        useFloorCountStore.getState().setFloorCount(count);
+      });
+      await user.click(getTrigger());
+      const list = screen.getByRole('list');
+
+      // The plan is one plan: every storey's rooms would be the same twenty names repeated,
+      // and at ten storeys that is 200 buttons in a 256 px scroller nobody could use.
+      expect(within(list).getAllByRole('button')).toHaveLength(ROOM_TARGETS.length);
+      expect(within(list).getAllByRole('button').length).toBeLessThan(EVERY_FLOOR_ROOM_COUNT);
+      await user.click(getTrigger());
+    }
+  });
+
+  it('closes an open list when the storey changes, so it never shows another one', async () => {
+    const user = userEvent.setup();
+    enterInterior();
+    render(<RoomMenu />);
+    await user.click(getTrigger());
+    expect(queryList()).not.toBeNull();
+
+    standOnFloor(OTHER_FLOOR);
+
+    expect(queryList()).toBeNull();
+    expect(getTrigger()).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('returns focus to the trigger when the storey change closes the list under it', async () => {
+    const user = userEvent.setup();
+    enterInterior();
+    render(<RoomMenu />);
+    await user.click(getTrigger());
+    await user.tab();
+    expect(within(screen.getByRole('list')).getAllByRole('button')[0]).toHaveFocus();
+
+    // Unmounting the focused room would otherwise drop focus onto `<body>`, where the
+    // keyboard has nothing to Tab from.
+    standOnFloor(OTHER_FLOOR);
+
+    expect(queryList()).toBeNull();
+    expect(getTrigger()).toHaveFocus();
+  });
+
+  it('leaves focus where the viewer put it when the closed list held none of it', async () => {
+    const user = userEvent.setup();
+    enterInterior();
+    const region = renderWithRegion();
+    await user.click(getTrigger());
+    region.focus();
+
+    standOnFloor(OTHER_FLOOR);
+
+    // The list closes either way, but taking focus off the view region the viewer is
+    // steering with would be moving it somewhere they did not put it.
+    expect(queryList()).toBeNull();
+    expect(region).toHaveFocus();
+  });
+
+  it('leaves a closed list closed and focus alone when the storey changes', () => {
+    enterInterior();
+    const region = renderWithRegion();
+    region.focus();
+
+    standOnFloor(OTHER_FLOOR);
+
+    expect(queryList()).toBeNull();
+    expect(region).toHaveFocus();
+  });
+
+  it('stamps the storey stood on onto the walk it asks for', async () => {
+    const user = userEvent.setup();
+    enterInterior();
+    render(<RoomMenu />);
+    standOnFloor(OTHER_FLOOR);
+
+    await user.click(getTrigger());
+    await user.click(
+      screen.getByRole('button', {
+        name: getSpaceLabel(getSpace(FLOOR_PLAN, PICKED_ROOM_ID), OTHER_FLOOR),
+      }),
+    );
+
+    expect(useRoomWalkStore.getState().target).toEqual(
+      makeFloorSpaceRef(OTHER_FLOOR, PICKED_ROOM_ID),
+    );
   });
 });

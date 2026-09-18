@@ -4,7 +4,9 @@ import { useExplorerPoseStore } from '../application/explorerPoseStore.ts';
 import { useRoomWalkStore } from '../application/roomWalkStore.ts';
 import type { RoomWalkStatus } from '../application/roomWalkStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
+import { FLOOR_PLAN, getSpace, getSpaceLabel } from '../domain/floorPlan/index.ts';
 import type { SpaceId } from '../domain/floorPlan/index.ts';
+import { makeFloorSpaceRef } from '../domain/floorSpace.ts';
 import { ROOM_READOUT_ID } from './hudIds.ts';
 import { RoomReadout } from './RoomReadout.tsx';
 
@@ -13,11 +15,26 @@ const CURRENT_ID: SpaceId = 'stairs';
 /** The room walks are asked for: a different space from {@link CURRENT_ID} on purpose. */
 const TARGET_ID: SpaceId = 'kitchen';
 
-const CURRENT_ROOM_LINE = 'Room: R06/STR · Stairwell';
-const TARGET_ROOM_LINE = 'Room: R11/KIT · Kitchen';
-const WALKING_LINE = 'Walking to R11/KIT · Kitchen';
-const UNREACHABLE_LINE = 'Cannot walk to R11/KIT · Kitchen';
-const BLOCKED_LINE = 'Stopped before reaching R11/KIT · Kitchen';
+/**
+ * The storey the explorer is on in most tests.
+ *
+ * Deliberately not the ground floor: `F1-` is what a readout that ignored the storey and a
+ * readout that read it would both print, so every assertion below would pass on a broken
+ * component. A storey higher up makes the prefix load-bearing.
+ */
+const CURRENT_FLOOR = 3;
+
+/** A second storey, to show the same room is named differently on each. */
+const OTHER_FLOOR = 7;
+
+/** What the idle line opens with, before the label of the room stood in. */
+const ROOM_LINE_PREFIX = 'Room:';
+
+const CURRENT_ROOM_LINE = 'Room: F3-R06/STR · Stairwell';
+const TARGET_ROOM_LINE = 'Room: F3-R11/KIT · Kitchen';
+const WALKING_LINE = 'Walking to F3-R11/KIT · Kitchen';
+const UNREACHABLE_LINE = 'Cannot walk to F3-R11/KIT · Kitchen';
+const BLOCKED_LINE = 'Stopped before reaching F3-R11/KIT · Kitchen';
 const NO_MESSAGE = '';
 
 /** Classes keeping the live region mounted in the exterior view without showing it. */
@@ -48,9 +65,18 @@ function enterInterior(): void {
   });
 }
 
-function standIn(spaceId: SpaceId | undefined): void {
+/**
+ * Stands the explorer in a room on a storey.
+ *
+ * @param spaceId - The room, or `undefined` for no room at all.
+ * @param floor - The storey it is on; {@link CURRENT_FLOOR} unless a test says otherwise.
+ */
+function standIn(spaceId: SpaceId | undefined, floor: number = CURRENT_FLOOR): void {
   act(() => {
-    useExplorerPoseStore.setState({ currentSpaceId: spaceId });
+    useExplorerPoseStore.setState({
+      currentSpace: spaceId === undefined ? undefined : makeFloorSpaceRef(floor, spaceId),
+      currentFloor: spaceId === undefined ? undefined : floor,
+    });
   });
 }
 
@@ -60,7 +86,7 @@ function reachStatus(status: RoomWalkStatus): void {
     return;
   }
   act(() => {
-    useRoomWalkStore.getState().startWalkTo(TARGET_ID);
+    useRoomWalkStore.getState().startWalkTo(makeFloorSpaceRef(CURRENT_FLOOR, TARGET_ID));
   });
   if (status === 'walking') {
     return;
@@ -138,7 +164,7 @@ describe('RoomReadout', () => {
     enterInterior();
 
     standIn('corridor');
-    expect(readout().textContent).toBe('Room: R07/COR · Corridor');
+    expect(readout().textContent).toBe('Room: F3-R07/COR · Corridor');
 
     standIn(TARGET_ID);
     expect(readout().textContent).toBe(TARGET_ROOM_LINE);
@@ -225,5 +251,54 @@ describe('RoomReadout', () => {
       reachStatus(status);
       expect(screen.queryByRole('status')).toBeNull();
     }
+  });
+  it('names the storey, so the same room on two floors does not read the same', () => {
+    standIn(TARGET_ID);
+    render(<RoomReadout />);
+    enterInterior();
+    expect(readout().textContent).toBe(TARGET_ROOM_LINE);
+
+    // One plan, ten storeys: `R11/KIT · Kitchen` alone names a room on every one of them.
+    standIn(TARGET_ID, OTHER_FLOOR);
+
+    expect(readout().textContent).toBe('Room: F7-R11/KIT · Kitchen');
+  });
+
+  it('names the storey in every message it has, never a bare room', () => {
+    standIn(CURRENT_ID);
+    render(<RoomReadout />);
+    enterInterior();
+
+    for (const status of WALK_STATUSES) {
+      reachStatus(status);
+      const line = readout().textContent ?? NO_MESSAGE;
+
+      expect(line).not.toBe(NO_MESSAGE);
+      expect(line).toContain(`F${String(CURRENT_FLOOR)}-`);
+    }
+  });
+
+  it('takes its storey from the model, not from a prefix pasted on here', () => {
+    standIn(TARGET_ID, OTHER_FLOOR);
+    render(<RoomReadout />);
+    enterInterior();
+
+    // The one label formatter of the model, floor and all, so the readout cannot grow a
+    // second spelling of a room on a storey.
+    expect(readout().textContent).toBe(
+      `${ROOM_LINE_PREFIX} ${getSpaceLabel(getSpace(FLOOR_PLAN, TARGET_ID), OTHER_FLOOR)}`,
+    );
+  });
+
+  it('names the storey of the room asked for when a walk fails, not the one stood on', () => {
+    // The two are different spaces and easy to confuse: the failure lines name the walk
+    // store's target, the idle line names the pose store's current room.
+    standIn(CURRENT_ID, OTHER_FLOOR);
+    render(<RoomReadout />);
+    enterInterior();
+
+    reachStatus('unreachable');
+
+    expect(readout().textContent).toBe(UNREACHABLE_LINE);
   });
 });

@@ -244,3 +244,27 @@ describe('formatMinimapNumber', () => {
     expect(formatMinimapNumber(-0.0001)).toBe('0');
   });
 });
+
+describe('the one-storey shape of the drawing', () => {
+  it('draws one storey of rectangles, carrying no floor number of any kind', () => {
+    // A guard, not a feature. Every storey repeats the typical floor, so ten stacked copies
+    // of these rectangles would be ten identical pictures: the height of the panel would
+    // grow tenfold and not one new fact would be on screen. Which storey is under the
+    // viewer's feet is therefore said in words by `Minimap.tsx` — the chip and the
+    // accessible name — and never drawn. If a floor ever appears in a shape, the drawing has
+    // started duplicating the plan and this is where it should be caught.
+    const shapes = getMinimapShapes(FLOOR_PLAN);
+
+    expect(shapes).toHaveLength(getSlabs(FLOOR_PLAN).length);
+    shapes.forEach((shape) => {
+      expect(Object.keys(shape).sort()).toEqual(['height', 'spaceId', 'width', 'x', 'y']);
+      expect(shape).not.toHaveProperty('floor');
+    });
+  });
+
+  it('keeps the viewBox one storey tall, whatever the stack does', () => {
+    // The plot rectangle is the footprint of the building and the stack rises out of the
+    // page, not across it, so the drawing's user space is the same at one storey and at ten.
+    expect(getMinimapViewBox(PLOT_RECT)).toBe(REAL_PLOT_VIEW_BOX);
+  });
+});

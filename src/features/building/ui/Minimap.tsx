@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useExplorerPoseStore } from '../application/explorerPoseStore.ts';
+import { useFloorCountStore } from '../application/floorCountStore.ts';
 import { useRoomWalkStore } from '../application/roomWalkStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
 import { FLOOR_PLAN, PLOT_RECT, getSpace, getSpaceLabel } from '../domain/floorPlan/index.ts';
 import type { SpaceId } from '../domain/floorPlan/index.ts';
+import { makeFloorSpaceRef } from '../domain/floorSpace.ts';
+import type { FloorSpaceRef } from '../domain/floorSpace.ts';
+import { MIN_FLOOR_COUNT, getFloorsLabel } from '../domain/storeys.ts';
 import { INTERIOR_REGION_ID } from './hudIds.ts';
 import {
   MINIMAP_SAMPLE_INTERVAL_MS,
@@ -25,14 +29,32 @@ const MINIMAP_SHAPES = getMinimapShapes(FLOOR_PLAN);
 /** The plot in SVG user space, one unit per metre (`minimapShapes.ts`). */
 const MINIMAP_VIEW_BOX = getMinimapViewBox(PLOT_RECT);
 
-/** Opens every announcement, so the drawing is introduced before it is described. */
-const SUMMARY_PREFIX = 'Floor minimap.';
+/**
+ * Finishes the opening of every announcement, after the storey the drawing is of.
+ *
+ * The storey comes first — `Floor 3 of 7 minimap.` — because it is the one fact the drawing
+ * itself cannot carry: every storey is the same plan, so the picture is identical on all ten
+ * and only the words say which one is under the viewer's feet.
+ */
+const SUMMARY_SUFFIX = 'minimap.';
 
 /**
  * Said in the interior view until the first room resolves, a frame or two after
- * entry: short, and true — the pose has not been reported yet.
+ * entry: short, and true — the pose has not been reported yet. The storey is
+ * still named, because it is known from the pose store before any room resolves.
  */
-const UNKNOWN_POSITION_SUMMARY = `${SUMMARY_PREFIX} Your position on the floor is not known yet.`;
+const UNKNOWN_POSITION_SENTENCE = 'Your position on the floor is not known yet.';
+
+/**
+ * The storey chip above the drawing: the visible half of what the accessible
+ * name opens with.
+ *
+ * `aria-hidden` on the chip itself, because the very next element — the drawing —
+ * already begins its accessible name with this exact string, and a screen reader
+ * would otherwise read the storey twice in a row. Sighted and unsighted users get
+ * the same fact once each, from the same `getFloorsLabel`.
+ */
+const FLOOR_CHIP_CLASS_NAME = 'mb-1 text-center text-xs font-medium text-white';
 
 /** Panel look of the HUD, as `RoomMenu` and `RoomReadout` wear it. */
 const PANEL_CLASS_NAME = 'hidden rounded-lg bg-slate-900 p-2 shadow-lg sm:block sm:w-56';
@@ -127,23 +149,31 @@ const HIDDEN = 'hidden';
  * Pure: both facts are handed in, so the string cannot be older than the render
  * that built it.
  *
- * @param spaceId - The room the explorer is in, or `undefined` before the first
- *   room resolves.
+ * @param space - The room the explorer is in, storey and all, or `undefined`
+ *   before the first room resolves.
  * @param facing - The heading as {@link getFacingSideLabel} words it, or
  *   `undefined` before the first pose has been sampled.
- * @returns e.g. `Floor minimap. You are in R11/KIT · Kitchen, facing toward side
- *   D.`, or {@link UNKNOWN_POSITION_SUMMARY} while the position is unknown. The
- *   heading is left off while no pose has been sampled, rather than guessed at.
+ * @param floorsLabel - Which storey of how many the drawing is of, as
+ *   `getFloorsLabel` words it.
+ * @returns e.g. `Floor 3 of 7 minimap. You are in F3-R11/KIT · Kitchen, facing
+ *   toward side D.`, or the storey followed by
+ *   {@link UNKNOWN_POSITION_SENTENCE} while the position is unknown. The heading
+ *   is left off while no pose has been sampled, rather than guessed at.
  */
-function getMinimapSummary(spaceId: SpaceId | undefined, facing: string | undefined): string {
-  if (spaceId === undefined) {
-    return UNKNOWN_POSITION_SUMMARY;
+function getMinimapSummary(
+  space: FloorSpaceRef | undefined,
+  facing: string | undefined,
+  floorsLabel: string,
+): string {
+  const prefix = `${floorsLabel} ${SUMMARY_SUFFIX}`;
+  if (space === undefined) {
+    return `${prefix} ${UNKNOWN_POSITION_SENTENCE}`;
   }
-  const label = getSpaceLabel(getSpace(FLOOR_PLAN, spaceId));
+  const label = getSpaceLabel(getSpace(FLOOR_PLAN, space.spaceId), space.floor);
   if (facing === undefined) {
-    return `${SUMMARY_PREFIX} You are in ${label}.`;
+    return `${prefix} You are in ${label}.`;
   }
-  return `${SUMMARY_PREFIX} You are in ${label}, facing ${facing}.`;
+  return `${prefix} You are in ${label}, facing ${facing}.`;
 }
 
 /**
@@ -179,16 +209,46 @@ function getMinimapSummary(spaceId: SpaceId | undefined, facing: string | undefi
  * is at most eight renders per revolution instead of one per degree — and the
  * announcement still cannot chatter.
  *
+ * **One storey's plan, named in words.** The drawing is unchanged by the stack:
+ * every storey repeats the typical floor, so ten copies of the same rectangles
+ * would carry exactly as much information as one and cost ten times the height.
+ * What changes with the stack is which storey the viewer is on, and that is a
+ * fact for the chip and the accessible name to carry, not for the geometry.
+ *
  * @returns The minimap in the interior view at `sm` and wider, otherwise `null`.
  */
 export function Minimap() {
   const isInterior = useViewStore((state) => state.viewMode === 'interior');
-  const currentSpaceId = useExplorerPoseStore((state) => state.currentSpaceId);
+  const currentSpace = useExplorerPoseStore((state) => state.currentSpace);
+  const currentFloor = useExplorerPoseStore((state) => state.currentFloor);
+  const floorCount = useFloorCountStore((state) => state.floorCount);
   const startWalkTo = useRoomWalkStore((state) => state.startWalkTo);
   const markerRef = useRef<SVGGElement | null>(null);
   const [facingLabel, setFacingLabel] = useState<string | undefined>(undefined);
 
-  const summary = getMinimapSummary(currentSpaceId, facingLabel);
+  /**
+   * The storey the drawing stands for: the one the viewer is on, or the ground
+   * floor until the first pose says otherwise. A click walks to a room *here*, so
+   * this is also the storey every pick is stamped with.
+   */
+  const shownFloor = currentFloor ?? MIN_FLOOR_COUNT;
+  const floorsLabel = getFloorsLabel(shownFloor, floorCount);
+  const summary = getMinimapSummary(currentSpace, facingLabel, floorsLabel);
+
+  /**
+   * Which room to paint as the one the viewer is in, on *this* storey — and
+   * `undefined` when they are on another one.
+   *
+   * Both halves of the identity have to match. The plan is one plan, so `kitchen`
+   * is a room on every storey: matching the space id alone would light the
+   * kitchen of floor 3 while the viewer stood in the kitchen of floor 5. Resolved
+   * once here rather than per rectangle, so the sixty-odd shapes below compare
+   * one id each and no {@link FloorSpaceRef} is allocated per shape per render.
+   */
+  const highlightedSpaceId =
+    currentSpace !== undefined && currentSpace.floor === shownFloor
+      ? currentSpace.spaceId
+      : undefined;
 
   useEffect(() => {
     if (!isInterior) {
@@ -254,16 +314,19 @@ export function Minimap() {
    * then silently does nothing until the viewer Tabs back. A pick is pointer-only by
    * design (see the note above), so there is no keyboard route to tell apart.
    *
-   * @param spaceId - The room whose rectangle was clicked.
+   * @param spaceId - The room whose rectangle was clicked, on the storey drawn.
    * @returns The click handler for that rectangle.
    */
   const handlePick = (spaceId: SpaceId) => () => {
-    startWalkTo(spaceId);
+    startWalkTo(makeFloorSpaceRef(shownFloor, spaceId));
     document.getElementById(INTERIOR_REGION_ID)?.focus();
   };
 
   return (
     <div className={PANEL_CLASS_NAME}>
+      <p aria-hidden className={FLOOR_CHIP_CLASS_NAME}>
+        {floorsLabel}
+      </p>
       <svg
         role="img"
         aria-label={summary}
@@ -283,7 +346,9 @@ export function Minimap() {
             width={shape.width}
             height={shape.height}
             vectorEffect={NON_SCALING_STROKE}
-            className={shape.spaceId === currentSpaceId ? CURRENT_ROOM_CLASS_NAME : ROOM_CLASS_NAME}
+            className={
+              shape.spaceId === highlightedSpaceId ? CURRENT_ROOM_CLASS_NAME : ROOM_CLASS_NAME
+            }
             onClick={handlePick(shape.spaceId)}
           />
         ))}
