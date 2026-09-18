@@ -23,8 +23,13 @@ vi.mock('@react-three/fiber', () => ({
 /** Default `useFrame` priority: the camera controls step the pose before it, at −1. */
 const DEFAULT_FRAME_PRIORITY = 0;
 
-/** Yaw and pitch never reach the room lookup; the test poses look level ahead. */
-const LEVEL_POSE = { yaw: 0, pitch: 0 };
+/**
+ * Yaw and pitch never reach the room lookup; the test poses look level ahead.
+ *
+ * Nor does the height: the reporter samples a plan point, and the typical floor is the same
+ * plan at every storey. Both poses stand flat on the ground storey — floor 1, no rise.
+ */
+const LEVEL_POSE = { yaw: 0, pitch: 0, floor: 1, rise: 0 };
 /** The centre of the kitchen's west rect (x 10.00–12.20, z 6.30–8.60). */
 const IN_KITCHEN: EyePose = { x: 11.1, z: 7.45, ...LEVEL_POSE };
 /** The centre of the stairwell (x 1.60–5.60, z 4.00–6.00), rooms away from the kitchen. */

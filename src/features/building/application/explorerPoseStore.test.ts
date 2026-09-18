@@ -2,8 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EyePose } from '../domain/eyeNavigation.ts';
 import { ROOM_SAMPLE_DISTANCE_METRES, useExplorerPoseStore } from './explorerPoseStore.ts';
 
-/** Yaw and pitch are irrelevant to the room lookup; every test pose looks level ahead. */
-const LEVEL_POSE = { yaw: 0, pitch: 0 };
+/**
+ * Yaw and pitch are irrelevant to the room lookup; every test pose looks level ahead.
+ *
+ * So is the height: the store asks which space a plan point falls in, and the typical floor
+ * is the same plan at every storey. Every test pose therefore stands flat on the ground
+ * storey — floor 1, the lowest the plan numbers, with no rise above its finished floor.
+ */
+const LEVEL_POSE = { yaw: 0, pitch: 0, floor: 1, rise: 0 };
 
 /** Builds a pose standing at a plan point. */
 function poseAt(x: number, z: number): EyePose {

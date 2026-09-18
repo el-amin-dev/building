@@ -250,8 +250,17 @@ describe('getBuildingTop', () => {
     expect(getBuildingTop(TALL_HEIGHTS, 3)).toBe(11.5);
   });
 
-  it('measures the clamped count', () => {
-    expect(getBuildingTop(FLOOR_HEIGHTS, 99)).toBe(getBuildingTop(FLOOR_HEIGHTS, MAX_FLOOR_COUNT));
+  it('measures the count it is given, above the shown cap as well', () => {
+    // `getExteriorFraming` promises a correct framing for any integer count of at least
+    // one, so a count past `MAX_FLOOR_COUNT` must reach the true top rather than the cap's.
+    const beyondCap = MAX_FLOOR_COUNT + 2;
+
+    expect(getBuildingTop(FLOOR_HEIGHTS, beyondCap)).toBe(
+      (beyondCap - MIN_FLOOR_COUNT) * FLOOR_HEIGHTS.floorToFloor + FLOOR_HEIGHTS.wall,
+    );
+    expect(getBuildingTop(FLOOR_HEIGHTS, beyondCap)).toBeGreaterThan(
+      getBuildingTop(FLOOR_HEIGHTS, MAX_FLOOR_COUNT),
+    );
   });
 
   it('rejects heights that cannot build a storey', () => {
@@ -260,8 +269,12 @@ describe('getBuildingTop', () => {
     expect(() => getBuildingTop({ ...FLOOR_HEIGHTS, floorToFloor: 0 }, 1)).toThrow(RangeError);
   });
 
-  it('rejects a count that is not finite', () => {
+  it('rejects a count that is not a whole storey of the 1…N numbering', () => {
     expect(() => getBuildingTop(FLOOR_HEIGHTS, Number.NaN)).toThrow(RangeError);
+    expect(() => getBuildingTop(FLOOR_HEIGHTS, Number.POSITIVE_INFINITY)).toThrow(RangeError);
+    expect(() => getBuildingTop(FLOOR_HEIGHTS, 0)).toThrow(RangeError);
+    expect(() => getBuildingTop(FLOOR_HEIGHTS, -1)).toThrow(RangeError);
+    expect(() => getBuildingTop(FLOOR_HEIGHTS, 2.5)).toThrow(RangeError);
   });
 });
 

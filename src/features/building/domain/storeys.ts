@@ -207,23 +207,31 @@ export function getStoreyAt(level: number, heights: FloorHeights = FLOOR_HEIGHTS
  * Takes its heights first and required, as `getExteriorFraming` does, because
  * the exterior framing is its first caller.
  *
+ * The count is **not** clamped here, exactly as {@link getStoreyLevel} does not
+ * clamp its floor: a stack of any height has a perfectly well defined top, and
+ * how many storeys the owner may *ask* for is {@link clampFloorCount}'s business
+ * alone — enforced by the store and the stepper. `getExteriorFraming` accepts
+ * any integer count of at least one and promises a correct framing for each, so
+ * a clamp in here would quietly frame a ten-storey building for a taller one.
+ *
  * @param heights - Vertical sizes the stack is derived from.
- * @param count - How many storeys the stack has; clamped as
- *   {@link clampFloorCount} does.
+ * @param count - How many storeys the stack has: an integer of at least
+ *   {@link MIN_FLOOR_COUNT}, with no upper bound.
  * @returns `(count − 1) × heights.floorToFloor + heights.wall`, in metres above
  *   storey 1's finished floor, on the centimetre grid.
- * @throws RangeError when `count` is not finite, when the pitch is not finite
- *   and positive, or when `heights.wall` is not finite and positive.
+ * @throws RangeError when `count` is not an integer of at least
+ *   {@link MIN_FLOOR_COUNT}, when the pitch is not finite and positive, or when
+ *   `heights.wall` is not finite and positive.
  */
 export function getBuildingTop(heights: FloorHeights, count: number): number {
-  const storeys = clampFloorCount(count);
+  assertFloor(count);
   assertPitch(heights);
   if (!Number.isFinite(heights.wall) || heights.wall <= 0) {
     throw new RangeError(
       `heights.wall must be a finite positive number, got ${String(heights.wall)}`,
     );
   }
-  return toPlanLength(getStoreyLevel(storeys, heights) + heights.wall);
+  return toPlanLength(getStoreyLevel(count, heights) + heights.wall);
 }
 
 /**

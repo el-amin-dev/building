@@ -13,7 +13,14 @@ import { Minimap } from './Minimap.tsx';
 import { MINIMAP_SAMPLE_INTERVAL_MS, getMinimapShapes } from './minimapShapes.ts';
 
 /** A point inside the kitchen's east rect (x 12.20–14.10, z 5.80–8.60). */
-const IN_KITCHEN: EyePose = Object.freeze({ x: 13, z: 7, yaw: -Math.PI / 2, pitch: 0 });
+const IN_KITCHEN: EyePose = Object.freeze({
+  x: 13,
+  z: 7,
+  yaw: -Math.PI / 2,
+  pitch: 0,
+  floor: 1,
+  rise: 0,
+});
 
 /** The same room, half a metre on: a pose change with no room change. */
 const FURTHER_IN_KITCHEN: EyePose = Object.freeze({ ...IN_KITCHEN, x: 13.5 });
@@ -22,7 +29,7 @@ const FURTHER_IN_KITCHEN: EyePose = Object.freeze({ ...IN_KITCHEN, x: 13.5 });
 const TURNED_IN_KITCHEN: EyePose = Object.freeze({ ...IN_KITCHEN, yaw: Math.PI / 2 });
 
 /** A point inside the corridor's first rect (x 5.60–20.20, z 4.00–5.50). */
-const IN_CORRIDOR: EyePose = Object.freeze({ x: 10, z: 4.5, yaw: 0, pitch: 0 });
+const IN_CORRIDOR: EyePose = Object.freeze({ x: 10, z: 4.5, yaw: 0, pitch: 0, floor: 1, rise: 0 });
 
 /** What the label says once the explorer stands in the kitchen facing +x. */
 const KITCHEN_SUMMARY = 'Floor minimap. You are in R11/KIT · Kitchen, facing toward side D.';

@@ -2,30 +2,92 @@ import { renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useRoomWalkStore } from '../application/roomWalkStore.ts';
 import { getBuiltFloor } from '../domain/builtFloor.ts';
-import { getWalkField } from '../domain/collision.ts';
+import { getWalkField, makeWalkField } from '../domain/collision.ts';
 import type { WalkField } from '../domain/collision.ts';
 import { stepEyePose } from '../domain/eyeNavigation.ts';
-import type { EyePose, MovementIntent } from '../domain/eyeNavigation.ts';
+import type { EyePose, MovementIntent, WalkSurface } from '../domain/eyeNavigation.ts';
+import { FLOOR_HEIGHTS } from '../domain/heights.ts';
 import { findSpaceAt, FLOOR_PLAN } from '../domain/floorPlan/index.ts';
 import type { SpaceId } from '../domain/floorPlan/index.ts';
+import type { PlanRect } from '../domain/planGeometry.ts';
 import { hasAnyInput } from '../domain/routeFollower.ts';
+import { getStairsLayout, getStairwell, getStairwellEnds } from '../domain/stairs.ts';
 import { useRouteFollower } from './useRouteFollower.ts';
 
 /** The floor the walks really happen on, as the interior view builds it. */
 const FIELD: WalkField = getWalkField(getBuiltFloor(), FLOOR_PLAN.plot);
 
+/** The storey every walk in this file happens on: the lowest, as the plan numbers it. */
+const GROUND_FLOOR = 1;
+
+/** How many storeys the stack these walks cross has: the one designed floor, on its own. */
+const SINGLE_STOREY = 1;
+
+/** The stair of the typical floor. */
+const STAIRS_LAYOUT = getStairsLayout();
+
+/**
+ * Tells whether a blocker lies wholly within the stair bay.
+ *
+ * The bay is a hole through the floor everywhere but the arrival landing, so `getWalkField`
+ * fills it with fall cells. Those are exactly the rectangles the bay field must not carry:
+ * inside the bay what may be stood on is decided by height, not by a rectangle.
+ */
+function isInsideBay(rect: PlanRect): boolean {
+  const { bay } = STAIRS_LAYOUT;
+  return (
+    rect.minX >= bay.minX && rect.maxX <= bay.maxX && rect.minZ >= bay.minZ && rect.maxZ <= bay.maxZ
+  );
+}
+
+/**
+ * The storey these walks cross, as the walker meets it underfoot.
+ *
+ * The plan field is the real one the interior builds; the bay field is that same field with the
+ * stair shaft's fall cells taken out, so that inside the bay the stairwell rather than a
+ * rectangle says what is standable. The stack is one storey tall, so the stairwell has neither
+ * an end above nor one below and offers only the arrival landing: the routes planned here are
+ * plan routes across one floor, and no leg of one ever climbs.
+ */
+const SURFACE: WalkSurface = Object.freeze({
+  field: FIELD,
+  bayField: makeWalkField(
+    FIELD.floor,
+    FIELD.blockers.filter((rect) => !isInsideBay(rect)),
+  ),
+  well: getStairwell(STAIRS_LAYOUT, FLOOR_HEIGHTS, getStairwellEnds(GROUND_FLOOR, SINGLE_STOREY)),
+  floorToFloor: FLOOR_HEIGHTS.floorToFloor,
+});
+
 /**
  * Where a person arriving up the stairs stands: on the landing that is floor at this level,
  * facing out through its open edge toward the corridor (yaw −π/2 looks toward +x).
+ *
+ * The landing is floor at this storey's own level, so the body stands on floor 1 with no rise
+ * above its finished floor — the same height as anyone standing in a room of it.
  */
-const STAIRS_ARRIVAL: EyePose = Object.freeze({ x: 5.1, z: 5.0, yaw: -Math.PI / 2, pitch: 0 });
+const STAIRS_ARRIVAL: EyePose = Object.freeze({
+  x: 5.1,
+  z: 5.0,
+  yaw: -Math.PI / 2,
+  pitch: 0,
+  floor: GROUND_FLOOR,
+  rise: 0,
+});
 
 /**
  * A pose inside the wall between the corridor and the guest room: the corridor ends at z 6.00
  * and the guest room starts at z 6.30, so this point lies in no space of the plan — which is
  * what makes `findSpaceRoute` throw rather than answer.
  */
-const INSIDE_A_WALL: EyePose = Object.freeze({ x: 5.1, z: 6.15, yaw: 0, pitch: 0 });
+const INSIDE_A_WALL: EyePose = Object.freeze({
+  x: 5.1,
+  z: 6.15,
+  yaw: 0,
+  pitch: 0,
+  floor: GROUND_FLOOR,
+  rise: 0,
+});
 
 /** One frame at 60 fps, in seconds: the frame length the interior loop usually hands over. */
 const FRAME_SECONDS = 1 / 60;
@@ -111,7 +173,7 @@ function drive(advance: Advance, from: EyePose, frames: number): WalkRun {
     if (intent === undefined) {
       return { pose, done: true, steps: frame };
     }
-    pose = stepEyePose(pose, intent, FRAME_SECONDS, FIELD).pose;
+    pose = stepEyePose(pose, intent, FRAME_SECONDS, SURFACE).pose;
   }
   return { pose, done: false, steps: frames };
 }
@@ -132,7 +194,7 @@ function collectIntents(
     const intent = advance(pose, FRAME_SECONDS);
     intents.push(intent);
     if (intent !== undefined) {
-      pose = stepEyePose(pose, intent, FRAME_SECONDS, FIELD).pose;
+      pose = stepEyePose(pose, intent, FRAME_SECONDS, SURFACE).pose;
     }
   }
   return intents;

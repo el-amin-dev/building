@@ -38,9 +38,18 @@ const NONE = 0;
 const MARKER_X = 3;
 const MARKER_Z = 4;
 
+/**
+ * The height fields of a pose the minimap draws: a body standing on the ground storey.
+ *
+ * The minimap is a plan, and the typical floor is the same plan at every storey, so the
+ * marker is placed from x, z and yaw alone. Every pose here is therefore flat on floor 1 —
+ * the lowest storey the plan numbers — with no rise above its finished floor.
+ */
+const ON_GROUND_STOREY = { floor: 1, rise: 0 };
+
 /** Builds a pose at {@link MARKER_X} / {@link MARKER_Z} with the given yaw. */
 function poseFacing(yaw: number): EyePose {
-  return { x: MARKER_X, z: MARKER_Z, yaw, pitch: 0 };
+  return { x: MARKER_X, z: MARKER_Z, yaw, pitch: 0, ...ON_GROUND_STOREY };
 }
 
 /** The shapes of one space, in shape order. */
@@ -147,30 +156,42 @@ describe('getViewerTransform', () => {
   });
 
   it('puts the marker at the pose, plan x on SVG x and plan z on SVG y', () => {
-    expect(getViewerTransform({ x: 12.5, z: 7.25, yaw: 0, pitch: 0 })).toBe(
+    expect(getViewerTransform({ x: 12.5, z: 7.25, yaw: 0, pitch: 0, ...ON_GROUND_STOREY })).toBe(
       'translate(12.5 7.25) rotate(0)',
     );
   });
 
   it('rounds, so a frame that did not really move writes the same string', () => {
-    const first = getViewerTransform({ x: 1.23456, z: 2, yaw: 0, pitch: 0 });
-    const second = getViewerTransform({ x: 1.234561, z: 2, yaw: 0, pitch: 0 });
+    const first = getViewerTransform({ x: 1.23456, z: 2, yaw: 0, pitch: 0, ...ON_GROUND_STOREY });
+    const second = getViewerTransform({ x: 1.234561, z: 2, yaw: 0, pitch: 0, ...ON_GROUND_STOREY });
 
     expect(first).toBe('translate(1.235 2) rotate(0)');
     expect(second).toBe(first);
   });
 
   it('ignores the pitch, which has no meaning on a plan', () => {
-    const level = getViewerTransform({ x: MARKER_X, z: MARKER_Z, yaw: 0, pitch: 0 });
-    const tilted = getViewerTransform({ x: MARKER_X, z: MARKER_Z, yaw: 0, pitch: 1 });
+    const level = getViewerTransform({
+      x: MARKER_X,
+      z: MARKER_Z,
+      yaw: 0,
+      pitch: 0,
+      ...ON_GROUND_STOREY,
+    });
+    const tilted = getViewerTransform({
+      x: MARKER_X,
+      z: MARKER_Z,
+      yaw: 0,
+      pitch: 1,
+      ...ON_GROUND_STOREY,
+    });
 
     expect(tilted).toBe(level);
   });
 
   it.each([
-    ['x', { x: Number.NaN, z: MARKER_Z, yaw: 0, pitch: 0 }],
-    ['z', { x: MARKER_X, z: Number.POSITIVE_INFINITY, yaw: 0, pitch: 0 }],
-    ['yaw', { x: MARKER_X, z: MARKER_Z, yaw: Number.NaN, pitch: 0 }],
+    ['x', { x: Number.NaN, z: MARKER_Z, yaw: 0, pitch: 0, ...ON_GROUND_STOREY }],
+    ['z', { x: MARKER_X, z: Number.POSITIVE_INFINITY, yaw: 0, pitch: 0, ...ON_GROUND_STOREY }],
+    ['yaw', { x: MARKER_X, z: MARKER_Z, yaw: Number.NaN, pitch: 0, ...ON_GROUND_STOREY }],
   ])('refuses a pose whose %s is not finite', (_name, pose: EyePose) => {
     expect(() => getViewerTransform(pose)).toThrow(RangeError);
   });

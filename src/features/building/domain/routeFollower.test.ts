@@ -29,7 +29,14 @@ const NOMINAL_STEP_METRES = NAV.walkSpeed * NOMINAL_STEP_SECONDS;
 const WORST_CASE_STEP_METRES = NAV.walkSpeed * NAV.maxStepSeconds;
 
 const IDLE_INTENT: MovementIntent = { move: 0, strafe: 0, turn: 0, look: 0 };
-const ORIGIN_POSE: EyePose = { x: 0, z: 0, yaw: 0, pitch: 0 };
+/**
+ * The pose every walk in this file starts from: the plan origin, on the ground storey.
+ *
+ * The follower plans in plan coordinates only — it emits an intent from an (x, z) and a yaw —
+ * so the height fields never change during a walk. They are the ordinary flat-floor values:
+ * floor 1, the lowest storey the plan numbers, standing on its finished floor.
+ */
+const ORIGIN_POSE: EyePose = { x: 0, z: 0, yaw: 0, pitch: 0, floor: 1, rise: 0 };
 const ORIGIN: PlanPoint = { x: 0, z: 0 };
 
 /** Step budget for walks that are expected to finish long before it. */
@@ -108,7 +115,15 @@ const stubMove: Mover = (from, intent, dtSeconds) => {
   const vectorZ = -cosYaw * intent.move - sinYaw * intent.strafe;
   const length = Math.hypot(vectorX, vectorZ);
   const scale = (length > 1 ? 1 / length : 1) * NAV.walkSpeed * dt;
-  return { x: from.x + vectorX * scale, z: from.z + vectorZ * scale, yaw, pitch: from.pitch };
+  return {
+    x: from.x + vectorX * scale,
+    z: from.z + vectorZ * scale,
+    yaw,
+    pitch: from.pitch,
+    // A bounds-free mover reads no surface, so the body keeps the storey and rise it had.
+    floor: from.floor,
+    rise: from.rise,
+  };
 };
 
 /** A mover that refuses everything, standing in for a body wedged against geometry. */
