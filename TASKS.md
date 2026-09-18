@@ -200,6 +200,7 @@ A task below keeps its `[x]` when the thing it built still stands and only its d
 - [ ] Lazy-load the 3D scene chunk, instance/merge static geometry, bundle-size budget in CI
 - [ ] WebGL-unsupported fallback and a canvas error boundary with structured logging
 - [ ] Add eslint-plugin-jsx-a11y if it supports ESLint 10, otherwise record the deferral
+- [ ] The interior screenshot baseline masks most of its own frame. `getHudOverlay` matches a full-height overlay, and the interior HUD has grown to the point where the committed baseline is magenta above roughly y 520 of 720 — about **72 %** of the capture. It could not have caught the olive slab soffit Part 3.5 fixed, and still cannot catch anything in the upper frame. Either mask the panels rather than the overlay box, or assert the mask's own size so it fails when it grows
 - [ ] Re-instrument the geometry screenshot baselines: a 1 % diff-pixel ratio does not answer "did the geometry move" — 1 % of a 1280 × 720 frame is over 9,000 pixels, room for an entire corner of the building to change unnoticed, which is how a whole floor rebuild sat unseen behind the exterior baseline until Part 3's wider HUD mask used up the headroom (ADR-013). Either tighten the ratio toward the measured noise floor (0 px by Playwright's own metric when a baseline matches its own commit) or assert something that does not average over the frame
 - [ ] ADR self-hosted target + deploy workflow; e2e full tour of every room
 - [ ] README (controls, sources of truth, screenshots), `CHANGELOG.md`, tag `v1.0.0`
