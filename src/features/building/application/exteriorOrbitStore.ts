@@ -36,8 +36,19 @@ function isSameOrbitPose(left: OrbitPose, right: OrbitPose): boolean {
 export interface ExteriorOrbitState {
   /** The last orbit pose of the exterior view; `undefined` until the view is first framed. */
   readonly orbitPose: OrbitPose | undefined;
-  /** Remembers where the exterior camera is. Remembering the same pose changes nothing. */
-  readonly rememberOrbitPose: (pose: OrbitPose) => void;
+  /**
+   * How many storeys the stack had when {@link ExteriorOrbitState.orbitPose} was framed;
+   * `undefined` while no pose is remembered.
+   *
+   * Kept beside the pose rather than in the controls, because it is the controls that
+   * unmount: see {@link getPlacementOrbitPose} for what it is compared against.
+   */
+  readonly framedStoreyCount: number | undefined;
+  /**
+   * Remembers where the exterior camera is, and how many storeys it was framed for.
+   * Remembering the same pose at the same count changes nothing.
+   */
+  readonly rememberOrbitPose: (pose: OrbitPose, storeyCount: number) => void;
 }
 
 /**
@@ -52,6 +63,12 @@ export interface ExteriorOrbitState {
  * angle survives a resize where a raw position would not, and the pose is already the shape
  * the per-frame stepper wants, so nothing is converted twice.
  *
+ * It remembers the storey count beside the pose for the same reason it is a store at all:
+ * a distance is only a framing of the building it was chosen for, and the count can change
+ * from the *interior* view, with the exterior controls unmounted. Anything they held about
+ * the count — a `useRef`, which re-seeds at the next mount — therefore comes back already
+ * agreeing with a count it never framed anything for. See {@link getPlacementOrbitPose}.
+ *
  * A pose is copied in and frozen, so the camera-owned object it was read off can go on
  * being reused. Every update that changes nothing returns the previous state unchanged, so
  * a frame that moved the camera nowhere notifies no subscriber.
@@ -60,9 +77,12 @@ export interface ExteriorOrbitState {
  */
 export const useExteriorOrbitStore = create<ExteriorOrbitState>()((set) => ({
   orbitPose: undefined,
-  rememberOrbitPose: (pose) =>
+  framedStoreyCount: undefined,
+  rememberOrbitPose: (pose, storeyCount) =>
     set((state) =>
-      state.orbitPose !== undefined && isSameOrbitPose(state.orbitPose, pose)
+      state.orbitPose !== undefined &&
+      state.framedStoreyCount === storeyCount &&
+      isSameOrbitPose(state.orbitPose, pose)
         ? state
         : {
             orbitPose: Object.freeze({
@@ -70,20 +90,47 @@ export const useExteriorOrbitStore = create<ExteriorOrbitState>()((set) => ({
               polar: pose.polar,
               distance: pose.distance,
             }),
+            framedStoreyCount: storeyCount,
           },
     ),
 }));
 
 /**
- * Reads the remembered exterior orbit pose without subscribing to it.
+ * The orbit pose the exterior camera is to be placed at, for a freshly derived framing.
  *
- * A published seam, not an internal: the frame loop reads it every frame — subscribing at
- * 60 fps would re-render the scene for its own camera movement, the same reason
- * `EyeCameraControls` reads `useRemoteControlStore.getState()` inside `useFrame` — and the
- * exterior↔interior camera transition reads it as its exterior endpoint.
+ * The one place the placement rule lives, read without subscribing: the frame loop and the
+ * camera transition consult it outside React's render, and subscribing at 60 fps would
+ * re-render the scene for the camera's own movement — the same reason `EyeCameraControls`
+ * reads `useRemoteControlStore.getState()` inside `useFrame`.
  *
- * @returns The pose last remembered, or `undefined` before the exterior view is first framed.
+ * The rule, in order:
+ *
+ * - nothing remembered yet — the first mount of a session — gives `framingPose`, so the
+ *   view opens on the framing's own three-quarter frame;
+ * - a pose remembered for this same storey count gives that pose unchanged: it *is* the
+ *   viewer's own angle, and a resize must not take it away (the same building, a
+ *   differently shaped window onto it);
+ * - a pose remembered for a *different* count keeps its `azimuth` and `polar` and takes
+ *   the `distance` from `framingPose`. Adding storeys changes the subject: the building
+ *   can end up eleven times taller, and a distance chosen for one storey leaves most of a
+ *   ten-storey stack out of frame — near enough to the middle of the clamp range that
+ *   `clampOrbitPose` does not rescue it either.
+ *
+ * The result is *not* clamped: the caller holds the limits of its own framing and clamps
+ * with them, which is also what brings a distance remembered at another canvas size back
+ * inside the live one.
+ *
+ * @param framingPose - The pose the live framing would place the camera at on its own.
+ * @param storeyCount - How many storeys the stack shows now.
+ * @returns The pose to place the camera at, before clamping.
  */
-export function getRememberedOrbitPose(): OrbitPose | undefined {
-  return useExteriorOrbitStore.getState().orbitPose;
+export function getPlacementOrbitPose(framingPose: OrbitPose, storeyCount: number): OrbitPose {
+  const { orbitPose, framedStoreyCount } = useExteriorOrbitStore.getState();
+  if (orbitPose === undefined) {
+    return framingPose;
+  }
+  if (framedStoreyCount !== storeyCount) {
+    return { azimuth: orbitPose.azimuth, polar: orbitPose.polar, distance: framingPose.distance };
+  }
+  return orbitPose;
 }

@@ -2,7 +2,7 @@ import { useFrame } from '@react-three/fiber';
 import { useRef } from 'react';
 import { Vector3 } from 'three';
 import type { Camera } from 'three';
-import { getRememberedOrbitPose } from '../application/exteriorOrbitStore.ts';
+import { getPlacementOrbitPose } from '../application/exteriorOrbitStore.ts';
 import { useFloorCountStore } from '../application/floorCountStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
 import type { CameraTransition } from '../application/viewStore.ts';
@@ -45,6 +45,10 @@ interface CameraTween {
 
 /** The travel parameter at the end of the tween. */
 const TWEEN_END = 1;
+/** Index of the lowest storey in a per-storey list: floor `MIN_FLOOR_COUNT` is the first entry. */
+const FIRST_STOREY_INDEX = 0;
+/** How far back from the end of a list its last entry sits. */
+const LAST_INDEX_OFFSET = 1;
 /** No time elapsed yet: the first frame of a travel applies the start pose unchanged. */
 const NO_TIME_ELAPSED = 0;
 /**
@@ -79,14 +83,18 @@ const MIN_LOOK_AHEAD_METRES = 1;
  * same expression.** Concretely:
  *
  * - `toExterior` ends at
- *   `getOrbitPosition(framing.target, clampOrbitPose(getRememberedOrbitPose() ??
- *   getOrbitPose(framing.target, framing.position), getOrbitLimits(framing)))`,
+ *   `getOrbitPosition(framing.target, clampOrbitPose(getPlacementOrbitPose(
+ *   getOrbitPose(framing.target, framing.position), floorCount), getOrbitLimits(framing)))`,
  *   looking at `framing.target`: the remembered orbit pose when the viewer has
- *   framed the exterior before and the framing default otherwise, clamped into
- *   the limits of the live framing. That is the exterior controls' own placement
- *   expression, character for character, so their placement is a no-op after the
- *   travel instead of a snap — including after a resize, which can leave a
- *   remembered distance outside the new limits;
+ *   framed the exterior before and the framing default otherwise — with the
+ *   distance refitted when the storey count has changed since that pose was
+ *   framed — clamped into the limits of the live framing. The placement rule
+ *   itself lives in `getPlacementOrbitPose`, so this is the exterior controls'
+ *   own placement by *calling the same function* rather than by restating an
+ *   expression; their placement is then a no-op after the travel instead of a
+ *   snap — including after a resize, which can leave a remembered distance
+ *   outside the new limits, and after storeys were added or removed from the
+ *   interior, which the controls were unmounted for;
  * - `toInterior` ends at `getEyeCameraPose(INTERIOR_START_POSE)` in first person or
  *   at `getThirdPersonCamera(INTERIOR_START_POSE, …)` in third person, both derived
  *   from the *shared* start pose (`floorInstance.ts`), which is the same object the
@@ -101,7 +109,9 @@ const MIN_LOOK_AHEAD_METRES = 1;
  * following `EyeCameraControls`: subscribing to a phase that is consulted sixty
  * times a second would re-render the scene for the camera's own movement. The storey
  * count IS subscribed to, because it is not a per-frame value: it changes a handful of
- * times ever, from outside the frame loop, and the interior endpoint has to follow it.
+ * times ever, from outside the frame loop, and both endpoints have to follow it — the
+ * interior one for the camera field of the storey entered, the exterior one because a
+ * remembered distance framed for another stack has to be refitted.
  * The framing comes from `useExteriorFraming()`, which must be called inside the
  * `<Canvas>` — this component is.
  *
@@ -188,7 +198,7 @@ function getTween(
   const to =
     phase === 'toInterior'
       ? getInteriorEndPose(context.cameraMode, context.floorCount)
-      : getExteriorEndPose(context.framing);
+      : getExteriorEndPose(context.framing, context.floorCount);
   const started: CameraTween = {
     phase,
     from: readCameraPose(camera, to.target),
@@ -263,32 +273,36 @@ function getInteriorEndPose(cameraMode: InteriorCameraMode, floorCount: number):
 function getStartCameraField(floorCount: number): CameraField {
   const fields = getCameraFields(floorCount);
   const index = Math.min(
-    Math.max(INTERIOR_START_POSE.floor - MIN_FLOOR_COUNT, 0),
-    fields.length - 1,
+    Math.max(INTERIOR_START_POSE.floor - MIN_FLOOR_COUNT, FIRST_STOREY_INDEX),
+    fields.length - LAST_INDEX_OFFSET,
   );
   return fields[index];
 }
 
 /**
- * The exterior endpoint: the remembered orbit pose when there is one, else the
- * framing default, brought inside the limits of the live framing. This expression
- * is the hand-off contract (see {@link ViewTransition}) and must stay identical to
- * the exterior controls'.
+ * The exterior endpoint: the placement rule of the exterior controls, applied to
+ * the live framing and brought inside its limits. This is the hand-off contract
+ * (see {@link ViewTransition}); `getPlacementOrbitPose` is the shared rule, so the
+ * two sides cannot drift apart.
  *
  * The clamp is the reason the whole expression is written out rather than
  * shortcut to `framing.position` when nothing is remembered: a pose remembered at
  * one canvas size can be illegal at another — resize the window while inside and
  * `maxDistance` shrinks — and the mounting controls place the camera at the
  * *clamped* pose. Landing at the unclamped one would be a visible snap at the
- * very moment the controls take over.
+ * very moment the controls take over. The storey count is passed for the same
+ * reason: the viewer can add storeys from the interior, and the endpoint has to
+ * refit the distance exactly as the controls will.
  *
  * @param framing - The exterior framing at the live canvas size.
+ * @param floorCount - How many storeys the stack shows, which decides whether the
+ *   remembered distance still frames the building it was chosen for.
  * @returns The camera pose the exterior view will be framed at.
  */
-function getExteriorEndPose(framing: ExteriorFraming): CameraPose {
+function getExteriorEndPose(framing: ExteriorFraming, floorCount: number): CameraPose {
   const framingPose = getOrbitPose(framing.target, framing.position);
-  const remembered = getRememberedOrbitPose();
-  const pose = clampOrbitPose(remembered ?? framingPose, getOrbitLimits(framing));
+  const placement = getPlacementOrbitPose(framingPose, floorCount);
+  const pose = clampOrbitPose(placement, getOrbitLimits(framing));
 
   return { position: getOrbitPosition(framing.target, pose), target: framing.target };
 }

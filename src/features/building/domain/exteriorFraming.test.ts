@@ -40,6 +40,7 @@ const EXPECTED_ELEVATION_DEGREES = 40;
 const EXPECTED_AZIMUTH_DEGREES = 25;
 const EXPECTED_START_MARGIN = 1.1;
 const EXPECTED_MIN_DISTANCE_FACTOR = 0.25;
+const EXPECTED_FOOTPRINT_CLEARANCE_FACTOR = 1.1;
 const EXPECTED_MAX_DISTANCE_FACTOR = 2;
 const EXPECTED_FOG_FAR_FACTOR = 2;
 const EXPECTED_GROUND_SIZE_FACTOR = 2;
@@ -49,6 +50,14 @@ const EXPECTED_GROUND_SIZE_FACTOR = 2;
  * the radius of the bounding sphere, which the fog range is still offset by.
  */
 const EXPECTED_RADIUS_METRES = 12.4211513154;
+/**
+ * How far the footprint of the real plot reaches from the orbit target's vertical axis, in
+ * metres: `hypot(22.50 / 2, 10.00 / 2)`, the radius of the circle through its corners.
+ *
+ * The closest orbit distance must stay outside it at every storey count and every canvas
+ * shape, or a sustained zoom parks the camera between the walls.
+ */
+const FOOTPRINT_RADIUS_METRES = 12.3110722522;
 /** Fit distance of the real floor at {@link FOV_DEGREES} and {@link WIDESCREEN_ASPECT}, in metres. */
 const EXPECTED_FIT_DISTANCE_METRES = 21.5638792112;
 /**
@@ -137,6 +146,13 @@ const FRAMING = getExteriorFraming(
  * pixel — not close to it. Compared with strict equality, so a target that is now derived
  * through `getBuildingTop` rather than from `heights.wall` has to come out at the very same
  * double, and any factor quietly re-tuned for tall buildings fails here first.
+ *
+ * One number has deliberately moved since: `minDistance` was `5.390969802805326`, a quarter
+ * of the fit distance, which is 6.92 m *inside* a footprint reaching 12.31 m from the orbit
+ * axis. It is now `12.3110722522 × 1.1 = 13.542179477469645`, the footprint clearance
+ * (`FOOTPRINT_CLEARANCE_FACTOR`), which at one storey on a widescreen canvas is the larger
+ * of the two floors. Nothing else about the opening frame changed: the camera still starts
+ * at the same position, and only a zoom held to its very end can reach this limit.
  */
 const ONE_STOREY_FRAMING: ExteriorFraming = {
   target: { x: 11.25, y: 1.35, z: 5 },
@@ -146,7 +162,7 @@ const ONE_STOREY_FRAMING: ExteriorFraming = {
     z: 21.468318346551147,
   },
   fitDistance: 21.563879211221305,
-  minDistance: 5.390969802805326,
+  minDistance: 13.542179477469645,
   maxDistance: 43.12775842244261,
   fogNear: 55.54890973784007,
   fogFar: 111.09781947568014,
@@ -486,8 +502,16 @@ describe('exteriorFraming', () => {
 
     it('brackets the fit distance with the zoom limits', () => {
       expect(FRAMING.minDistance).toBeCloseTo(
-        FRAMING.fitDistance * EXPECTED_MIN_DISTANCE_FACTOR,
+        Math.max(
+          FRAMING.fitDistance * EXPECTED_MIN_DISTANCE_FACTOR,
+          FOOTPRINT_RADIUS_METRES * EXPECTED_FOOTPRINT_CLEARANCE_FACTOR,
+        ),
         PRECISION_DIGITS,
+      );
+      // On this plot, at one storey, it is the footprint that floors the zoom: a quarter of
+      // the fit distance would put the camera 6.92 m inside the walls.
+      expect(FRAMING.minDistance).toBeGreaterThan(
+        FRAMING.fitDistance * EXPECTED_MIN_DISTANCE_FACTOR,
       );
       expect(FRAMING.maxDistance).toBeCloseTo(
         FRAMING.fitDistance * EXPECTED_MAX_DISTANCE_FACTOR,
@@ -503,6 +527,21 @@ describe('exteriorFraming', () => {
         Math.sin(EXPECTED_ELEVATION_DEGREES * RADIANS_PER_DEGREE) * FRAMING.minDistance;
 
       expect(height).toBeGreaterThan(FLOOR_HEIGHTS.wall);
+    });
+
+    it('keeps the closest orbit distance outside the footprint of the plot', () => {
+      expect(FOOTPRINT_RADIUS_METRES).toBeCloseTo(
+        Math.hypot(
+          (PLOT_RECT.maxX - PLOT_RECT.minX) * HALF,
+          (PLOT_RECT.maxZ - PLOT_RECT.minZ) * HALF,
+        ),
+        PRECISION_DIGITS,
+      );
+      expect(FRAMING.minDistance).toBeGreaterThan(FOOTPRINT_RADIUS_METRES);
+      expect(FRAMING.minDistance).toBeCloseTo(
+        FOOTPRINT_RADIUS_METRES * EXPECTED_FOOTPRINT_CLEARANCE_FACTOR,
+        PRECISION_DIGITS,
+      );
     });
 
     it('starts the fog past the floor at the furthest allowed zoom', () => {
@@ -739,6 +778,13 @@ describe('exteriorFraming', () => {
           expect(framing.minDistance, `minDistance at ${String(storeys)} storeys`).toBeGreaterThan(
             0,
           );
+          // Whatever the count and whatever the canvas, the closest zoom stays outside the
+          // circle through the corners of the plot: a camera nearer the orbit axis than
+          // that is between the walls of whichever storey it is level with.
+          expect(
+            framing.minDistance,
+            `minDistance at ${String(storeys)} storeys clears the footprint`,
+          ).toBeGreaterThan(FOOTPRINT_RADIUS_METRES);
           expect(framing.minDistance).toBeLessThan(framing.fitDistance);
           expect(framing.fitDistance).toBeLessThan(framing.maxDistance);
           // The fog must stay inside the camera's far plane, or the ground plane is clipped

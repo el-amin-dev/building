@@ -10,10 +10,10 @@
  * size — from the plan, the vertical sizes of the typical floor and the number of
  * storeys.
  *
- * Every published number is a multiple of the fit distance, and the fit distance
- * is derived from the box the building occupies, so the framing is scale-free: it
- * is as correct for a ten-storey stack as for the single designed floor, with no
- * factor re-tuned in between.
+ * Every published number is a multiple of the fit distance or of the plot itself,
+ * and the fit distance is derived from the box the building occupies, so the
+ * framing is scale-free: it is as correct for a ten-storey stack as for the single
+ * designed floor, with no factor re-tuned in between.
  *
  * Coordinates follow the scene conventions: metres, `y` up, the plan on `x`/`z`
  * with the origin at the outer corner of sides A and C (see `floorPlan/types.ts`).
@@ -57,7 +57,8 @@ const EXTERIOR_AZIMUTH_FROM_B_DEGREES = 25;
 const START_MARGIN = 1.1;
 
 /**
- * Factor applied to the fit distance for the closest orbit distance.
+ * Factor applied to the fit distance for the proportional part of the closest orbit
+ * distance.
  *
  * Scale-free on purpose, which is the whole of its justification: the fit distance
  * already carries the size of the building, so a quarter of it always frames about a
@@ -66,18 +67,49 @@ const START_MARGIN = 1.1;
  * or two filling the frame — instead of being a length that would have to be re-picked
  * every time a storey is added.
  *
- * It makes **no** claim about clearing the walls. The wording this replaced did, and that
- * claim was already false at one storey, not merely at ten: `getOrbitLimits`
- * (`orbitNavigation.ts`) lets the polar angle run to within
- * `ORBIT_GROUND_CLEARANCE_RADIANS` of level with the
- * target, so a camera tilted down to level at this distance is inside the floor plate
- * today. That is not a defect to fix here. The exterior view is a model viewer — passing
- * through the model is how a viewer looks into it — and the interior view is the one
- * where walls stop you (`eyeNavigation.ts` collides against them). The tests pin the
- * ordering `0 < minDistance < fitDistance < maxDistance` at every storey count and
- * aspect, and nothing about wall clearance, so that this reasoning and the suite agree.
+ * It makes **no** claim about clearing the walls, and that claim is not reinstated here.
+ * The wording this replaced did make it, and it was already false at one storey, not
+ * merely at ten: `getOrbitLimits` (`orbitNavigation.ts`) lets the polar angle run to
+ * within `ORBIT_GROUND_CLEARANCE_RADIANS` of level with the target, so a camera tilted
+ * down to level at this distance is inside the floor plate today. That is not a defect to
+ * fix here. The exterior view is a model viewer — passing through the model is how a
+ * viewer looks into it — and the interior view is the one where walls stop you
+ * (`eyeNavigation.ts` collides against them).
+ *
+ * What this proportion cannot do at all is know how *wide* the building is: a quarter of
+ * the fit distance is a share of a framing, not a length on the plan, and on a plot this
+ * long it lands well inside the footprint — 5.39 m at one storey on a widescreen canvas,
+ * 9.91 m at ten, against a plot whose half-diagonal is 12.31 m. That is what
+ * {@link FOOTPRINT_CLEARANCE_FACTOR} answers, and `minDistance` is the larger of the two.
  */
 const MIN_DISTANCE_FACTOR = 0.25;
+
+/**
+ * Factor applied to the half-diagonal of the plot for the closest orbit distance.
+ *
+ * The plan half-diagonal — `hypot((maxX − minX) / 2, (maxZ − minZ) / 2)`, which is
+ * `hypot(11.25, 5) = 12.31` m on the real 22.50 × 10.00 m plot — is the radius of the
+ * circle through the corners of the footprint, measured from the orbit target's own
+ * vertical axis. A camera nearer the target than that can be between the walls, and
+ * {@link MIN_DISTANCE_FACTOR} alone allowed exactly that: at ten storeys a sustained zoom
+ * bottomed out 9.91 m from the axis, inside a footprint reaching 12.31 m.
+ *
+ * So the closest distance is also floored at `12.31 × 1.1 = 13.54` m here. The tenth is
+ * the same margin {@link START_MARGIN} adds for the same reason — a limit that lands
+ * exactly on the outline grazes it — and the factor is scale-free in the plot, so a wider
+ * plot pushes the floor out with it.
+ *
+ * The claim is narrow, and is exactly this: **at the closest zoom the camera is never
+ * nearer the orbit target than the corners of the footprint are**. A camera level with the
+ * target is therefore outside the plan outline instead of between the walls, and a tilted
+ * one is at least the whole footprint away from the middle of the building — where a
+ * sustained zoom could previously park it 9.91 m from the axis, inside a ten-storey stack.
+ * It is **not** a claim that the camera clears the *building* at every tilt: the tilt may
+ * go to within `ORBIT_ZENITH_CLEARANCE_RADIANS` of straight overhead, where a ten-storey
+ * stack still rises 29.70 m past a camera 13.54 m above a target at 14.85 m, and looking
+ * down into an open storey from there is what the exterior view is for.
+ */
+const FOOTPRINT_CLEARANCE_FACTOR = 1.1;
 
 /**
  * Factor applied to the fit distance for the furthest orbit distance: twice the fit
@@ -116,7 +148,7 @@ export interface ExteriorFraming {
   readonly position: Vector3Like;
   /** Distance from the target at which the whole building fits the frustum, in metres. */
   readonly fitDistance: number;
-  /** Closest orbit distance, in metres. */
+  /** Closest orbit distance, in metres; never nearer the target than the plot's corners. */
   readonly minDistance: number;
   /** Furthest orbit distance, in metres. */
   readonly maxDistance: number;
@@ -149,9 +181,12 @@ interface CameraBasis {
  * top, which is `heights.wall / 2` at one storey and rises with the stack.
  *
  * Those two levels are the *only* things the storey count changes. `fitDistance` is
- * derived from the box, and `minDistance`, `maxDistance`, `fogNear`, `fogFar` and
- * `groundSize` are all multiples of `fitDistance`, so a taller building carries the whole
- * framing up with it and no factor below is storey-dependent.
+ * derived from the box, and `maxDistance`, `fogNear`, `fogFar` and `groundSize` are all
+ * multiples of `fitDistance`, so a taller building carries the whole framing up with it
+ * and no factor below is storey-dependent. `minDistance` is the one number with a second
+ * floor under it: a share of the fit distance, or the half-diagonal of the plot with a
+ * margin, whichever is larger, so the closest zoom is never inside the footprint (see
+ * {@link FOOTPRINT_CLEARANCE_FACTOR}).
  *
  * `fitDistance` fits that box, not the sphere around it. The single floor is a long flat slab —
  * 22.50 × 10.00 m against 3.00 m of height — so its bounding sphere is more than twice as
@@ -216,11 +251,11 @@ export function getExteriorFraming(
   };
   const slabBottom = -getSlabThickness(heights);
   const verticalReach = Math.max(buildingTop - target.y, target.y - slabBottom);
-  const radius = Math.hypot(
-    (plot.maxX - plot.minX) * HALF,
-    verticalReach,
-    (plot.maxZ - plot.minZ) * HALF,
-  );
+  const halfWidth = (plot.maxX - plot.minX) * HALF;
+  const halfDepth = (plot.maxZ - plot.minZ) * HALF;
+  /** Furthest the footprint reaches from the target's vertical axis, in metres. */
+  const footprintRadius = Math.hypot(halfWidth, halfDepth);
+  const radius = Math.hypot(halfWidth, verticalReach, halfDepth);
 
   const elevation = EXTERIOR_ELEVATION_DEGREES * RADIANS_PER_DEGREE;
   const azimuth = EXTERIOR_AZIMUTH_FROM_B_DEGREES * RADIANS_PER_DEGREE;
@@ -236,7 +271,10 @@ export function getExteriorFraming(
   );
 
   const startDistance = fitDistance * START_MARGIN;
-  const minDistance = fitDistance * MIN_DISTANCE_FACTOR;
+  const minDistance = Math.max(
+    fitDistance * MIN_DISTANCE_FACTOR,
+    footprintRadius * FOOTPRINT_CLEARANCE_FACTOR,
+  );
   const maxDistance = fitDistance * MAX_DISTANCE_FACTOR;
   const fogNear = maxDistance + radius;
   const fogFar = fogNear * FOG_FAR_FACTOR;

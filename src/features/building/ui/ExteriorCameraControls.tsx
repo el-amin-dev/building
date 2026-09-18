@@ -3,11 +3,8 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import type { RefObject } from 'react';
 import type { EulerOrder, EventDispatcher } from 'three';
-import {
-  getRememberedOrbitPose,
-  useExteriorOrbitStore,
-} from '../application/exteriorOrbitStore.ts';
-import { useFloorCountStore } from '../application/floorCountStore.ts';
+import { getPlacementOrbitPose, useExteriorOrbitStore } from '../application/exteriorOrbitStore.ts';
+import { getFloorCount, useFloorCountStore } from '../application/floorCountStore.ts';
 import { useOrbitControlStore } from '../application/orbitControlStore.ts';
 import {
   clampOrbitPose,
@@ -81,27 +78,28 @@ export interface ExteriorCameraControlsProps {
  * placed from
  *
  * ```ts
- * clampOrbitPose(getRememberedOrbitPose() ?? getOrbitPose(framing.target, framing.position), limits)
+ * const framingPose = getOrbitPose(framing.target, framing.position);
+ * clampOrbitPose(getPlacementOrbitPose(framingPose, floorCount), limits)
  * ```
  *
- * looking at `framing.target`. `getRememberedOrbitPose() ?? framing.position` is deliberately
- * the same expression the exterior↔interior camera transition uses as its exterior endpoint,
- * so when a tween into this view finishes and this component mounts, this placement is a
- * no-op and there is no visible jump. Applying it on every framing change is correct rather
- * than something to latch off: the remembered pose *is* the viewer's own angle, so a resize
- * keeps that angle and merely re-clamps the distance into the new limits.
+ * looking at `framing.target`. That is deliberately the same *call* the exterior↔interior
+ * camera transition uses as its exterior endpoint — a shared function rather than two
+ * copies of an expression to keep in step — so when a tween into this view finishes and
+ * this component mounts, this placement is a no-op and there is no visible jump. Applying
+ * it on every framing change is correct rather than something to latch off: the remembered
+ * pose *is* the viewer's own angle, so a resize keeps that angle and merely re-clamps the
+ * distance into the new limits.
  *
- * **A storey change refits the distance.** A resize does not change the subject — the same
- * building, a differently shaped window onto it — so keeping the remembered distance there
- * is right. Adding storeys *does* change the subject: the building can end up eleven times
- * taller, and a distance chosen for one storey would leave most of a ten-storey stack out
- * of frame, which reads as a broken stepper rather than as a kept viewpoint. So on a count
- * change alone the viewer's `azimuth` and `polar` are kept and the `distance` is taken from
- * the newly framed pose, then clamped; the refitted pose is remembered, so the next mount
- * and the camera transition both agree with what is on screen. `rememberPose` is therefore
- * called unconditionally at the end of the placement, not only when nothing was remembered
- * yet: remembering a pose that has not moved is a no-op update in the store, so no
- * subscriber is notified for it.
+ * **A storey change refits the distance**, and `getPlacementOrbitPose` is where that rule
+ * lives, with the count the pose was framed for held beside the pose in the store. It has
+ * to be held there rather than in a ref of this component: the stepper is mounted in both
+ * views, so the count can change while these controls are unmounted, and a `useRef` seeded
+ * at mount would come back already holding the new count — no refit, and the camera placed
+ * at a distance framed for a stack that is no longer there. The refitted pose is
+ * remembered, so the next mount and the camera transition both agree with what is on
+ * screen; `rememberPose` is therefore called unconditionally at the end of the placement,
+ * not only when nothing was remembered yet. Remembering a pose that has not moved is a
+ * no-op update in the store, so no subscriber is notified for it.
  *
  * **Memory.** Besides that placement the pose is remembered at three moments, and never per
  * frame: when a pointer drag or a wheel zoom ends (`onEnd`), on the frame a key or pad hold
@@ -133,37 +131,29 @@ export function ExteriorCameraControls({ targetRef }: ExteriorCameraControlsProp
   const poseRef = useRef<OrbitPose | null>(null);
   /** Whether the previous frame was moving, so a release is written exactly once. */
   const wasMovingRef = useRef(false);
-  /** The count the camera was last placed for, so a storey change is told from a resize. */
-  const placedForCountRef = useRef(floorCount);
 
   useLayoutEffect(() => {
     const framingPose = getOrbitPose(target, position);
-    const remembered = getRememberedOrbitPose();
-    const storeysChanged = placedForCountRef.current !== floorCount;
-    placedForCountRef.current = floorCount;
-
-    // Identical to the expression the camera flight ends on whenever the building itself is
-    // unchanged; a storey change keeps the viewer's angle but refits the distance.
-    const placement =
-      remembered !== undefined && storeysChanged
-        ? { ...remembered, distance: framingPose.distance }
-        : (remembered ?? framingPose);
-
-    const pose = clampOrbitPose(placement, limits);
+    // The same call the camera flight ends on: the remembered angle when there is one, with
+    // the distance refitted when the pose was framed for a different number of storeys.
+    const pose = clampOrbitPose(getPlacementOrbitPose(framingPose, floorCount), limits);
     poseRef.current = pose;
     const { camera } = getState();
     const placed = getOrbitPosition(target, pose);
     camera.rotation.order = EXTERIOR_EULER_ORDER;
     camera.position.set(placed.x, placed.y, placed.z);
     camera.lookAt(target.x, target.y, target.z);
-    rememberPose(pose);
+    rememberPose(pose, floorCount);
   }, [floorCount, getState, limits, position, rememberPose, target]);
 
   useEffect(
     () => () => {
       const pose = poseRef.current;
       if (pose !== null) {
-        rememberPose(pose);
+        // The live count, not this effect's own: the cleanup runs once, on unmount, with
+        // the closure of the first render, so a captured count would be the mount-time one
+        // and would stamp the pose with a stack the viewer has since stepped away from.
+        rememberPose(pose, getFloorCount());
       }
     },
     [rememberPose],
@@ -180,7 +170,7 @@ export function ExteriorCameraControls({ targetRef }: ExteriorCameraControlsProp
     if (isIdle(intent)) {
       if (wasMovingRef.current) {
         wasMovingRef.current = false;
-        rememberPose(pose);
+        rememberPose(pose, floorCount);
       }
       return;
     }
@@ -201,8 +191,8 @@ export function ExteriorCameraControls({ targetRef }: ExteriorCameraControlsProp
     // The pointer is the authority while it drags: the stepper has to carry on from where
     // the drag left the camera, or the next key press would jump back to the old pose.
     poseRef.current = pose;
-    rememberPose(pose);
-  }, [getState, rememberPose, target]);
+    rememberPose(pose, floorCount);
+  }, [floorCount, getState, rememberPose, target]);
 
   return (
     <OrbitControls

@@ -63,7 +63,7 @@ export const useFloorCountStore = create<FloorCountState>()((set) => ({
  *
  * A published seam, not an internal: the frame loop and the camera rules need
  * the height of the stack without re-rendering on it, the same way
- * `getRememberedOrbitPose` is read.
+ * `getPlacementOrbitPose` is read.
  *
  * @returns The number of storeys currently displayed, 1…10.
  */

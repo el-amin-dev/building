@@ -473,7 +473,10 @@ describe('ExteriorCameraControls', () => {
     expect(phone.fitDistance).toBeGreaterThan(widescreen.fitDistance);
     expect(props.minDistance).toBe(phone.minDistance);
     expect(props.maxDistance).toBe(phone.maxDistance);
-    expect(props.minDistance).toBeGreaterThan(widescreen.minDistance);
+    // Only `toBeGreaterThanOrEqual` for the closest zoom: on the single floor both
+    // canvases bottom out on the footprint clearance, which is a length on the plan and
+    // not a share of the framing, so a narrower canvas does not push it out any further.
+    expect(props.minDistance).toBeGreaterThanOrEqual(widescreen.minDistance);
     expect(props.maxDistance).toBeGreaterThan(widescreen.maxDistance);
     expect(camera.position.y).toBeCloseTo(phone.position.y);
     expect(camera.position.y).toBeGreaterThan(widescreen.position.y);
@@ -526,6 +529,53 @@ describe('ExteriorCameraControls', () => {
     expect(getOrbitProps().minDistance).toBe(tall.minDistance);
     expectLookingAt(camera, [tall.target.x, tall.target.y, tall.target.z]);
     expectWholeFloorVisible(camera, TALL_FLOOR_COUNT);
+  });
+
+  it('refits the distance when the count changed while the controls were unmounted', () => {
+    const tall = framingFor(WIDESCREEN, TALL_FLOOR_COUNT);
+    const tallPose = framingPoseFor(WIDESCREEN, TALL_FLOOR_COUNT);
+    const first = mountAt(WIDESCREEN);
+    first.camera.position.set(...ORBITED_POSITION);
+    endOrbit();
+    const orbited = poseOf(first.camera);
+
+    // The whole point of holding the count in the store: the floor stepper is mounted in
+    // both views, so the viewer can add storeys from inside the building, with nothing of
+    // this component alive to notice. A `useRef` seeded at mount comes back already
+    // holding the new count and refits nothing.
+    first.unmount();
+    stepFloorCountTo(TALL_FLOOR_COUNT);
+    const { camera } = mountAt(WIDESCREEN);
+
+    const after = poseOf(camera, tall.target);
+    expect(after.azimuth).toBeCloseTo(orbited.azimuth);
+    expect(after.polar).toBeCloseTo(orbited.polar);
+    expect(after.distance).toBeCloseTo(tallPose.distance);
+    expect(after.distance).not.toBeCloseTo(orbited.distance);
+    expect(useExteriorOrbitStore.getState().framedStoreyCount).toBe(TALL_FLOOR_COUNT);
+    expectLookingAt(camera, [tall.target.x, tall.target.y, tall.target.z]);
+    expectWholeFloorVisible(camera, TALL_FLOOR_COUNT);
+  });
+
+  it('refits the distance when storeys are taken away while the controls are unmounted', () => {
+    const short = framingFor(WIDESCREEN, INITIAL_FLOOR_COUNT);
+    const shortPose = framingPoseFor(WIDESCREEN, INITIAL_FLOOR_COUNT);
+    stepFloorCountTo(TALL_FLOOR_COUNT);
+    const first = mountAt(WIDESCREEN);
+    const framed = poseOf(first.camera, framingFor(WIDESCREEN, TALL_FLOOR_COUNT).target);
+
+    first.unmount();
+    stepFloorCountTo(INITIAL_FLOOR_COUNT);
+    const { camera } = mountAt(WIDESCREEN);
+
+    // Dropping storeys leaves the building small in the frame for exactly the same reason
+    // adding them leaves it off the frame, so it is the same refit, not a separate rule.
+    const after = poseOf(camera, short.target);
+    expect(after.azimuth).toBeCloseTo(framed.azimuth);
+    expect(after.polar).toBeCloseTo(framed.polar);
+    expect(after.distance).toBeCloseTo(shortPose.distance);
+    expect(after.distance).toBeLessThan(framed.distance);
+    expectWholeFloorVisible(camera, INITIAL_FLOOR_COUNT);
   });
 
   it('keeps the remembered distance when only the canvas is resized', () => {

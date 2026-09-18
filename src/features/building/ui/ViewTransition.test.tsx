@@ -9,7 +9,12 @@ import { getExteriorFraming } from '../domain/exteriorFraming.ts';
 import type { Vector3Like } from '../domain/exteriorFraming.ts';
 import { PLOT_RECT } from '../domain/floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from '../domain/heights.ts';
-import { clampOrbitPose, getOrbitLimits, getOrbitPosition } from '../domain/orbitNavigation.ts';
+import {
+  clampOrbitPose,
+  getOrbitLimits,
+  getOrbitPose,
+  getOrbitPosition,
+} from '../domain/orbitNavigation.ts';
 import type { OrbitPose } from '../domain/orbitNavigation.ts';
 import { INITIAL_FLOOR_COUNT, MIN_FLOOR_COUNT } from '../domain/storeys.ts';
 import { getThirdPersonCamera } from '../domain/thirdPersonCamera.ts';
@@ -74,6 +79,15 @@ const startCameraFieldAt = (floorCount: number) =>
 
 /** A stack taller than the one the page opens with, to step the count to. */
 const TALLER_STACK = 4;
+
+/** The framing of that taller stack at the mocked canvas size. */
+const TALLER_FRAMING = getExteriorFraming(
+  PLOT_RECT,
+  FLOOR_HEIGHTS,
+  CAMERA_FOV_DEGREES,
+  scene.width / scene.height,
+  TALLER_STACK,
+);
 
 describe('ViewTransition', () => {
   let camera: PerspectiveCamera;
@@ -270,7 +284,7 @@ describe('ViewTransition', () => {
         ...ORBITED_POSE,
         distance: FRAMING.maxDistance * BEYOND_THE_LIMIT,
       };
-      useExteriorOrbitStore.getState().rememberOrbitPose(illegal);
+      useExteriorOrbitStore.getState().rememberOrbitPose(illegal, INITIAL_FLOOR_COUNT);
       const clamped = clampOrbitPose(illegal, getOrbitLimits(FRAMING));
       startLeaving();
 
@@ -283,9 +297,35 @@ describe('ViewTransition', () => {
       expect(distanceTo(getOrbitPosition(FRAMING.target, illegal))).toBeGreaterThan(0);
     });
 
+    it('refits the distance when storeys were added while the viewer was inside', () => {
+      // The stepper is mounted in both views, so the count can change with the exterior
+      // controls unmounted: the flight has to come back out framing the stack that is
+      // there now, not the one the remembered distance was chosen for.
+      useExteriorOrbitStore.getState().rememberOrbitPose(ORBITED_POSE, INITIAL_FLOOR_COUNT);
+      useFloorCountStore.getState().setFloorCount(TALLER_STACK);
+      render(<ViewTransition />);
+      const refitted = clampOrbitPose(
+        {
+          azimuth: ORBITED_POSE.azimuth,
+          polar: ORBITED_POSE.polar,
+          distance: getOrbitPose(TALLER_FRAMING.target, TALLER_FRAMING.position).distance,
+        },
+        getOrbitLimits(TALLER_FRAMING),
+      );
+      startLeaving();
+
+      runToArrival();
+
+      expectCameraAt(getOrbitPosition(TALLER_FRAMING.target, refitted));
+      expectCameraLookingAt(TALLER_FRAMING.target);
+      expect(refitted.azimuth).toBeCloseTo(ORBITED_POSE.azimuth);
+      expect(refitted.distance).not.toBeCloseTo(ORBITED_POSE.distance);
+      expect(distanceTo(TALLER_FRAMING.target)).toBeCloseTo(refitted.distance);
+    });
+
     it('ends at the remembered orbit pose when the viewer has framed the exterior', () => {
       render(<ViewTransition />);
-      useExteriorOrbitStore.getState().rememberOrbitPose(ORBITED_POSE);
+      useExteriorOrbitStore.getState().rememberOrbitPose(ORBITED_POSE, INITIAL_FLOOR_COUNT);
       const remembered = getOrbitPosition(FRAMING.target, ORBITED_POSE);
       startLeaving();
 
