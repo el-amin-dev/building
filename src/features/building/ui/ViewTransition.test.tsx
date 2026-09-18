@@ -10,6 +10,7 @@ import { PLOT_RECT } from '../domain/floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from '../domain/heights.ts';
 import { clampOrbitPose, getOrbitLimits, getOrbitPosition } from '../domain/orbitNavigation.ts';
 import type { OrbitPose } from '../domain/orbitNavigation.ts';
+import { INITIAL_FLOOR_COUNT } from '../domain/storeys.ts';
 import { getThirdPersonCamera } from '../domain/thirdPersonCamera.ts';
 import { getEyeCameraPose, VIEW_TRANSITION_SECONDS } from '../domain/viewTransition.ts';
 import { CAMERA_FIELD, INTERIOR_START_POSE } from './floorInstance.ts';
@@ -42,6 +43,7 @@ const FRAMING = getExteriorFraming(
   FLOOR_HEIGHTS,
   CAMERA_FOV_DEGREES,
   scene.width / scene.height,
+  INITIAL_FLOOR_COUNT,
 );
 
 /** A frame at 60 fps, in seconds. */

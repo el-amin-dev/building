@@ -21,7 +21,16 @@ const PRECISION_DIGITS = 9;
 const FOV_DEGREES = 50;
 const WIDESCREEN_ASPECT = 16 / 9;
 
-const FRAMING = getExteriorFraming(PLOT_RECT, FLOOR_HEIGHTS, FOV_DEGREES, WIDESCREEN_ASPECT);
+/** The single designed floor on its own: the count the app opens on. */
+const SINGLE_STOREY = 1;
+
+const FRAMING = getExteriorFraming(
+  PLOT_RECT,
+  FLOOR_HEIGHTS,
+  FOV_DEGREES,
+  WIDESCREEN_ASPECT,
+  SINGLE_STOREY,
+);
 const SUN_DISTANCE = getSunDistance(FRAMING);
 
 /** Both views, so every property is checked on each of them. */

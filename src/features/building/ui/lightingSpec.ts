@@ -18,6 +18,14 @@
  * elsewhere, as emissive ceiling panels in the floor material palette: an emissive
  * material costs no light slot and no shader recompilation.
  *
+ * The same rule holds against the storey stepper, and is the reason nothing here reads
+ * the storey count. The height of the building reaches this module only through the
+ * {@link ExteriorFraming} it is handed: the fog range is the framing's own `fogNear` and
+ * `fogFar`, and the sun is placed at {@link getSunDistance}, a factor of that same
+ * `fogFar`. Both already grow with the stack, so a ten-storey building is lit and fogged
+ * correctly with no storey-dependent value — and, crucially, with the same three lights,
+ * so pressing the stepper never recompiles a shader.
+ *
  * No shadow maps in Part 2 (owner answer, 2026-09-11): shadows would need a light with
  * a shadow camera framing the whole floor, and their cost and quality are revisited in
  * Part 4. Without them the interior would read flat and dark, which is why the interior
@@ -206,7 +214,11 @@ export function getSunPosition(
  * Exported so that the debug panel can rebuild the sun's position from its own angles at
  * the very distance {@link getLightingSpec} used, instead of restating the factor.
  *
- * @param framing - The exterior framing of the floor.
+ * Derived from the framing's `fogFar`, so it scales with the building: a ten-storey stack
+ * pushes the sun proportionally further out and it stays outside the fabric, exactly as it
+ * does over the single floor. Nothing here has to know how many storeys there are.
+ *
+ * @param framing - The exterior framing of the building.
  * @returns The distance from the origin to the sun, in metres.
  */
 export function getSunDistance(framing: ExteriorFraming): number {
@@ -219,11 +231,13 @@ export function getSunDistance(framing: ExteriorFraming): number {
  * Both views carry the same three lights, the same colours and the same sun direction;
  * the interior raises the hemisphere and ambient intensities, because a roofed interior
  * with no shadow maps and no point lights would otherwise read flat and dark. Fog comes
- * from the framing, which already derives a range that never touches the building.
+ * from the framing, which already derives a range that never touches the building at any
+ * storey count.
  *
  * @param view - Which view the scene is lit for.
- * @param framing - The exterior framing of the floor, for the fog range and the scale at
- *   which the sun is placed.
+ * @param framing - The exterior framing of the building, for the fog range and the scale
+ *   at which the sun is placed; it carries the height of the stack, so nothing here reads
+ *   the storey count.
  * @returns A frozen spec, with a frozen sun position.
  * @throws RangeError when `view` is neither `'exterior'` nor `'interior'`, or when the
  *   framing's `fogFar` is not a finite positive number.

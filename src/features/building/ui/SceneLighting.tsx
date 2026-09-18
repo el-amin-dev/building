@@ -45,11 +45,17 @@ export interface SceneLightingProps {
  * Background, fog and the three lights of the whole-floor scene.
  *
  * Renders, in order: the scene background, the fog, the hemisphere fill, the directional
- * sun and the ambient term — exactly `SCENE_LIGHT_COUNT` lights, in both views. A view
- * change alters intensities only: the number of lights is compiled into every material's
- * shader, so adding or removing one would recompile every program in the scene (see
- * `lightingSpec.ts` for the full reasoning, including why per-room light is delivered as
- * emissive ceiling panels instead of point lights, and why shadows wait for Part 4).
+ * sun and the ambient term — exactly `SCENE_LIGHT_COUNT` lights, in both views and at
+ * every storey count. A view change alters intensities only, and a storey change alters
+ * nothing at all here: the number of lights is compiled into every material's shader, so
+ * adding or removing one would recompile every program in the scene — on a stepper, once
+ * per press (see `lightingSpec.ts` for the full reasoning, including why per-room light is
+ * delivered as emissive ceiling panels instead of point lights, and why shadows wait for
+ * Part 4).
+ *
+ * The building's height reaches this component only through the `framing` prop: the fog
+ * range and the sun's distance are the framing's own, so a taller stack is lit and fogged
+ * correctly without a single storey-dependent value being read here.
  *
  * The fog is coloured like the sky, so the ground plane fades into the horizon instead of
  * ending at a visible edge.

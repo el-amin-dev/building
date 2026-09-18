@@ -1,8 +1,9 @@
 import type { RootState } from '@react-three/fiber';
-import { fireEvent, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import { Frustum, Matrix4, PerspectiveCamera, Vector3 } from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useExteriorOrbitStore } from '../application/exteriorOrbitStore.ts';
+import { useFloorCountStore } from '../application/floorCountStore.ts';
 import { useOrbitControlStore } from '../application/orbitControlStore.ts';
 import { getExteriorFraming } from '../domain/exteriorFraming.ts';
 import type { ExteriorFraming, Vector3Like } from '../domain/exteriorFraming.ts';
@@ -17,6 +18,7 @@ import {
 } from '../domain/orbitNavigation.ts';
 import type { OrbitPose } from '../domain/orbitNavigation.ts';
 import { getSlabThickness } from '../domain/slabs.ts';
+import { getBuildingTop, INITIAL_FLOOR_COUNT, MAX_FLOOR_COUNT } from '../domain/storeys.ts';
 import { ExteriorCameraControls } from './ExteriorCameraControls.tsx';
 import { CAMERA_FOV_DEGREES } from './useExteriorFraming.ts';
 
@@ -104,6 +106,8 @@ const WIDESCREEN: CanvasSize = { width: 1920, height: 1080 };
 const PHONE: CanvasSize = { width: 400, height: 800 };
 /** Somewhere the user could have orbited to: not a framing of any canvas size. */
 const ORBITED_POSITION: readonly [number, number, number] = [12, 7, -9];
+/** A full stack, ten times the storeys the app opens on: a subject 29.70 m tall, not 2.70 m. */
+const TALL_FLOOR_COUNT = MAX_FLOOR_COUNT;
 
 const ORBIT_LEFT_CODE = 'ArrowLeft';
 const ORBIT_RIGHT_CODE = 'ArrowRight';
@@ -143,9 +147,8 @@ const EXPECTED_TARGET: readonly [number, number, number] = [
   (PLOT_RECT.minZ + PLOT_RECT.maxZ) * HALF,
 ];
 
-/** Vertical span of the floor: from the underside of its slabs to the top of its walls. */
+/** Underside of storey 1's slabs: the lowest of the building, whatever is stacked above. */
 const FLOOR_BOTTOM = -getSlabThickness();
-const FLOOR_TOP = FLOOR_HEIGHTS.wall;
 
 /**
  * Returns the camera of the current test.
@@ -189,50 +192,59 @@ interface MountedCanvas {
  * @param size - The canvas size.
  * @returns The framing of the real plot at that aspect ratio.
  */
-function framingFor(size: CanvasSize): ExteriorFraming {
-  return getExteriorFraming(PLOT_RECT, FLOOR_HEIGHTS, CAMERA_FOV_DEGREES, size.width / size.height);
+function framingFor(size: CanvasSize, storeys = INITIAL_FLOOR_COUNT): ExteriorFraming {
+  return getExteriorFraming(
+    PLOT_RECT,
+    FLOOR_HEIGHTS,
+    CAMERA_FOV_DEGREES,
+    size.width / size.height,
+    storeys,
+  );
 }
 
-/** The orbit pivot, the same at every canvas size: the centre of the plot. */
+/** The orbit pivot of the single designed floor, the same at every canvas size. */
 const TARGET: Vector3Like = framingFor(WIDESCREEN).target;
 
 /**
  * The pose the framing of a canvas size starts the camera at.
  *
  * @param size - The canvas size.
+ * @param storeys - How many storeys are stacked; the count the app opens on by default.
  * @returns The start pose of that framing.
  */
-function framingPoseFor(size: CanvasSize): OrbitPose {
-  const framing = framingFor(size);
+function framingPoseFor(size: CanvasSize, storeys = INITIAL_FLOOR_COUNT): OrbitPose {
+  const framing = framingFor(size, storeys);
   return getOrbitPose(framing.target, framing.position);
 }
 
 /**
- * Reads the orbit pose off the camera, around the framing pivot.
+ * Reads the orbit pose off the camera, around a framing pivot.
  *
  * @param camera - The camera as the controls left it.
- * @returns Where it sits on the sphere around the orbit target.
+ * @param target - The pivot to measure from; the single floor's by default.
+ * @returns Where it sits on the sphere around that orbit target.
  */
-function poseOf(camera: PerspectiveCamera): OrbitPose {
-  return getOrbitPose(TARGET, camera.position);
+function poseOf(camera: PerspectiveCamera, target: Vector3Like = TARGET): OrbitPose {
+  return getOrbitPose(target, camera.position);
 }
 
 /**
  * Asserts that every corner of the floor is inside the camera's view frustum.
  *
- * This is what "the floor fits" means: the box spanning the plot on the plan and, in
- * height, from the underside of the slabs to the top of the walls.
+ * This is what "the building fits" means: the box spanning the plot on the plan and, in
+ * height, from the underside of storey 1's slabs to the top of the topmost storey's walls.
  *
  * @param camera - The camera as the controls left it.
+ * @param storeys - How many storeys are stacked; the count the app opens on by default.
  */
-function expectWholeFloorVisible(camera: PerspectiveCamera): void {
+function expectWholeFloorVisible(camera: PerspectiveCamera, storeys = INITIAL_FLOOR_COUNT): void {
   camera.updateMatrixWorld();
   const frustum = new Frustum().setFromProjectionMatrix(
     new Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse),
   );
 
   for (const x of [PLOT_RECT.minX, PLOT_RECT.maxX]) {
-    for (const y of [FLOOR_BOTTOM, FLOOR_TOP]) {
+    for (const y of [FLOOR_BOTTOM, getBuildingTop(FLOOR_HEIGHTS, storeys)]) {
       for (const z of [PLOT_RECT.minZ, PLOT_RECT.maxZ]) {
         expect(
           frustum.containsPoint(new Vector3(x, y, z)),
@@ -280,6 +292,7 @@ describe('ExteriorCameraControls', () => {
 
   beforeEach(() => {
     useExteriorOrbitStore.setState(useExteriorOrbitStore.getInitialState(), true);
+    useFloorCountStore.setState(useFloorCountStore.getInitialState(), true);
     useOrbitControlStore.setState(useOrbitControlStore.getInitialState(), true);
     scene.camera = null;
     scene.orbitProps = null;
@@ -335,6 +348,17 @@ describe('ExteriorCameraControls', () => {
    * @returns The camera the controls were given.
    */
   const renderAt = (size: CanvasSize): PerspectiveCamera => mountAt(size).camera;
+
+  /**
+   * Steps the storey count, as the owner's floor stepper does.
+   *
+   * @param count - How many storeys to show.
+   */
+  const stepFloorCountTo = (count: number): void => {
+    act(() => {
+      useFloorCountStore.getState().setFloorCount(count);
+    });
+  };
 
   /** Runs one frame of the latest registered `useFrame` callback on the test camera. */
   const runFrame = (delta: number): void => {
@@ -474,6 +498,51 @@ describe('ExteriorCameraControls', () => {
     expect(poseOf(camera).azimuth).toBeCloseTo(before.azimuth);
     expect(poseOf(camera).polar).toBeCloseTo(before.polar);
     expectLookingAt(camera, EXPECTED_TARGET);
+  });
+
+  it('refits the distance when a storey is added, keeping the angle the viewer chose', () => {
+    const tall = framingFor(WIDESCREEN, TALL_FLOOR_COUNT);
+    const tallPose = framingPoseFor(WIDESCREEN, TALL_FLOOR_COUNT);
+    const { camera } = mountAt(WIDESCREEN);
+    camera.position.set(...ORBITED_POSITION);
+    endOrbit();
+    const orbited = poseOf(camera);
+
+    // The stepper changes the subject, not the window onto it: a distance chosen for one
+    // storey would leave most of a 29.70 m building out of frame.
+    stepFloorCountTo(TALL_FLOOR_COUNT);
+
+    const after = poseOf(camera, tall.target);
+    expect(after.azimuth).toBeCloseTo(orbited.azimuth);
+    expect(after.polar).toBeCloseTo(orbited.polar);
+    expect(after.distance).toBeCloseTo(tallPose.distance);
+    expect(after.distance).not.toBeCloseTo(orbited.distance);
+    // The refitted pose is remembered, so the next mount and the camera flight agree with
+    // what is on screen rather than with the one-storey distance the viewer never chose.
+    expect(getRemembered().azimuth).toBeCloseTo(orbited.azimuth);
+    expect(getRemembered().polar).toBeCloseTo(orbited.polar);
+    expect(getRemembered().distance).toBeCloseTo(tallPose.distance);
+    expect(getOrbitProps().target).toEqual([tall.target.x, tall.target.y, tall.target.z]);
+    expect(getOrbitProps().minDistance).toBe(tall.minDistance);
+    expectLookingAt(camera, [tall.target.x, tall.target.y, tall.target.z]);
+    expectWholeFloorVisible(camera, TALL_FLOOR_COUNT);
+  });
+
+  it('keeps the remembered distance when only the canvas is resized', () => {
+    const phonePose = framingPoseFor(PHONE);
+    const { camera, reframeTo } = mountAt(WIDESCREEN);
+    camera.position.set(...ORBITED_POSITION);
+    endOrbit();
+    const orbited = poseOf(camera);
+
+    // A resize does not change the subject, so the viewer's distance is theirs to keep;
+    // written alongside the storey test so the two can never be confused for each other.
+    reframeTo(PHONE);
+
+    const after = poseOf(camera);
+    expect(after.distance).toBeCloseTo(orbited.distance);
+    expect(after.distance).not.toBeCloseTo(phonePose.distance);
+    expect(getRemembered().distance).toBeCloseTo(orbited.distance);
   });
 
   it('remembers where a pointer orbit or a wheel zoom left the camera', () => {
