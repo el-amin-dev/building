@@ -8,7 +8,7 @@ import { makeWalkField } from '../domain/collision.ts';
 import type { WalkField } from '../domain/collision.ts';
 import { EYE_KEY_BINDINGS, EYE_NAVIGATION_CONFIG, getEyeLevel } from '../domain/eyeNavigation.ts';
 import type { EyeAction, EyePose, MovementIntent, WalkSurface } from '../domain/eyeNavigation.ts';
-import type { SpaceId } from '../domain/floorPlan/index.ts';
+import { makeFloorSpaceRef } from '../domain/floorSpace.ts';
 import { FLOOR_HEIGHTS } from '../domain/heights.ts';
 import { PERSON_SPEC } from '../domain/person.ts';
 import { makeRect } from '../domain/planGeometry.ts';
@@ -171,7 +171,7 @@ const NO_INTENT: MovementIntent = Object.freeze({ move: 0, strafe: 0, turn: 0, l
 const AUTO_TURN_INTENT: MovementIntent = Object.freeze({ ...NO_INTENT, turn: 1 });
 
 /** A room the stairs arrival can really be walked to, for the one real-follower test. */
-const REAL_WALK_TARGET: SpaceId = 'kitchen';
+const REAL_WALK_TARGET = makeFloorSpaceRef(GROUND_FLOOR, 'kitchen');
 /** One frame at 60 fps, in seconds. */
 const FRAME_SECONDS = 1 / 60;
 /** Frames of real walking driven: a second of it, long enough to leave the landing. */

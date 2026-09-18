@@ -80,7 +80,7 @@ describe('ExplorerPoseReporter', () => {
     renderReporter();
 
     expect(useExplorerPoseStore.getState().getLatestPose()).toBeUndefined();
-    expect(useExplorerPoseStore.getState().currentSpaceId).toBeUndefined();
+    expect(useExplorerPoseStore.getState().currentSpace).toBeUndefined();
   });
 
   it('reports the pose of every frame, so the room follows the explorer', () => {
@@ -88,13 +88,13 @@ describe('ExplorerPoseReporter', () => {
 
     runFrame();
     expect(useExplorerPoseStore.getState().getLatestPose()).toBe(IN_KITCHEN);
-    expect(useExplorerPoseStore.getState().currentSpaceId).toBe('kitchen');
+    expect(useExplorerPoseStore.getState().currentSpace?.spaceId).toBe('kitchen');
 
     poseRef.current = IN_STAIRS;
     runFrame();
 
     expect(useExplorerPoseStore.getState().getLatestPose()).toBe(IN_STAIRS);
-    expect(useExplorerPoseStore.getState().currentSpaceId).toBe('stairs');
+    expect(useExplorerPoseStore.getState().currentSpace?.spaceId).toBe('stairs');
   });
 
   it('clears the pose and the room when it unmounts with the interior view', () => {
@@ -103,7 +103,7 @@ describe('ExplorerPoseReporter', () => {
 
     unmount();
 
-    expect(useExplorerPoseStore.getState().currentSpaceId).toBeUndefined();
+    expect(useExplorerPoseStore.getState().currentSpace).toBeUndefined();
     expect(useExplorerPoseStore.getState().getLatestPose()).toBeUndefined();
   });
 });

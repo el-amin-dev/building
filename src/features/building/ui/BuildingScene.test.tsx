@@ -5,6 +5,7 @@ import { useFloorCountStore } from '../application/floorCountStore.ts';
 import { useRoomWalkStore } from '../application/roomWalkStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
 import type { ExteriorFraming } from '../domain/exteriorFraming.ts';
+import { makeFloorSpaceRef } from '../domain/floorSpace.ts';
 import { FLOOR_HEIGHTS } from '../domain/heights.ts';
 import { getSlabThickness } from '../domain/slabs.ts';
 import { MAX_FLOOR_COUNT, MIN_FLOOR_COUNT } from '../domain/storeys.ts';
@@ -80,7 +81,7 @@ const CANCEL_WALK_CODE = 'Escape';
 /** The attribute a screenshot gate reads to know the camera has stopped moving. */
 const CAMERA_TRANSITION_ATTRIBUTE = 'data-camera-transition';
 /** A room to ask for a walk to, so Escape has something to abandon. */
-const WALK_TARGET = 'kitchen';
+const WALK_TARGET = makeFloorSpaceRef(MIN_FLOOR_COUNT, 'kitchen');
 /** One built floor is mounted per canvas: the whole building is that one component. */
 const ONE_MODEL = 1;
 /** Far clipping distance the scene camera must have, in metres. */
