@@ -13,9 +13,10 @@ import { FLOOR_PLAN } from './floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from './heights.ts';
 import { PERSON_SPEC } from './person.ts';
 import { insetRect, LENGTH_TOLERANCE, makeRect, rectContainsRect } from './planGeometry.ts';
-import type { PlanRect } from './planGeometry.ts';
+import type { PlanPoint, PlanRect } from './planGeometry.ts';
 import { getStairsLayout, getStairwell } from './stairs.ts';
-import type { Stairwell } from './stairwell.ts';
+import { getRampRise } from './stairwell.ts';
+import type { StairLanding, StairRamp, Stairwell } from './stairwell.ts';
 import { getStoreyLevel } from './storeys.ts';
 import {
   createCameraField,
@@ -335,6 +336,108 @@ function elevationOf(camera: ThirdPersonCamera): number {
   const { position, target } = camera;
   const horizontal = Math.hypot(position.x - target.x, position.z - target.z);
   return Math.atan2(position.y - target.y, horizontal);
+}
+
+/** Storey pitches of stair repeat looked at above a point when reading what stands over it. */
+const STOREYS_OVERHEAD = 2;
+/** Samples taken along a sightline when looking for the stair lying across it. */
+const SIGHTLINE_SAMPLES = 400;
+/** Slack, in metres, either side of a level before a sample counts as clear of a surface. */
+const LEVEL_SLACK = 1e-6;
+/** Decimal places a failure message reports a level and a position along the sightline to. */
+const PLACES = 2;
+
+/** One stair surface found over a point: which surface it is, and how high it stands there. */
+interface StairOverhead {
+  /** Names the surface along the whole sightline: a flight's level changes, its name does not. */
+  readonly name: string;
+  /** Level of that surface over the point, in metres on the datum of the whole stack. */
+  readonly level: number;
+}
+
+/**
+ * Every stair surface standing over a plan point, with the level it stands at there.
+ *
+ * The stair repeats every storey, so each surface of the stairwell is read where it stands and
+ * at whole storey pitches above it: that is how the flight of the storey ABOVE — which no
+ * `Stairwell` of this storey lists, because a walker can never reach it — is found at all.
+ *
+ * Footprints are shrunk by the camera margin, the same convention the placement uses: the two
+ * flights of the half-turn meet along one line, and a camera on that line is threading the open
+ * middle of the shaft rather than passing under either of them.
+ *
+ * @param point - Where to look, in plan coordinates.
+ * @returns One entry per surface and per storey repeat standing over the point.
+ */
+function stairLevelsOver(point: PlanPoint): readonly StairOverhead[] {
+  const named: readonly { readonly name: string; readonly level: number | undefined }[] = [
+    ...REAL_WELL.ramps.map((ramp: StairRamp, index: number) => ({
+      name: `flight ${String(index)}`,
+      level: coversPoint(ramp.rect, point) ? getRampRise(ramp, point) : undefined,
+    })),
+    ...REAL_WELL.landings.map((landing: StairLanding, index: number) => ({
+      name: `landing ${String(index)}`,
+      level: coversPoint(landing.rect, point) ? landing.level : undefined,
+    })),
+  ];
+
+  return named.flatMap(({ name, level }) =>
+    level === undefined
+      ? []
+      : Array.from({ length: STOREYS_OVERHEAD + 1 }, (_, storey) => ({
+          name: `${name}, ${String(storey)} storeys up`,
+          level: level + storey * FLOOR_HEIGHTS.floorToFloor,
+        })),
+  );
+}
+
+/**
+ * Tells whether a point lies under a stair footprint, by the camera's own margin.
+ *
+ * @param rect - The footprint.
+ * @param point - The point.
+ * @returns `true` when the point is inside the rectangle shrunk by {@link MARGIN} on every face.
+ */
+function coversPoint(rect: PlanRect, point: PlanPoint): boolean {
+  return (
+    point.x >= rect.minX + MARGIN &&
+    point.x <= rect.maxX - MARGIN &&
+    point.z >= rect.minZ + MARGIN &&
+    point.z <= rect.maxZ - MARGIN
+  );
+}
+
+/**
+ * Asserts that no stair surface lies across the line from the head to the camera.
+ *
+ * This is the "is the person actually in frame" check, read off the geometry rather than off
+ * the placement maths: the sightline is walked from the head outwards, and a surface the line
+ * passes UNDER at one sample and OVER at a later one has been crossed — the camera came up
+ * through a flight or a landing, and that flight or landing now stands between it and the body.
+ *
+ * @param camera - The camera placement.
+ */
+function expectNothingAcrossTheSightline(camera: ThirdPersonCamera): void {
+  const { target, position } = camera;
+  const passedUnder = new Set<string>();
+  const crossed: string[] = [];
+  for (let sample = 0; sample <= SIGHTLINE_SAMPLES; sample += 1) {
+    const along = sample / SIGHTLINE_SAMPLES;
+    const height = target.y + (position.y - target.y) * along;
+    const overhead = stairLevelsOver({
+      x: target.x + (position.x - target.x) * along,
+      z: target.z + (position.z - target.z) * along,
+    });
+    for (const { name, level } of overhead) {
+      if (height < level - LEVEL_SLACK) {
+        passedUnder.add(name);
+      } else if (height > level + LEVEL_SLACK && passedUnder.has(name)) {
+        crossed.push(`${name}, crossed ${along.toFixed(PLACES)} of the way out`);
+      }
+    }
+  }
+
+  expect(crossed).toEqual([]);
 }
 
 /**
@@ -917,6 +1020,151 @@ describe('thirdPersonCamera', () => {
       // camera's band is the band of the body's own storey, so it may sit above the
       // storey's nominal ceiling plane.
       expect(camera.position.y).toBeGreaterThan(FLOOR_HEIGHTS.wall);
+    });
+  });
+
+  describe('getThirdPersonCamera under the stair standing overhead', () => {
+    /**
+     * The three poses the Chrome sweep read the camera at, on the real stair of the real floor.
+     *
+     * The stair is a half-turn: a flight climbs out of the arrival landing toward −x, a landing
+     * half a storey up turns the walker round, and a second flight climbs back toward +x to the
+     * arrival landing of the storey above. So a body anywhere on the first flight or on the turn
+     * is under the flight of the storey above, which stands one whole storey over the flight it
+     * is walking — and which this storey's `Stairwell` does not list, because a walker can never
+     * reach it.
+     */
+    const HALF = 0.5;
+    /** The flight climbed out of the ground storey: the one whose low end is its finished floor. */
+    const [CLIMBED_FLIGHT] = REAL_WELL.ramps.filter(
+      (ramp: StairRamp) => Math.abs(ramp.lowLevel) <= LENGTH_TOLERANCE,
+    );
+    /** Level of the half-landing, where the walker turns: half a storey up. */
+    const HALF_STOREY = FLOOR_HEIGHTS.floorToFloor * HALF;
+    /** The landing that turn is made on. */
+    const [TURN_LANDING] = REAL_WELL.landings.filter(
+      (landing: StairLanding) => Math.abs(landing.level - HALF_STOREY) <= LENGTH_TOLERANCE,
+    );
+    /** The line a walker comes up the flight on: its middle, off the seam with the flight beside it. */
+    const CLIMB_Z = (CLIMBED_FLIGHT.rect.minZ + CLIMBED_FLIGHT.rect.maxZ) * HALF;
+    /** Where the sweep read the camera mid-flight, in metres along the plan. */
+    const MID_FLIGHT_X = 3;
+    /** The rise the flight carries there: 1.20 m, four fifths of the way up a 1.50 m flight. */
+    const MID_FLIGHT_RISE = 1.2;
+
+    /**
+     * Mid-flight, holding the heading the climb is walked with.
+     *
+     * The flight runs toward −x, so a walker climbing it faces −x and the camera is behind them
+     * at +x — out into the shaft, and under the flight of the storey above.
+     */
+    const climbing: EyePose = {
+      x: MID_FLIGHT_X,
+      z: CLIMB_Z,
+      yaw: YAW_FACING_MINUS_X,
+      pitch: 0,
+      floor: GROUND_FLOOR,
+      rise: MID_FLIGHT_RISE,
+    };
+    /** On the half-landing, still facing the way the flight was climbed. */
+    const onTheTurn: EyePose = {
+      ...climbing,
+      x: TURN_LANDING.rect.minX + BODY_RADIUS,
+      rise: TURN_LANDING.level,
+    };
+    /** The same stance, turned round to climb the next flight: back flat to the bay wall. */
+    const turnedToClimb: EyePose = { ...onTheTurn, yaw: YAW_FACING_PLUS_X };
+
+    it('stands those three poses where the stair really puts them', () => {
+      expect(CLIMBED_FLIGHT.highAt).toBeLessThan(CLIMBED_FLIGHT.lowAt);
+      expect(CLIMBED_FLIGHT.highLevel).toBeCloseTo(HALF_STOREY, PRECISION_DIGITS);
+      expect(getRampRise(CLIMBED_FLIGHT, { x: MID_FLIGHT_X, z: CLIMB_Z })).toBeCloseTo(
+        MID_FLIGHT_RISE,
+        PRECISION_DIGITS,
+      );
+      expect(TURN_LANDING.level).toBeCloseTo(HALF_STOREY, PRECISION_DIGITS);
+      // The body is flush against the far face of the turn: the landing is a body across, so
+      // this is where a walker coming off the flight actually stops.
+      expect(onTheTurn.x).toBeCloseTo(TURN_LANDING.rect.minX + BODY_RADIUS, PRECISION_DIGITS);
+    });
+
+    it('keeps the flight of the storey above out of the sightline, mid-flight', () => {
+      const camera = getThirdPersonCamera(climbing, REAL_FIELD);
+
+      expectNothingAcrossTheSightline(camera);
+      expectClearOfBlockers(camera, REAL_FIELD, getFootLevel(climbing));
+      expectNotInFront(camera, climbing.yaw);
+    });
+
+    it('keeps the flight of the storey above out of the sightline, on the half-landing', () => {
+      const camera = getThirdPersonCamera(onTheTurn, REAL_FIELD);
+
+      expectNothingAcrossTheSightline(camera);
+      expectClearOfBlockers(camera, REAL_FIELD, getFootLevel(onTheTurn));
+      expectNotInFront(camera, onTheTurn.yaw);
+    });
+
+    it('keeps it out of the sightline at the arrival landing too, the pose a visit starts from', () => {
+      expectNothingAcrossTheSightline(getThirdPersonCamera(REAL_START_POSE, REAL_FIELD));
+    });
+
+    it('stops short of the flight rather than letting the pull-back run under it', () => {
+      // The regression: with only the plan to go on, the shaft reads "open, back up freely",
+      // and the camera took the whole follow distance out into it — up through the flight of
+      // the storey above, which then filled the frame. It is stopped by that flight now, so it
+      // keeps less than the follow distance and more than the distance that hides the body.
+      for (const stance of [climbing, onTheTurn]) {
+        const camera = getThirdPersonCamera(stance, REAL_FIELD);
+
+        expect(camera.distance).toBeLessThan(FOLLOW_DISTANCE);
+        expect(camera.distance).toBeGreaterThan(VISIBLE_DISTANCE);
+      }
+    });
+
+    it('frames the body at all three — "framed" being the model shown rather than hidden', () => {
+      // The module's own definition of in-frame is the one used here: a camera at or within
+      // `minBodyVisibleDistance` of the head fills the middle of the frame with the back of that
+      // head, and `shouldHidePersonModel` takes the model away. Anything further out shows it.
+      for (const stance of [climbing, onTheTurn, REAL_START_POSE]) {
+        const camera = getThirdPersonCamera(stance, REAL_FIELD);
+
+        expect(shouldHidePersonModel(camera)).toBe(false);
+        expect(camera.elevation).toBe(BASE_ELEVATION);
+      }
+    });
+
+    it('leaves the arrival landing its whole pull-back into the open shaft (ADR-014)', () => {
+      // The shaft straight behind the arrival landing is the seam where the two flights meet,
+      // and neither of them stands over it: the camera threads between them and keeps the full
+      // follow distance, exactly as it did before the stair became a ceiling.
+      const camera = getThirdPersonCamera(REAL_START_POSE, REAL_FIELD);
+
+      expect(camera.distance).toBe(FOLLOW_DISTANCE);
+      expect(shouldHidePersonModel(camera)).toBe(false);
+      expectClearOfBlockers(camera, REAL_FIELD);
+    });
+
+    it('is the wall behind, not the stair, that pins the camera with the body turned to climb', () => {
+      // The one stance on the stair the stair itself cannot help: turned round on the half-
+      // landing, the body's back is a radius from the bay wall, so the plan leaves the camera
+      // the same 0.10 m it leaves a body backed against any wall on any flat floor. The camera
+      // rises and the model is hidden — the behaviour `MIN_BODY_VISIBLE_DISTANCE_METRES` is
+      // chosen for, and the same placement relative to the feet either way.
+      const onTheStair = getThirdPersonCamera(turnedToClimb, REAL_FIELD);
+      const againstAWall = getThirdPersonCamera(
+        pose({ z: WALKABLE_BOUNDS.maxZ, yaw: YAW_FACING_MINUS_Z }),
+        ROOM_FIELD,
+      );
+
+      expect(shouldHidePersonModel(onTheStair)).toBe(true);
+      expect(shouldHidePersonModel(againstAWall)).toBe(true);
+      expect(onTheStair.distance).toBeCloseTo(againstAWall.distance, PRECISION_DIGITS);
+      expect(onTheStair.elevation).toBeCloseTo(againstAWall.elevation, PRECISION_DIGITS);
+      expect(onTheStair.position.y - getFootLevel(turnedToClimb)).toBeCloseTo(
+        againstAWall.position.y - getFootLevel(LEVEL_POSE),
+        PRECISION_DIGITS,
+      );
+      expectNothingAcrossTheSightline(onTheStair);
     });
   });
 
