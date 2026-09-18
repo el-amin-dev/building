@@ -3,6 +3,7 @@ import { render } from '@testing-library/react';
 import { PerspectiveCamera, Vector3 } from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useExteriorOrbitStore } from '../application/exteriorOrbitStore.ts';
+import { useFloorCountStore } from '../application/floorCountStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
 import { getExteriorFraming } from '../domain/exteriorFraming.ts';
 import type { Vector3Like } from '../domain/exteriorFraming.ts';
@@ -10,10 +11,10 @@ import { PLOT_RECT } from '../domain/floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from '../domain/heights.ts';
 import { clampOrbitPose, getOrbitLimits, getOrbitPosition } from '../domain/orbitNavigation.ts';
 import type { OrbitPose } from '../domain/orbitNavigation.ts';
-import { INITIAL_FLOOR_COUNT } from '../domain/storeys.ts';
+import { INITIAL_FLOOR_COUNT, MIN_FLOOR_COUNT } from '../domain/storeys.ts';
 import { getThirdPersonCamera } from '../domain/thirdPersonCamera.ts';
 import { getEyeCameraPose, VIEW_TRANSITION_SECONDS } from '../domain/viewTransition.ts';
-import { CAMERA_FIELD, INTERIOR_START_POSE } from './floorInstance.ts';
+import { getCameraFields, INTERIOR_START_POSE } from './floorInstance.ts';
 import { CAMERA_FOV_DEGREES } from './useExteriorFraming.ts';
 import { ViewTransition } from './ViewTransition.tsx';
 
@@ -59,12 +60,28 @@ const ORBITED_POSE: OrbitPose = { azimuth: 1.1, polar: 1.2, distance: FRAMING.fi
 /** Factor taking a distance past the framing's furthest, as a resize can leave it. */
 const BEYOND_THE_LIMIT = 1.5;
 
+/**
+ * The camera field of the storey the visit starts on, at a given storey count.
+ *
+ * Written the way the component derives it — the start pose's own storey, out of the
+ * stack's own table — so the case pins the hand-off rather than a number of its own.
+ *
+ * @param floorCount - How many storeys the stack shows.
+ * @returns The field the follow camera is placed in when the viewer steps inside.
+ */
+const startCameraFieldAt = (floorCount: number) =>
+  getCameraFields(floorCount)[INTERIOR_START_POSE.floor - MIN_FLOOR_COUNT];
+
+/** A stack taller than the one the page opens with, to step the count to. */
+const TALLER_STACK = 4;
+
 describe('ViewTransition', () => {
   let camera: PerspectiveCamera;
 
   beforeEach(() => {
     useViewStore.setState(useViewStore.getInitialState(), true);
     useExteriorOrbitStore.setState(useExteriorOrbitStore.getInitialState(), true);
+    useFloorCountStore.setState(useFloorCountStore.getInitialState(), true);
     camera = new PerspectiveCamera();
     camera.position.set(LEFT_BEHIND.x, LEFT_BEHIND.y, LEFT_BEHIND.z);
     camera.lookAt(FRAMING.target.x, FRAMING.target.y, FRAMING.target.z);
@@ -195,7 +212,10 @@ describe('ViewTransition', () => {
   it('lands on the third-person endpoint instead when the interior follows the person', () => {
     render(<ViewTransition />);
     const firstPerson = getEyeCameraPose(INTERIOR_START_POSE);
-    const thirdPerson = getThirdPersonCamera(INTERIOR_START_POSE, CAMERA_FIELD);
+    const thirdPerson = getThirdPersonCamera(
+      INTERIOR_START_POSE,
+      startCameraFieldAt(INITIAL_FLOOR_COUNT),
+    );
     useViewStore.getState().toggleInteriorCameraMode();
     useViewStore.getState().toggleViewMode();
 
@@ -203,7 +223,24 @@ describe('ViewTransition', () => {
 
     expectCameraAt(thirdPerson.position);
     expectCameraLookingAt(thirdPerson.target);
+    // The two endpoints are genuinely different places: the first-person camera is in the
+    // eyes, the follow camera behind the head. A travel landing on the wrong one would snap
+    // the moment the interior control mounts.
     expect(distanceTo(firstPerson.position)).toBeGreaterThan(0);
+  });
+
+  it('takes the interior endpoint from the storey the viewer enters, at the live count', () => {
+    useFloorCountStore.getState().setFloorCount(TALLER_STACK);
+    render(<ViewTransition />);
+    const thirdPerson = getThirdPersonCamera(INTERIOR_START_POSE, startCameraFieldAt(TALLER_STACK));
+    useViewStore.getState().toggleInteriorCameraMode();
+    useViewStore.getState().toggleViewMode();
+
+    runToArrival();
+
+    expectCameraAt(thirdPerson.position);
+    expectCameraLookingAt(thirdPerson.target);
+    expect(useFloorCountStore.getState().floorCount).toBe(TALLER_STACK);
   });
 
   describe('leaving the building', () => {

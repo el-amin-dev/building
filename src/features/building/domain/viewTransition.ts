@@ -20,9 +20,9 @@
  * forward on the plan `(−sin yaw, −cos yaw)`. No React, no three, nothing mutated.
  */
 
+import { getEyeLevel } from './eyeNavigation.ts';
 import type { EyePose } from './eyeNavigation.ts';
 import type { Vector3Like } from './exteriorFraming.ts';
-import { PERSON_SPEC } from './person.ts';
 
 /**
  * How long the exterior↔interior camera travel takes, in seconds.
@@ -124,21 +124,27 @@ export function getTransitionPose(from: CameraPose, to: CameraPose, t: number): 
  * The camera sits at eye height over the plan position, and looks one metre along
  * the plan forward vector `(−sin yaw, −cos yaw)` at the same height. The pose's
  * `pitch` is deliberately ignored: a transition endpoint is a level gaze, and the
- * interior explorer's start pose is level anyway (`createArrivalPose`). The eye
- * height is `PERSON_SPEC.eyeHeight`, the same one the first-person camera itself
- * uses, so the transition lands exactly where the control that mounts after it
- * puts the camera.
+ * interior explorer's start pose is level anyway (`createArrivalPose`).
+ *
+ * The eye height is `getEyeLevel(pose)` — the pose's storey and rise plus
+ * `PERSON_SPEC.eyeHeight` — the same reading the first-person camera itself
+ * takes, so the transition lands exactly where the control that mounts after it
+ * puts the camera, on whichever storey the viewer enters. On storey 1's finished
+ * floor that is `PERSON_SPEC.eyeHeight` exactly, so the endpoint of the ground-storey
+ * flight is unchanged.
  *
  * @param pose - The interior pose to look through. Not mutated.
  * @returns A fresh pose, level: its `position` and `target` are at the same height.
+ * @throws RangeError when the pose's floor is not an integer of at least 1 (see
+ *   `getFootLevel`).
  */
 export function getEyeCameraPose(pose: EyePose): CameraPose {
-  const eyeHeight = PERSON_SPEC.eyeHeight;
+  const eyeLevel = getEyeLevel(pose);
   return {
-    position: { x: pose.x, y: eyeHeight, z: pose.z },
+    position: { x: pose.x, y: eyeLevel, z: pose.z },
     target: {
       x: pose.x - Math.sin(pose.yaw) * EYE_LOOK_AHEAD_METRES,
-      y: eyeHeight,
+      y: eyeLevel,
       z: pose.z - Math.cos(pose.yaw) * EYE_LOOK_AHEAD_METRES,
     },
   };

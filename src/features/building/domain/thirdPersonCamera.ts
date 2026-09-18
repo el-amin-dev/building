@@ -10,8 +10,10 @@
  *
  * The camera never passes through anything the body cannot pass through: it is
  * pulled in to the clearance the real collision field (`collision.ts`) leaves
- * behind the person, measured for a circle of `wallMargin` rather than of the
- * body radius, plus a vertical range between the floor and the ceiling. When
+ * behind the person — the one `getSurfaceField` picks for the body's own stance,
+ * so the camera and the walker are never bounded by different models of the
+ * stair bay — measured for a circle of `wallMargin` rather than of the body
+ * radius, plus a vertical range above the storey the body stands on. When
  * that clearance is too small to see the body (e.g. with the person's back to a
  * wall), the camera rises toward overhead instead, looking down at the head. It
  * never goes below head height (see {@link MIN_ELEVATION_RADIANS}).
@@ -26,9 +28,9 @@
  */
 
 import { getClearance } from './collision.ts';
-import type { PlanVector, WalkField } from './collision.ts';
-import { EYE_NAVIGATION_CONFIG } from './eyeNavigation.ts';
-import type { EyePose } from './eyeNavigation.ts';
+import type { PlanVector } from './collision.ts';
+import { EYE_NAVIGATION_CONFIG, getFootLevel, getSurfaceField } from './eyeNavigation.ts';
+import type { EyePose, WalkSurface } from './eyeNavigation.ts';
 import { PERSON_SPEC } from './person.ts';
 import type { PlanPoint } from './planGeometry.ts';
 
@@ -44,11 +46,17 @@ export interface ScenePoint {
 
 /** Where the follow camera may go: the same blockers the body is stopped by, plus a vertical range. */
 export interface CameraField {
-  /** The collision field of the storey; only its blockers are consulted. */
-  readonly walk: WalkField;
-  /** Lowest camera height, in metres. */
+  /** The storey being walked: where the body may stand, and its stairwell. */
+  readonly surface: WalkSurface;
+  /**
+   * Lowest camera height ABOVE THE BODY'S STOREY DATUM, in metres.
+   *
+   * The range is storey-RELATIVE, so one field describes the camera's band on
+   * whichever storey the body is on: {@link getThirdPersonCamera} adds
+   * `getFootLevel(pose)` to both ends of it.
+   */
   readonly minY: number;
-  /** Highest camera height, in metres. */
+  /** Highest, likewise relative. */
   readonly maxY: number;
 }
 
@@ -155,24 +163,29 @@ export interface ThirdPersonCamera {
 }
 
 /**
- * Camera field of a storey: its walk field, plus the vertical range between floor and ceiling.
+ * Camera field of a storey: its walking surface, plus the vertical range between floor and ceiling.
  *
  * The plan is NOT narrowed here, because there is nothing to narrow: the blockers already are
  * where the camera may not go, and the margin is applied per query by {@link getClearance} —
  * which is what lets the camera follow through a doorway that no single room rectangle contains.
  *
- * @param walk - The collision field of the storey (see `getWalkField`). Captured, not copied; it
- *   is already deeply frozen by `makeWalkField`.
+ * The vertical range is relative to the storey the body stands on, not to storey 1: the same
+ * field therefore serves a body on any storey of the stack, and the datum is added per
+ * placement by {@link getThirdPersonCamera}.
+ *
+ * @param surface - The walking surface of the storey (see `WalkSurface`): both its plan fields
+ *   and its stairwell. Captured, not copied; its fields are already deeply frozen by
+ *   `makeWalkField`.
  * @param ceilingHeight - Height of the ceiling above the finished floor, in metres.
  * @param config - Camera tuning; defaults to {@link THIRD_PERSON_CAMERA_CONFIG}. Only
  *   `wallMargin` is read.
  * @returns A frozen field with `minY` = `config.wallMargin` and `maxY` =
- *   `ceilingHeight − config.wallMargin`.
+ *   `ceilingHeight − config.wallMargin`, both above the body's storey datum.
  * @throws RangeError when `ceilingHeight` is not finite, or when the margin leaves no vertical
  *   range at all (`ceilingHeight` at most twice the margin).
  */
 export function createCameraField(
-  walk: WalkField,
+  surface: WalkSurface,
   ceilingHeight: number,
   config: ThirdPersonCameraConfig = THIRD_PERSON_CAMERA_CONFIG,
 ): CameraField {
@@ -183,13 +196,17 @@ export function createCameraField(
       `ceilingHeight must be finite and leave room above the ${String(config.wallMargin)} m margin, got ${String(ceilingHeight)}`,
     );
   }
-  return Object.freeze({ walk, minY, maxY });
+  return Object.freeze({ surface, minY, maxY });
 }
 
 /**
  * Follow camera behind the person.
  *
- * - target = (pose.x, clamp(config.targetHeight, minY, maxY), pose.z). The plan is taken
+ * Every height below is measured from `base` = `getFootLevel(pose)`, the level of the body's
+ * feet: the field's `minY`/`maxY` are the camera's band above the storey the body stands on, so
+ * the camera rides up the stack with the walker instead of staying on storey 1.
+ *
+ * - target = (pose.x, base + clamp(config.targetHeight, minY, maxY), pose.z). The plan is taken
  *   verbatim: the pose is legal by construction — collision put it there — so clamping it into a
  *   rectangle would fight the collision model rather than protect it;
  * - requested elevation e0: pitch maps piecewise-linearly so that pitch 0 gives
@@ -200,21 +217,32 @@ export function createCameraField(
  * - direction(e) (unit, from target toward camera) = (sin yaw · cos e, sin e, cos yaw · cos e),
  *   i.e. backward on the plan;
  * - H = the plan clearance straight behind the person, for a circle of `config.wallMargin`
- *   (see {@link getClearance}): `Infinity` when nothing is behind, `0` when the camera's own
- *   circle already overlaps a blocker;
- * - exit(e) = min(H / cos e, the travel at which the ray leaves the vertical range), the
- *   distance at which the ray meets a blocker, the floor or the ceiling. The plan term is
- *   `Infinity` for a ray that is vertical to within {@link VERTICAL_RAY_COSINE}, which covers no
- *   plan distance for any blocker to lie in;
+ *   (see {@link getClearance}), read off the field `getSurfaceField` picks for the body's own
+ *   stance: `Infinity` when nothing is behind, `0` when the camera's own circle already overlaps
+ *   a blocker. **Asking the surface rather than the plan field is what keeps the camera behind a
+ *   body on the stairs**: mid-flight the body stands inside what the plan field calls a hole, so
+ *   that field would answer `0`, send the camera overhead and hide the model — a viewer would
+ *   watch the top of a head climb the stair. The bay-released field answers with the real room
+ *   the shaft leaves;
+ * - exit(e) = min(H / cos e, the travel at which the ray leaves the vertical range
+ *   [base + minY, base + maxY]), the distance at which the ray meets a blocker, the floor or the
+ *   ceiling. The plan term is `Infinity` for a ray that is vertical to within
+ *   {@link VERTICAL_RAY_COSINE}, which covers no plan distance for any blocker to lie in;
  * - when min(followDistance, exit(e0)) ≥ t (`minBodyVisibleDistance`), e = e0. Otherwise the
- *   camera rises: with Vc = maxY − target.y, eMin = acos(min(1, H / t)) is the lowest elevation
+ *   camera rises: with Vc = base + maxY − target.y, eMin = acos(min(1, H / t)) is the lowest elevation
  *   at which the plan allows distance t and eCeil = asin(min(1, Vc / t)) the highest the ceiling
  *   allows. If max(e0, eMin) ≤ min(maxElevation, eCeil), e = max(e0, eMin), the lowest elevation
  *   at which the body is visible; otherwise e = clamp(atan2(Vc, H), e0, maxElevation), the
  *   elevation giving the largest distance;
  * - distance = max(0, min(followDistance, exit(e))); position = target + direction(e) · distance,
- *   with the height clamped into [minY, maxY] to absorb floating-point rounding, which only ever
- *   moves it by a negligible amount.
+ *   with the height clamped into [base + minY, base + maxY] to absorb floating-point rounding,
+ *   which only ever moves it by a negligible amount.
+ *
+ * Inside the open shaft the band is the band of the storey the body's feet are on, so a camera
+ * behind a body part way up a flight can sit above that storey's nominal ceiling plane, and can
+ * clip a tread behind the body. Both are correct for a shaft that is open through the slab:
+ * there is no ceiling there to stay under, and the treads behind the body are the stair the
+ * viewer just climbed.
  *
  * @param pose - The person's pose. Not mutated.
  * @param field - Where the camera may go (see {@link createCameraField}). Not mutated.
@@ -226,10 +254,14 @@ export function getThirdPersonCamera(
   field: CameraField,
   config: ThirdPersonCameraConfig = THIRD_PERSON_CAMERA_CONFIG,
 ): ThirdPersonCamera {
-  const { walk, minY, maxY } = field;
+  const { surface, minY, maxY } = field;
+  /** Level of the body's feet: the datum the field's vertical range is measured from. */
+  const base = getFootLevel(pose);
+  const floorLevel = base + minY;
+  const ceilingLevel = base + maxY;
   const target: ScenePoint = {
     x: pose.x,
-    y: clamp(config.targetHeight, minY, maxY),
+    y: base + clamp(config.targetHeight, minY, maxY),
     z: pose.z,
   };
 
@@ -239,21 +271,26 @@ export function getThirdPersonCamera(
   /** Behind the person on the plan, unit: the opposite of forward `(−sin yaw, −cos yaw)`. */
   const back: PlanVector = { x: sinYaw, z: cosYaw };
   /** Plan clearance straight behind the person, for a circle of the camera's margin. */
-  const planRoom = getClearance(planTarget, back, walk, config.wallMargin);
+  const planRoom = getClearance(
+    planTarget,
+    back,
+    getSurfaceField(surface, planTarget, config.wallMargin),
+    config.wallMargin,
+  );
 
   /** Distance along the ray at elevation `e` before it meets a blocker, the floor or the ceiling. */
   const exitAt = (e: number): number => {
     const horizontal = Math.cos(e);
     const planExit =
       Math.abs(horizontal) < VERTICAL_RAY_COSINE ? Number.POSITIVE_INFINITY : planRoom / horizontal;
-    return Math.min(planExit, getAxisExit(target.y, Math.sin(e), minY, maxY));
+    return Math.min(planExit, getAxisExit(target.y, Math.sin(e), floorLevel, ceilingLevel));
   };
 
   const requested = getRequestedElevation(pose.pitch, config);
   const threshold = config.minBodyVisibleDistance;
   let elevation = requested;
   if (Math.min(config.followDistance, exitAt(requested)) < threshold) {
-    const ceilingRoom = maxY - target.y;
+    const ceilingRoom = ceilingLevel - target.y;
     const lowestVisible = Math.acos(Math.min(1, planRoom / threshold));
     const highestUnderCeiling = Math.asin(Math.min(1, ceilingRoom / threshold));
     const raised = Math.max(requested, lowestVisible);
@@ -272,7 +309,7 @@ export function getThirdPersonCamera(
   return {
     position: {
       x: target.x + directionX * distance,
-      y: clamp(target.y + directionY * distance, minY, maxY),
+      y: clamp(target.y + directionY * distance, floorLevel, ceilingLevel),
       z: target.z + directionZ * distance,
     },
     target,
@@ -286,8 +323,8 @@ export function getThirdPersonCamera(
  *
  * The threshold is **inclusive**: at exactly `minBodyVisibleDistance` the body already covers
  * the centre of the frame, which is the distance the raise settles on whenever the plan leaves
- * it no more room — the interior start pose among them — so hiding there is what lets the
- * viewer see the room from just behind the head. A distance within rounding slack
+ * it no more room, so hiding there is what lets the viewer see the room from just behind the
+ * head rather than from inside it. A distance within rounding slack
  * (`DISTANCE_TOLERANCE_METRES`) above the threshold is hidden too, so the last bit of a raise
  * aimed at the threshold cannot show the model again.
  *
