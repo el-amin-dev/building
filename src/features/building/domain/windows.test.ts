@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FLOOR_PLAN, getNeighbours, getSpace } from './floorPlan/index.ts';
+import { FLOOR_PLAN, SPACE_IDS, getNeighbours, getSpace } from './floorPlan/index.ts';
 import type { SpaceId } from './floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from './heights.ts';
 import type { FloorHeights } from './heights.ts';
@@ -7,7 +7,7 @@ import { LENGTH_TOLERANCE, toPlanLength } from './planGeometry.ts';
 import type { PlanRect } from './planGeometry.ts';
 import { PORT_SCHEDULE } from './ports/index.ts';
 import type { Port, PortAxis } from './ports/index.ts';
-import { getWindows, WINDOW_SPEC } from './windows.ts';
+import { getWindows, getWindowsOf, WINDOW_SPEC } from './windows.ts';
 import type { FloorWindow, WindowKind, WindowSide } from './windows.ts';
 
 const PRECISION_DIGITS = 9;
@@ -73,12 +73,18 @@ const EXPECTED_WINDOWS: readonly ExpectedWindow[] = [
     neighbourId: 'kitchen',
     side: 'maxX',
     along: 'z',
-    spanMin: 6.35,
-    spanMax: 7.0,
+    // Narrowed from 0.65 to 0.55 when the pass became the bore of a 1.00 m
+    // tunnel: the `passCounter` fixture builds the other 0.70 out from the
+    // guest-room face, and 0.55 leaves 0.10 of masonry jamb at each end of the
+    // 0.75 m host face for those built-out cheeks to be built against. It is
+    // still centred on z 6.675, which is why the balcony door in the opposite
+    // wall still overlaps it — see the opposite-walls test below.
+    spanMin: 6.4,
+    spanMax: 6.95,
     sill: 1.0,
     head: 1.8,
     thickness: 0.3,
-    rect: { minX: 9.7, maxX: 10.0, minZ: 6.35, maxZ: 7.0 },
+    rect: { minX: 9.7, maxX: 10.0, minZ: 6.4, maxZ: 6.95 },
   },
   {
     kind: 'air',
@@ -86,25 +92,14 @@ const EXPECTED_WINDOWS: readonly ExpectedWindow[] = [
     neighbourId: 'voidWest',
     side: 'maxZ',
     along: 'x',
-    spanMin: 7.55,
-    spanMax: 8.15,
+    // Moved east with the whole guest suite when the shower was dropped: the
+    // cubicle is x 8.05–9.85 now, not 7.05–8.70. The vent kept its 0.60 width.
+    spanMin: 8.6,
+    spanMax: 9.2,
     sill: 1.9,
     head: 2.3,
     thickness: 0.3,
-    rect: { minX: 7.55, maxX: 8.15, minZ: 8.6, maxZ: 8.9 },
-  },
-  {
-    kind: 'air',
-    spaceId: 'guestShowerCubicle',
-    neighbourId: 'voidWest',
-    side: 'maxZ',
-    along: 'x',
-    spanMin: 9.0,
-    spanMax: 9.6,
-    sill: 1.9,
-    head: 2.3,
-    thickness: 0.3,
-    rect: { minX: 9.0, maxX: 9.6, minZ: 8.6, maxZ: 8.9 },
+    rect: { minX: 8.6, maxX: 9.2, minZ: 8.6, maxZ: 8.9 },
   },
   {
     kind: 'light',
@@ -178,7 +173,7 @@ const EXPECTED_WINDOWS: readonly ExpectedWindow[] = [
 /**
  * Every space the schedule gives no window of its own, exhaustively.
  *
- * Together with the nine hosts of {@link EXPECTED_WINDOWS} this covers all 22
+ * Together with the eight hosts of {@link EXPECTED_WINDOWS} this covers all 21
  * spaces. The master bedroom is here on purpose and is the interesting one: it
  * has an open face onto the side-A balcony and v1 glazed it, but the owner asked
  * for no window at all, so its balcony door is its only opening.
@@ -320,7 +315,7 @@ describe('windows', () => {
   });
 
   describe('the windows of the typical floor', () => {
-    it('realises exactly the nine declared windows, in schedule order', () => {
+    it('realises exactly the eight declared windows, in schedule order', () => {
       expect(WINDOWS.map((window) => `${window.spaceId} → ${window.neighbourId}`)).toEqual(
         EXPECTED_WINDOWS.map((expected) => `${expected.spaceId} → ${expected.neighbourId}`),
       );
@@ -414,7 +409,7 @@ describe('windows', () => {
       expect(WINDOWS.filter((window) => window.spaceId === spaceId)).toEqual([]);
     });
 
-    it('accounts for every space: nine glazed, thirteen not', () => {
+    it('accounts for every space: eight glazed, thirteen not', () => {
       const glazed = new Set(WINDOWS.map((window) => window.spaceId));
 
       expect([...glazed].sort()).toEqual(
@@ -501,12 +496,20 @@ describe('windows', () => {
 
       expect(tunnel).toBeDefined();
       expect(balconyDoor).toBeDefined();
-      // Same axis, same z, and no clash: the door is in the room's minX wall and the
-      // tunnel in its maxX wall, which is exactly the case a span-only check breaks on.
+      // Same axis, overlapping z, and no clash: the door is in the room's minX wall
+      // and the tunnel in its maxX wall, which is exactly the case a span-only check
+      // breaks on. The two used to run over exactly the same 6.35–7.00; narrowing the
+      // pass to 0.55 for the tunnel cheeks left it CONCENTRIC inside the door's span
+      // instead — 6.40–6.95 against 6.35–7.00, both centred on 6.675 — so the overlap
+      // a span-only check would trip on is total rather than merely equal.
+      const doorMax = toPlanLength((balconyDoor?.spanMin ?? 0) + (balconyDoor?.width ?? 0));
+
       expect(balconyDoor?.along).toBe(tunnel?.along);
-      expect(balconyDoor?.spanMin).toBe(tunnel?.spanMin);
-      expect(toPlanLength((balconyDoor?.spanMin ?? 0) + (balconyDoor?.width ?? 0))).toBe(
-        tunnel?.spanMax,
+      expect(balconyDoor?.spanMin).toBeLessThan(tunnel?.spanMin ?? 0);
+      expect(doorMax).toBeGreaterThan(tunnel?.spanMax ?? 0);
+      expect(toPlanLength(((balconyDoor?.spanMin ?? 0) + doorMax) / 2)).toBeCloseTo(
+        toPlanLength(((tunnel?.spanMin ?? 0) + (tunnel?.spanMax ?? 0)) / 2),
+        PRECISION_DIGITS,
       );
       expect(portsInFaceOf(tunnel as FloorWindow, PORT_SCHEDULE)).toEqual([]);
     });
@@ -569,5 +572,88 @@ describe('windows', () => {
         expect(Object.isFrozen(window.opening.rect)).toBe(true);
       });
     });
+  });
+});
+
+/**
+ * Every space of the floor and the windows that look into or out of it, by
+ * their index in the schedule above, hand-derived from `EXPECTED_WINDOWS`.
+ *
+ * A window belongs to BOTH of its spaces, so the 8 windows make 16 entries. The
+ * two cases that a `spaceId`-only filter would get wrong are written next to
+ * each other on purpose: the kitchen owns two windows — the food pass declared
+ * from the guest room, and its own one over the sink — and the guest room owns
+ * that same pass, which is the only window it has. The two voids own the six
+ * openings declared at them, none of which names a void first.
+ */
+const WINDOWS_BY_SPACE: readonly (readonly [SpaceId, readonly number[]])[] = [
+  ['balconyA', [0]],
+  ['masterBedroom', []],
+  ['livingRoom', []],
+  ['bedroomMaleKids', []],
+  ['bedroomFemaleKids', []],
+  ['stairs', []],
+  ['corridor', []],
+  ['controlCenter', [0]],
+  ['guestRoom', [1]],
+  ['guestSanitair', []],
+  ['kitchen', [1, 3]],
+  ['laundry', [4]],
+  ['mainSanitair', []],
+  ['utilityRoom', [7]],
+  ['ccBalcony', []],
+  ['balconySlabB', []],
+  ['voidWest', [2, 3]],
+  ['voidEast', [4, 5, 6, 7]],
+  ['guestBathCubicle', [2]],
+  ['mainBathCubicle', [5]],
+  ['mainShowerCubicle', [6]],
+];
+
+/** The food pass, which is the guest room's window and the kitchen's alike. */
+const PASS_INDEX = 1;
+
+describe('getWindowsOf', () => {
+  it.each(WINDOWS_BY_SPACE.map(([id, indices]) => ({ id, indices })))(
+    'gives $id the windows at $indices',
+    ({ id, indices }) => {
+      expect(getWindowsOf(WINDOWS, id)).toEqual(indices.map((index) => WINDOWS[index]));
+    },
+  );
+
+  it('names every window exactly twice, once per side', () => {
+    const memberships = WINDOWS_BY_SPACE.reduce((sum, [, indices]) => sum + indices.length, 0);
+
+    expect(memberships).toBe(WINDOWS.length * 2);
+    expect(WINDOWS_BY_SPACE.map(([id]) => id)).toEqual([...SPACE_IDS]);
+  });
+
+  it('reports the food pass from both sides, and the same object each time', () => {
+    const pass = WINDOWS[PASS_INDEX];
+
+    expect(pass.spaceId).toBe('guestRoom');
+    expect(pass.neighbourId).toBe('kitchen');
+    expect(getWindowsOf(WINDOWS, 'guestRoom')).toContain(pass);
+    expect(getWindowsOf(WINDOWS, 'kitchen')).toContain(pass);
+  });
+
+  it('keeps the schedule order, not the order the spaces are asked in', () => {
+    const eastern = getWindowsOf(WINDOWS, 'voidEast');
+
+    expect(eastern.map((window) => window.spaceId)).toEqual([
+      'laundry',
+      'mainBathCubicle',
+      'mainShowerCubicle',
+      'utilityRoom',
+    ]);
+  });
+
+  it('returns a frozen list, empty for a space nothing glazes', () => {
+    expect(Object.isFrozen(getWindowsOf(WINDOWS, 'kitchen'))).toBe(true);
+
+    const dark = getWindowsOf(WINDOWS, 'livingRoom');
+
+    expect(dark).toEqual([]);
+    expect(Object.isFrozen(dark)).toBe(true);
   });
 });

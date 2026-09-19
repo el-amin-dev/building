@@ -2,28 +2,28 @@
  * What this file pins, and the two figures that came out other than planned.
  *
  * The floor closes on the 225.00 m² plot in four parts, and this file is where
- * collision is checked against them: FLOOR 165.515 (the slabs) + VOID 9.360 +
- * SHAFT 6.000 + WALLS 44.125. Collision splits the last one where the body is,
- * which is the whole point of the module: 39.9625 m² of that masonry stands at
- * body height and the remaining 4.1625 m² is door thresholds, which are walkable
- * floor. So the walk field's floor is 165.515 + 4.1625 = 169.6775 m², its solids
- * 39.9625 and its holes 15.360, and those three sum to 225.000 exactly.
+ * collision is checked against them: FLOOR 165.920 (the slabs) + VOID 9.360 +
+ * SHAFT 6.000 + WALLS 43.720. Collision splits the last one where the body is,
+ * which is the whole point of the module: 39.6475 m² of that masonry stands at
+ * body height and the remaining 4.0725 m² is door thresholds, which are walkable
+ * floor. So the walk field's floor is 165.920 + 4.0725 = 169.9925 m², its solids
+ * 39.6475 and its holes 15.360, and those three sum to 225.000 exactly.
  *
  * Two counts differ from what the part was planned against:
  *
- * - the thresholds are **25 rectangles, not 20**. A threshold is a wall block,
+ * - the thresholds are **24 rectangles, not 19**. A threshold is a wall block,
  *   and `getWallPieces` cuts the walls on a grid that includes every room face,
  *   so a threshold is split wherever such a line crosses it: the master
  *   bedroom's door is cut at z 3.85, where the living room and the two kids'
  *   bedrooms end, the side-A balcony's guest door into two, and the laundry door
- *   into four. Nothing is missing and nothing overlaps — each of the 20 openings
- *   is still tiled exactly, which is what is asserted below, and the 25 pieces
- *   still total 4.1625 m². Asserting "one rect per door" would have required
+ *   into four. Nothing is missing and nothing overlaps — each of the 19 openings
+ *   is still tiled exactly, which is what is asserted below, and the 24 pieces
+ *   still total 4.0725 m². Asserting "one rect per door" would have required
  *   re-merging the pieces here, which is `walls.ts`'s private cell merge copied
  *   for no behavioural gain;
  * - the `stairs ↔ corridor` zero-gap pair is **not in `PORT_SCHEDULE`** at all —
  *   it is a `JOIN_OVERRIDE` of thickness 0, because the owner's demountable panel
- *   there is deliberately not modelled. So all 20 scheduled ports do have an
+ *   there is deliberately not modelled. So all 19 scheduled ports do have an
  *   opening, and the `getPortOpening` rejection is asserted on a port built for
  *   that pair rather than skipped in the loop.
  *
@@ -74,16 +74,16 @@ const HALF = 0.5;
 const PLOT_AREA = 225;
 
 /** Area the slabs cover, in m²: the plan's own FLOOR total plus the arrival landing. */
-const SLAB_AREA = 165.515;
+const SLAB_AREA = 165.92;
 
-/** Area of the 20 door thresholds, in m²: Σ(port width × the wall thickness it cuts). */
-const THRESHOLD_AREA = 4.1625;
+/** Area of the 19 door thresholds, in m²: Σ(port width × the wall thickness it cuts). */
+const THRESHOLD_AREA = 4.0725;
 
 /** Area a body may stand on, in m²: the slabs plus the thresholds. */
 const FLOOR_AREA = SLAB_AREA + THRESHOLD_AREA;
 
-/** Area of the masonry standing at body height, in m²: the 44.125 m² of wall less the thresholds. */
-const SOLID_AREA = 39.9625;
+/** Area of the masonry standing at body height, in m²: the 43.720 m² of wall less the thresholds. */
+const SOLID_AREA = 39.6475;
 
 /** Area of the two side-B voids, in m² (brief §5.2). */
 const VOID_AREA = 9.36;
@@ -94,25 +94,25 @@ const SHAFT_AREA = 6;
 /** Area a body would fall through, in m². */
 const FALL_AREA = VOID_AREA + SHAFT_AREA;
 
-/** Ports in the schedule: 19 doors and the living-room opening. */
-const PORT_COUNT = 20;
+/** Ports in the schedule: 18 doors and the living-room opening. */
+const PORT_COUNT = 19;
 
 /** Windows of the floor (`sourceOfTruth/plan.ts`). */
-const WINDOW_COUNT = 9;
+const WINDOW_COUNT = 8;
 
 /** Slabs of the floor: one per clear rect of a floored space, the bay aside. */
-const SLAB_COUNT = 23;
+const SLAB_COUNT = 22;
 
-/** Threshold pieces the wall grid yields for the 20 doors — see the file header. */
-const THRESHOLD_PIECE_COUNT = 25;
+/** Threshold pieces the wall grid yields for the 19 doors — see the file header. */
+const THRESHOLD_PIECE_COUNT = 24;
 
 /** Guard railings: the three open edges of the side-B strip. */
 const RAILING_COUNT = 3;
 
 /** Spaces of the plan that have a floor, and so can be walked to. */
-const FLOORED_SPACE_COUNT = 20;
+const FLOORED_SPACE_COUNT = 19;
 
-/** Clear width of the narrowest port of the floor, in metres: the guest cubicle doors. */
+/** Clear width of the narrowest port of the floor, in metres: the guest bath-cubicle door. */
 const NARROWEST_PORT_WIDTH = 0.6;
 
 /** Lowest sill of any window of the floor, in metres: the two merged laundry windows. */

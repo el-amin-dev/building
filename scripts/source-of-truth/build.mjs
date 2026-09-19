@@ -109,7 +109,8 @@ const dry = process.argv.includes('--dry');
 const walls = deriveWalls(spec);
 const totals = computeTotals(spec.ROOMS, spec.PLOT);
 
-const planXml = renderPlanPage({ spec, walls }).replaceAll('{{TOTALS}}', totalsLine(totals));
+const plan = renderPlanPage({ spec, walls });
+const planXml = plan.xml.replaceAll('{{TOTALS}}', totalsLine(totals));
 const tableXml = renderTablePage({ spec, walls });
 
 const existing = readDiagrams(DRAWING);
@@ -125,6 +126,17 @@ console.log(
   `openings placed: ${walls.reduce((sum, wall) => sum + wall.openings.filter((o) => !o.alias).length, 0)}`,
 );
 console.log(totalsLine(totals));
+// Said out loud, every run. A fixture whose label found nowhere free is still
+// drawn — its rectangle is on the plan and its row is on the Registers page —
+// but the drawing no longer names it, and a drawing that is silently incomplete
+// looks exactly like a finished one. Naming them here is what makes the gap a
+// thing the owner can decide about rather than one he has to notice.
+const placed = plan.fixtureLabels - plan.droppedLabels.length;
+console.log(
+  plan.droppedLabels.length === 0
+    ? `fixture labels: all ${plan.fixtureLabels} placed`
+    : `fixture labels: ${placed} of ${plan.fixtureLabels} placed — no room for ${plan.droppedLabels.join(', ')}`,
+);
 console.log(`pages: ${pages.map((page) => page.name).join(', ')}`);
 console.log(`plan page: ${planXml.length} chars, registers page: ${tableXml.length} chars`);
 

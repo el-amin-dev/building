@@ -28,13 +28,13 @@ const INTERIOR_DEPTH = 9.4;
  * `pnpm verify:plan` prints the same numbers from the source of truth, splitting
  * the stairwell out of the floor total — the model maps `stairwell` onto
  * `circulation`, so here the stairs' 8.00 m² is part of {@link FLOOR_AREA_TOTAL}
- * (163.515 + 8.00).
+ * (163.92 + 8.00).
  */
-const FLOOR_AREA_TOTAL = 171.515;
+const FLOOR_AREA_TOTAL = 171.92;
 const VOID_WEST_AREA = 5.4;
 const VOID_EAST_AREA = 3.96;
 const VOID_AREA_TOTAL = 9.36;
-const WALL_AREA_TOTAL = 44.125;
+const WALL_AREA_TOTAL = 43.72;
 
 /**
  * The side-B strip, in square metres: the two voids, the balcony slab and the
@@ -88,9 +88,9 @@ const EXPECTED_RECTS: Record<SpaceId, readonly RectTuple[]> = {
   controlCenter: [[1.6, 3.8, 7.2, 9.7]],
   guestRoom: [
     [1.6, 9.7, 6.3, 7.05],
-    [4.1, 6.9, 7.05, 8.6],
+    [4.1, 7.9, 7.05, 8.6],
   ],
-  guestSanitair: [[7.05, 9.85, 7.2, 7.75]],
+  guestSanitair: [[8.05, 9.85, 7.2, 7.75]],
   kitchen: [
     [10.0, 12.2, 6.3, 8.6],
     [12.2, 14.1, 5.8, 8.6],
@@ -102,8 +102,7 @@ const EXPECTED_RECTS: Record<SpaceId, readonly RectTuple[]> = {
   balconySlabB: [[11.65, 15.35, 8.9, 9.7]],
   voidWest: [[4.9, 11.65, 8.9, 9.7]],
   voidEast: [[15.35, 20.3, 8.9, 9.7]],
-  guestBathCubicle: [[7.05, 8.7, 7.9, 8.6]],
-  guestShowerCubicle: [[8.85, 9.85, 7.9, 8.6]],
+  guestBathCubicle: [[8.05, 9.85, 7.9, 8.6]],
   mainBathCubicle: [[17.7, 19.35, 7.45, 8.6]],
   mainShowerCubicle: [[19.5, 20.35, 7.45, 8.6]],
 };
@@ -113,7 +112,7 @@ const EXPECTED_RECTS: Record<SpaceId, readonly RectTuple[]> = {
  *
  * The stairs are `circulation` here and `stairwell` in the source of truth: that
  * one mapping is the whole of the difference between the two (`floorPlanData.ts`).
- * The four bath and shower cubicles are `room`s, not fittings — that is what
+ * The three bath and shower cubicles are `room`s, not fittings — that is what
  * gives them walls, doors and a window each (owner).
  */
 const EXPECTED_KINDS: Record<SpaceId, SpaceKind> = {
@@ -136,7 +135,6 @@ const EXPECTED_KINDS: Record<SpaceId, SpaceKind> = {
   voidWest: 'void',
   voidEast: 'void',
   guestBathCubicle: 'room',
-  guestShowerCubicle: 'room',
   mainBathCubicle: 'room',
   mainShowerCubicle: 'room',
 };
@@ -168,9 +166,8 @@ const EXPECTED_MATRICULES: Record<SpaceId, string> = {
   voidWest: 'R17/VOID',
   voidEast: 'R18/VOID',
   guestBathCubicle: 'R19/BAT',
-  guestShowerCubicle: 'R20/SHW',
-  mainBathCubicle: 'R21/BAT',
-  mainShowerCubicle: 'R22/SHW',
+  mainBathCubicle: 'R20/BAT',
+  mainShowerCubicle: 'R21/SHW',
 };
 
 /**
@@ -199,8 +196,8 @@ const SPACE_AREAS: Readonly<Record<SpaceId, number>> = {
   stairs: 8.0,
   corridor: 25.05,
   controlCenter: 5.5,
-  guestRoom: 10.415,
-  guestSanitair: 1.54,
+  guestRoom: 11.965,
+  guestSanitair: 0.99,
   kitchen: 10.38,
   laundry: 9.24,
   mainSanitair: 3.975,
@@ -209,8 +206,7 @@ const SPACE_AREAS: Readonly<Record<SpaceId, number>> = {
   balconySlabB: 2.96,
   voidWest: VOID_WEST_AREA,
   voidEast: VOID_EAST_AREA,
-  guestBathCubicle: 1.155,
-  guestShowerCubicle: 0.7,
+  guestBathCubicle: 1.26,
   mainBathCubicle: 1.8975,
   mainShowerCubicle: 0.9775,
 };
@@ -333,7 +329,7 @@ describe('floorPlanData', () => {
       expect(FLOOR_PLAN.spaces.map((space) => space.id)).toEqual(SPACE_IDS);
     });
 
-    it('holds the 22 spaces of the redrawn floor, with no link corridor', () => {
+    it('holds the 21 spaces of the redrawn floor, with no link corridor', () => {
       expect(FLOOR_PLAN.spaces).toHaveLength(Object.keys(EXPECTED_RECTS).length);
       expect(FLOOR_PLAN.spaces.map((space) => space.id)).not.toContain('linkCorridor');
     });
@@ -409,7 +405,7 @@ describe('floorPlanData', () => {
       });
     });
 
-    it('gives all 22 spaces a unique, well-shaped matricule', () => {
+    it('gives all 21 spaces a unique, well-shaped matricule', () => {
       const matricules = FLOOR_PLAN.spaces.map((space) => space.matricule);
 
       expect(matricules).toHaveLength(SPACE_IDS.length);
@@ -425,23 +421,22 @@ describe('floorPlanData', () => {
       expect(getSpaceArea(getSpace(FLOOR_PLAN, id))).toBeCloseTo(SPACE_AREAS[id], PRECISION_DIGITS);
     });
 
-    it('gives the guest suite four rooms rather than one sanitair block', () => {
+    it('gives the guest suite three rooms rather than one sanitair block', () => {
       // v1 measured a 1.80 × 1.50 m sanitair block carved out of the guest room and
       // checked the room's gross area as net + block. The owner has since made the
-      // bath and the shower rooms of their own, each with a door and a window, so the
-      // suite is four rooms (sanitair + two cubicles) and there is no single block to
-      // add back. What is worth pinning instead is that the three wet rooms of the
-      // suite tile one footprint with the partitions between them.
+      // bath a room of its own, with a door and a window, so the suite is three
+      // rooms (guest room + sanitair + bath) and there is no single block to add
+      // back. The guest shower was the fourth until 2026-09-19, when the owner
+      // dropped it — brief §7.3's own table had always asked the suite for a sink
+      // and a bath and NO shower — so the two wet rooms now stack alone in the
+      // 1.80 m wide bay the shower used to share. What is worth pinning is that
+      // they tile one footprint with the partition between them.
       const sanitair = getSpace(FLOOR_PLAN, 'guestSanitair').rects[0];
       const bath = getSpace(FLOOR_PLAN, 'guestBathCubicle').rects[0];
-      const shower = getSpace(FLOOR_PLAN, 'guestShowerCubicle').rects[0];
 
       expect(sanitair.minX).toBe(bath.minX);
-      expect(sanitair.maxX).toBe(shower.maxX);
+      expect(sanitair.maxX).toBe(bath.maxX);
       expect(toPlanLength(bath.minZ - sanitair.maxZ)).toBe(WALL_SPEC.partition);
-      expect(toPlanLength(shower.minX - bath.maxX)).toBe(WALL_SPEC.partition);
-      expect(bath.minZ).toBe(shower.minZ);
-      expect(bath.maxZ).toBe(shower.maxZ);
     });
   });
 
@@ -457,7 +452,7 @@ describe('floorPlanData', () => {
       expect(rectArea(PLOT_RECT)).toBeCloseTo(PLOT_AREA, PRECISION_DIGITS);
     });
 
-    it('has 171.515 m² of floor, the 8.00 m² stairwell included', () => {
+    it('has 171.920 m² of floor, the 8.00 m² stairwell included', () => {
       expect(floorArea).toBeCloseTo(FLOOR_AREA_TOTAL, PRECISION_DIGITS);
       expect(floorArea).toBeCloseTo(
         SPACE_IDS.filter((id) => EXPECTED_KINDS[id] !== 'void').reduce(
@@ -480,7 +475,7 @@ describe('floorPlanData', () => {
       expect(voidArea).toBeCloseTo(VOID_AREA_TOTAL, PRECISION_DIGITS);
     });
 
-    it('leaves 44.125 m² of walls', () => {
+    it('leaves 43.720 m² of walls', () => {
       expect(rectArea(PLOT_RECT) - floorArea - voidArea).toBeCloseTo(
         WALL_AREA_TOTAL,
         PRECISION_DIGITS,

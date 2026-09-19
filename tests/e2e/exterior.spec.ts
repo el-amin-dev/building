@@ -1,6 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
 import { EXTERIOR_STATUS, FIRST_PERSON_STATUS, VIEW_TOGGLE_NAME } from './constants.ts';
-import { captureSettledScene, expectCanvasVisible, getHudOverlay } from './sceneCapture.ts';
+import {
+  captureSettledScene,
+  expectCanvasVisible,
+  expectHudWithinBudget,
+  HIDE_HUD_STYLE_PATH,
+} from './sceneCapture.ts';
 
 /**
  * Baseline of the default exterior framing: the whole floor seen from outside, as the app
@@ -27,16 +32,6 @@ const EXTERIOR_SNAPSHOT = 'exterior-default.png';
 const INTERIOR_SNAPSHOT = 'interior-first-person.png';
 
 /**
- * Share of the frame allowed to differ from the baseline.
- *
- * Not a tolerance for a scene that changed: the scene is settled before it is captured, so a
- * real change (a missing wall, a moved camera) is far larger than this. It absorbs the
- * single-pixel noise a software WebGL rasteriser leaves along the edges of the geometry, which
- * is not bit-identical between runs.
- */
-const MAX_DIFF_PIXEL_RATIO = 0.01;
-
-/**
  * Budget for `toHaveScreenshot` to reach a stable frame and compare it.
  *
  * The matcher takes its own screenshots until two in a row are identical, and only then
@@ -48,21 +43,28 @@ const MAX_DIFF_PIXEL_RATIO = 0.01;
 const SCREENSHOT_TIMEOUT_MS = 15_000;
 
 /**
- * Waits for the scene to come to rest, then compares the masked canvas with `snapshot`.
+ * Waits for the scene to come to rest, then compares the whole canvas with `snapshot`.
  *
- * Shared by both baselines so they are taken the same way: settled first, HUD masked, and the
- * same budget and diff ratio. `captureSettledScene` has already asserted that the mask
- * locator matches exactly one element, which is what keeps `mask` here from silently
- * comparing the HUD instead of the rendered scene.
+ * Shared by both baselines so they are taken the same way: settled first, HUD hidden by
+ * `hideHud.css`, and the same budget. Nothing is painted over the frame, so the comparison
+ * covers all 921,600 pixels of it in either view — the frame the matcher sees is the frame the
+ * renderer drew.
+ *
+ * How much of it may differ is `maxDiffPixels` in `playwright.config.ts`, which is the single
+ * source for every screenshot comparison in the suite; this spec deliberately declares no
+ * number of its own, because the local override it used to carry is how the two drifted apart.
+ * {@link expectHudWithinBudget} runs first: `captureSettledScene` has already asserted that the
+ * selector the stylesheet hides matches exactly one element, and this adds that the element has
+ * not grown to swallow the canvas.
  *
  * @param page - The page under test, already on the view being pinned.
  * @param snapshot - File name of the baseline to compare against.
  */
 async function expectSettledSceneMatches(page: Page, snapshot: string): Promise<void> {
   await captureSettledScene(page);
+  await expectHudWithinBudget(page);
   await expect(page.locator('canvas')).toHaveScreenshot(snapshot, {
-    mask: [getHudOverlay(page)],
-    maxDiffPixelRatio: MAX_DIFF_PIXEL_RATIO,
+    stylePath: HIDE_HUD_STYLE_PATH,
     timeout: SCREENSHOT_TIMEOUT_MS,
   });
 }

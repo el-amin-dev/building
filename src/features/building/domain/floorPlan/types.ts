@@ -28,6 +28,12 @@ import type { PlanRect, RectSide } from '../planGeometry.ts';
  * room's north strip; `ccBalcony` is new; and the baths and showers are rooms
  * in their own right rather than fittings, which is what gives them walls and
  * doors like everything else on the floor.
+ *
+ * `guestShowerCubicle` was here and is not any more (owner, 2026-09-19). Brief
+ * §7.3's own table had asked for the guest suite to be `Sink (open) + Bath — NO
+ * shower`; a shower was built there anyway, and it is what made the suite the
+ * tightest thing on the floor. Dropping it is also what paid for the guest room
+ * becoming a sitting room: the suite slid east onto the floor it held.
  */
 export const SPACE_IDS = Object.freeze([
   'balconyA',
@@ -49,7 +55,6 @@ export const SPACE_IDS = Object.freeze([
   'voidWest',
   'voidEast',
   'guestBathCubicle',
-  'guestShowerCubicle',
   'mainBathCubicle',
   'mainShowerCubicle',
 ] as const);

@@ -6,12 +6,7 @@ import { getBuiltFloor } from '../domain/builtFloor.ts';
 import type { PlanBox } from '../domain/planBox.ts';
 import { MAX_FLOOR_COUNT, MIN_FLOOR_COUNT } from '../domain/storeys.ts';
 import { FloorModel } from './FloorModel.tsx';
-import {
-  FLOOR_MATERIAL_KEYS,
-  getCeilingLayout,
-  getFixtureLayout,
-  getFloorLayout,
-} from './floorLayout.ts';
+import { FLOOR_MATERIAL_KEYS, getCeilingLayout, getFloorLayout } from './floorLayout.ts';
 import type { FloorLayout } from './floorLayout.ts';
 import { MATERIAL_PALETTE } from './floorMaterials.ts';
 import type { FloorMaterialKey } from './floorMaterials.ts';
@@ -57,19 +52,15 @@ const createGeometry = vi.mocked(createMergedBoxGeometry);
 const MATERIAL_ELEMENT = 'meshStandardMaterial';
 
 /**
- * Everything drawn in both views, bucketed the way `FloorModel` buckets it: the built floor
- * MERGED WITH the sanitary ware.
+ * Everything drawn in both views, bucketed the way `FloorModel` buckets it.
  *
- * The fixtures are not part of a `BuiltFloor` — a bath is a thing standing in a room, not
- * building fabric — so `getFloorLayout` leaves `sanitaryWare` empty and `getFixtureLayout`
- * fills it, and the component folds the two together (`floorLayout.ts`, `FloorModel.tsx`).
- * Deriving the expectation from `getFloorLayout` alone, as this file did, therefore left the
- * bathroom ware out of every count while the model went on drawing it.
+ * This used to merge two layouts, because the fixtures were derived in the UI rather than
+ * being part of a `BuiltFloor`, and deriving the expectation from `getFloorLayout` alone left
+ * the bathroom ware out of every count while the model went on drawing it. Since Part 4 the
+ * fixtures are on the built floor, so one call gives the whole answer — and the old trap is
+ * gone rather than worked around.
  */
-const ALWAYS_DRAWN_LAYOUT: FloorLayout = {
-  ...getFloorLayout(getBuiltFloor()),
-  ...getFixtureLayout(),
-};
+const ALWAYS_DRAWN_LAYOUT: FloorLayout = getFloorLayout(getBuiltFloor());
 
 /** The families always drawn: every bucket of that layout which holds a box. */
 const ALWAYS_DRAWN_KEYS: readonly FloorMaterialKey[] = FLOOR_MATERIAL_KEYS.filter(
@@ -79,10 +70,19 @@ const ALWAYS_DRAWN_KEYS: readonly FloorMaterialKey[] = FLOOR_MATERIAL_KEYS.filte
 const CEILING_KEYS: readonly FloorMaterialKey[] = ['ceiling', 'lightPanel'];
 
 /**
- * Walls, parapets, four kinds of slab (room, circulation, open air and wet), railings, steps,
- * the television panel and the sanitary ware.
+ * Walls, parapets, four kinds of slab (room, circulation, open air and serviced), railings,
+ * steps, the television panel and the sanitary ware — and since Part 4 the five families a
+ * room's contents are drawn with: joinery, worktops, appliances, soft furnishings and the
+ * hung canvas.
+ *
+ * Fifteen meshes for a furnished and fully decorated floor, and it **went down** when the
+ * scheme went whole-building (ADR-020): the four `paris*` families that painted one room are
+ * gone, because a scheme every room takes is not an override and its boxes belong in the
+ * families they always belonged to. A mesh is per **material** and not per object, so the
+ * boxes of every wardrobe on the storey are one merged geometry (ADR-014) — which is why
+ * decorating the plan's twenty-one spaces costs four meshes fewer than decorating one did.
  */
-const ALWAYS_DRAWN_COUNT = 10;
+const ALWAYS_DRAWN_COUNT = 15;
 
 const ONCE = 1;
 const NONE = 0;
@@ -137,16 +137,23 @@ function materialPropsOf(mesh: RecordedMesh): Record<string, unknown> {
 /**
  * Names the surface family a recorded mesh draws.
  *
- * The palette gives every family its own colour, so the colour of the material identifies the
- * bucket without the model having to label its meshes.
+ * Identified by colour, roughness and metalness together, not by colour alone. Since the
+ * scheme went whole-building (ADR-020) two families share a hue on purpose — the millwork and
+ * the stair treads are one oak — and a lookup by colour would hand back whichever of them
+ * comes first in the palette, so every per-bucket assertion below would quietly check the
+ * wrong mesh. The three together are unique across the palette, and `floorMaterials.test.ts`
+ * is what keeps them so.
  *
  * @param mesh - The recorded mesh.
- * @returns The palette key whose colour the mesh's material carries.
+ * @returns The palette key whose settings the mesh's material carries.
  * @throws Error when no palette entry matches.
  */
 function materialKeyOf(mesh: RecordedMesh): FloorMaterialKey {
-  const { color } = materialPropsOf(mesh);
-  const key = FLOOR_MATERIAL_KEYS.find((candidate) => MATERIAL_PALETTE[candidate].color === color);
+  const { color, roughness, metalness } = materialPropsOf(mesh);
+  const key = FLOOR_MATERIAL_KEYS.find((candidate) => {
+    const spec = MATERIAL_PALETTE[candidate];
+    return spec.color === color && spec.roughness === roughness && spec.metalness === metalness;
+  });
   if (key === undefined) {
     throw new Error(`A mesh used the colour ${String(color)}, which is in no palette entry`);
   }
@@ -217,18 +224,65 @@ describe('FloorModel', () => {
   });
 
   it('draws every solid of the families it is given', () => {
-    /** Two basins, two baths and two shower trays, one per sanitary fixture of the plan. */
-    const sanitaryWareCount = 6;
-    /** One ceiling box per clear rect of every roofed space. */
-    const ceilingBoxCount = 19;
+    /**
+     * The plumbed-in ware: three basins, two baths, one shower tray and the WC, which is
+     * two boxes because a pan and its cistern are not one shape. The laundry's hand-wash
+     * sink is in that count — brief §7.1 asks for it, and it is why the laundry is tiled.
+     *
+     * One tray and no longer two: the guest shower is gone, which is what brief §7.3's own
+     * table asked for all along — "Guest Sanitair | Sink (open) + Bath — NO shower" — so the
+     * only tray left on the floor is the main suite's.
+     */
+    const sanitaryWareCount = 8;
+    /**
+     * The made-of-board family: bed bases and wardrobes, nightstands and storage units, the
+     * desks' pedestals and the coffee tables' bases, the library's plinth and its shelving,
+     * the kitchen's two counter carcasses, the services cabinet, and the plinth, door band
+     * and masonry base the white goods are drawn standing on.
+     *
+     * Four of those boxes are the guest room's pass counter — carcass, two cheeks and the
+     * lintel over the bore, the fifth being its ledge, which is a worktop (`fixtures.ts`).
+     * The sofas contribute none: a seat and a back are both upholstery.
+     */
+    const joineryCount = 32;
+    /** Mattresses, and the seat and the back of each of the four sofas. */
+    const softFurnishingCount = 13;
+    /**
+     * Counter and desk tops, the cooker's hob, the pass counter's ledge, and two coffee
+     * tables — the living room's, and the one the guest room gained when it became a
+     * sitting room.
+     */
+    const worktopCount = 9;
+    /** The white goods: fridge, cooker body, washing machine, barbecue bed. */
+    const applianceCount = 5;
+    /**
+     * One ceiling box per clear rect of every roofed space, and the stairwell is not one:
+     * the fifteen roofed spaces plus the stairwell are drawn as nineteen rects between
+     * them, and the stairwell's one is left open for the dog-leg to rise through.
+     *
+     * "Roofed" is the set `floorLayout.test.ts` lists as `ROOFED_SPACE_IDS` — every room
+     * and circulation space except the stairs — so the word names the same fifteen spaces
+     * in both files, and the stairwell is counted in beside them rather than among them.
+     */
+    const ceilingBoxCount = 18;
     /** One light panel per roofed space; the stairwell is roofed by none. */
-    const lightPanelCount = 16;
+    const lightPanelCount = 15;
     const ceilings = getCeilingLayout();
 
     render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
 
     const drawn = boxesByKey();
     expect(boxesOf(drawn, 'sanitaryWare')).toHaveLength(sanitaryWareCount);
+    // The furniture families, so a fixture that stopped being drawn would be noticed here
+    // rather than only in a screenshot: 41 fixtures, 68 boxes between them.
+    expect(boxesOf(drawn, 'joinery')).toHaveLength(joineryCount);
+    expect(boxesOf(drawn, 'softFurnishing')).toHaveLength(softFurnishingCount);
+    expect(boxesOf(drawn, 'worktop')).toHaveLength(worktopCount);
+    expect(boxesOf(drawn, 'appliance')).toHaveLength(applianceCount);
+    // There is no separate scheme bucket any more: since ADR-020 the living room's library
+    // is `joinery` and its sofas are `softFurnishing`, like every other room's, which is
+    // exactly what taking the scheme whole-building means. The counts above absorbed them.
+    expect(boxesOf(drawn, 'artwork')).toHaveLength(1);
     expect(boxesOf(drawn, 'ceiling')).toHaveLength(ceilingBoxCount);
     expect(boxesOf(drawn, 'lightPanel')).toHaveLength(lightPanelCount);
     expect(ceilings.lightPanel.length).toBeLessThan(ceilings.ceiling.length);
@@ -248,7 +302,12 @@ describe('FloorModel', () => {
 
     for (const mesh of recorded()) {
       const key = materialKeyOf(mesh);
-      expect(materialPropsOf(mesh), key).toStrictEqual({ ...MATERIAL_PALETTE[key] });
+      // `map` is passed for every family and is the texture only where one exists — and
+      // under jsdom there is no canvas to draw on, so it is `undefined` throughout. What
+      // this test is for is that no colour or roughness is invented in the scene layer.
+      const { map, ...props } = materialPropsOf(mesh) as Record<string, unknown>;
+      expect(map, key).toBeUndefined();
+      expect(props, key).toStrictEqual({ ...MATERIAL_PALETTE[key] });
     }
   });
 

@@ -15,7 +15,7 @@ const NO_FLOOR = 0;
 const BASEMENT_FLOOR = -1;
 const HALF_FLOOR = 1.5;
 const STOREY_COUNT = 10;
-const EXPECTED_SPACE_COUNT = 22;
+const EXPECTED_SPACE_COUNT = 21;
 const EXPECTED_KEY_COUNT = STOREY_COUNT * EXPECTED_SPACE_COUNT;
 
 describe('makeFloorSpaceRef', () => {

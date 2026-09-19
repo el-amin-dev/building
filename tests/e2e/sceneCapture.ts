@@ -2,11 +2,14 @@
  * Shared canvas-capture helpers for the end-to-end specs.
  *
  * Every frame comparison in `exterior.spec.ts`, `navigation.spec.ts` and
- * `remoteControl.spec.ts` needs the same two things: a screenshot of the canvas with the
- * whole HUD masked, so only the rendered scene is compared, and a way to wait until the
- * scene is at rest before comparing it. They live here so the specs share one definition of
- * "the scene" and one set of budgets, rather than a copy each.
+ * `remoteControl.spec.ts` needs the same two things: a screenshot of the canvas with the whole
+ * HUD hidden, so only the rendered scene is compared, and a way to wait until the scene is at
+ * rest before comparing it. They live here so the specs share one definition of "the scene"
+ * and one set of budgets, rather than a copy each.
  */
+
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { expect, type Locator, type Page } from '@playwright/test';
 import { CAMERA_TRANSITION_ATTRIBUTE, CAMERA_TRANSITION_IDLE } from './constants.ts';
@@ -61,27 +64,106 @@ export async function expectCameraIdle(page: Page): Promise<void> {
   );
 }
 
-/** The HUD overlay: the child of `<main>` holding the view status. */
+/**
+ * The HUD overlay: the one div of `<main>` that wraps every HUD panel.
+ *
+ * Found by `data-hud-overlay`, the attribute `src/app/App.tsx` stamps on it and documents as a
+ * test contract. {@link HIDE_HUD_STYLE_PATH} keys on the same string, so the selector that
+ * counts the overlay and the rule that hides it are one string, in two files that name it
+ * identically. That is deliberate: the previous locator described the overlay by shape
+ * (`main > div` holding the status) and the stylesheet did not exist, so nothing tied what was
+ * hidden to what was asserted about it.
+ */
 export function getHudOverlay(page: Page): Locator {
-  return page.locator('main > div').filter({ has: page.getByRole('status') });
+  return page.locator('[data-hud-overlay]');
 }
 
 /**
- * Captures the canvas with the whole HUD overlay masked, so only the rendered scene is compared.
+ * Stylesheet that hides the HUD, as the path `toHaveScreenshot`'s `stylePath` option takes.
  *
- * The HUD (view toggle panel, camera toggle panel, navigation hint and remote control) overlays
- * the canvas; its status text and `aria-pressed` colours change with the camera mode and while a
- * pad button is held, so unmasked, those alone would make a frame comparison pass. The overlay
- * is masked as one full-width block, found as the child of `<main>` holding the status: masking
- * each panel on its own is not enough, since the panels resize with the status text and a mask of
- * another size changes the frame by itself.
+ * Resolved from this module's own URL rather than the working directory, so it is found
+ * wherever Playwright is invoked from.
+ */
+export const HIDE_HUD_STYLE_PATH = fileURLToPath(new URL('./hideHud.css', import.meta.url));
+
+/**
+ * The same stylesheet as text, as `locator.screenshot`'s `style` option takes.
+ *
+ * The two screenshot APIs disagree about this one option — the matcher takes a path, a plain
+ * capture takes the CSS itself — so the file is read once here rather than duplicated as a
+ * string literal. A single file feeds both, and neither can be changed without the other.
+ */
+const HIDE_HUD_STYLE = readFileSync(HIDE_HUD_STYLE_PATH, 'utf8');
+
+/**
+ * Fraction of the canvas height the HUD overlay is allowed to occupy.
+ *
+ * A tripwire on HUD growth, **not a tolerance**: nothing is compared any less strictly when the
+ * HUD is taller, since the HUD is hidden rather than painted over. It exists because the HUD
+ * growing until it covers the viewport is the one way the interior frame could again become
+ * mostly furniture — a hidden panel still owns its box, and a panel tall enough to push the
+ * canvas out of the frame would leave a baseline of very little scene. Measured on
+ * 2026-09-19 at the 1280 × 720 default viewport: 176 px of 720 (0.244) in the exterior view,
+ * 504 px of 720 (0.701) in the interior — the tallest, first person with the room menu, the
+ * hint, the readout, the minimap and the remote control all up. The budget is that maximum
+ * plus a fifth, so a wording change does not trip it and another panel the size of the minimap
+ * does.
+ */
+export const MAX_HUD_HEIGHT_FRACTION = 0.84;
+
+/**
+ * Asserts that the HUD overlay still covers less than {@link MAX_HUD_HEIGHT_FRACTION} of the
+ * canvas.
+ *
+ * Cheap — two bounding boxes, no capture — and the second half of the guard whose first half is
+ * the `toHaveCount(1)` in {@link captureSettledScene}. Together they say: the selector the
+ * stylesheet also uses matched exactly one node, and that node has not grown to swallow the
+ * frame.
+ */
+export async function expectHudWithinBudget(page: Page): Promise<void> {
+  const overlay = getHudOverlay(page);
+  await expect(overlay).toHaveCount(1);
+  const hudBox = await overlay.boundingBox();
+  const canvasBox = await page.locator('canvas').boundingBox();
+  if (hudBox === null || canvasBox === null) {
+    throw new Error('the HUD overlay and the canvas must both have a bounding box');
+  }
+  expect(
+    hudBox.height / canvasBox.height,
+    'the HUD has grown: see MAX_HUD_HEIGHT_FRACTION in tests/e2e/sceneCapture.ts',
+  ).toBeLessThanOrEqual(MAX_HUD_HEIGHT_FRACTION);
+}
+
+/**
+ * Captures the canvas with the whole HUD hidden, so only the rendered scene is compared.
+ *
+ * The HUD (view and camera toggles, floor stepper, room menu, navigation hint, readout,
+ * minimap and pad) overlays the canvas; its status text and `aria-pressed` colours change with
+ * the camera mode and while a pad button is held, and the readout and minimap change as the
+ * viewer walks — so left visible, those alone would make a frame comparison pass.
+ *
+ * It is **hidden, not masked**. A mask paints magenta rectangles into the capture, which are
+ * compared like any other pixels: the frame that comes back is part scene, part fixture. That
+ * cost is invisible and it grew — the overlay box grew with the HUD until the committed
+ * interior baseline was 645,120 magenta pixels of 1280 × 720, 70 % of its own frame, rows 0 to
+ * 503, with the exterior one at 24 %. Part 3.5's olive slab soffit sat in the masked band: a
+ * Chrome sweep found it, the baseline could not. `opacity: 0` from
+ * {@link HIDE_HUD_STYLE_PATH} paints nothing over the frame at all, so the whole canvas is
+ * compared and the comparison cannot shrink behind the HUD's back. `opacity` and not
+ * `visibility: hidden`, for a reason that file states in full: hiding the overlay blurs
+ * whatever inside it has focus, and one navigation test depends on focus surviving a capture.
+ *
+ * This also answers the objection that used to argue for masking the overlay as one block
+ * rather than panel by panel — that the panels resize with their text, so a mask of another
+ * size changes the frame by itself. It applied to every mask and to none of this: a hidden
+ * panel contributes no pixels whatever size it is.
  */
 export async function captureScene(page: Page): Promise<Buffer> {
-  return page.locator('canvas').screenshot({ mask: [getHudOverlay(page)] });
+  return page.locator('canvas').screenshot({ style: HIDE_HUD_STYLE });
 }
 
 /**
- * Captures the masked scene once it is settled, which means two things, in this order:
+ * Captures the scene once it is settled, which means two things, in this order:
  *
  * 1. **no camera flight is pending.** A view toggle starts a 0.9 s eased flight between the
  *    two views, and a capture taken during it is a frame of a moving camera. The rule below
@@ -92,7 +174,8 @@ export async function captureScene(page: Page): Promise<Buffer> {
  */
 export async function captureSettledScene(page: Page): Promise<Buffer> {
   await expectCameraIdle(page);
-  // A mask locator matching nothing would silently compare the HUD again.
+  // The stylesheet hides whatever this selector matches, so a selector matching nothing — a
+  // renamed attribute, a second overlay — would silently compare the HUD again.
   await expect(getHudOverlay(page)).toHaveCount(1);
   let previous = await captureScene(page);
   await expect
@@ -109,7 +192,7 @@ export async function captureSettledScene(page: Page): Promise<Buffer> {
   return previous;
 }
 
-/** Waits until the masked scene no longer matches the baseline. */
+/** Waits until the scene no longer matches the baseline. */
 export async function expectSceneChanged(
   page: Page,
   baseline: Buffer,

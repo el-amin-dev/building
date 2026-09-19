@@ -5,11 +5,11 @@ import { PORT_SCHEDULE } from './portSchedule.ts';
 import type { Port, PortAxis, PortKind, PortSwing } from './types.ts';
 
 const PRECISION_DIGITS = 9;
-const EXPECTED_PORT_COUNT = 20;
-const EXPECTED_DOOR_COUNT = 19;
+const EXPECTED_PORT_COUNT = 19;
+const EXPECTED_DOOR_COUNT = 18;
 const EXPECTED_OPENING_COUNT = 1;
 const EXPECTED_WHY_COUNT = 11;
-const EXPECTED_SLIDING_COUNT = 5;
+const EXPECTED_SLIDING_COUNT = 4;
 const SINGLE_PORT = 1;
 
 /** Clear width of the common door leaf of the floor, in metres. */
@@ -46,7 +46,7 @@ interface ExpectedPort {
 }
 
 /**
- * The whole door schedule, as the source of truth declares it: 20 ports, 19
+ * The whole door schedule, as the source of truth declares it: 19 ports, 18
  * doors and the single living-room opening.
  *
  * Rewritten for the new plan. What changed, and why each row moved:
@@ -57,13 +57,19 @@ interface ExpectedPort {
  *   `guestRoom`, the control center is entered from `guestRoom`, and the
  *   balcony's second door is `balconyA ↔ guestRoom`.
  * - **The guest-room ↔ kitchen door is gone**, replaced by the food-pass window.
- * - **The four bath and shower cubicles are rooms**, so each carries its own
+ * - **The three bath and shower cubicles are rooms**, so each carries its own
  *   door, and `ccBalcony` is new.
  * - **`exception` became `why`.** The old field meant "why this port deviates
  *   from the 0.90 m default"; there is no default any more, so a reason is
  *   ordinary rather than exceptional and eleven ports carry one.
- * - **Five leaves slide**, because the room they serve is shallower than the leaf
+ * - **Four leaves slide**, because the room they serve is shallower than the leaf
  *   is wide.
+ * - **The guest shower is gone** (owner, 2026-09-19), and its sliding leaf with
+ *   it: brief §7.3's own table asked for `Sink (open) + Bath — NO shower`. The
+ *   suite slid east onto the floor the shower held, which is why the two guest
+ *   spans below sit 0.65–0.70 m further along x than they used to. They face each
+ *   other across the open part now — 8.10–8.80 in its north face, 8.20–8.80 in its
+ *   south — which is what leaves the basin the east dead-end to itself.
  * - **The control-center door is 1.20 wide**, not the 0.90 of the common leaf,
  *   so 0.90 is the usual width of this floor and not its widest: the room behind
  *   it carries the risers and has to admit a water heater or a gas bottle. It is
@@ -183,17 +189,7 @@ const EXPECTED_PORTS: readonly ExpectedPort[] = [
     spaces: ['guestSanitair', 'guestBathCubicle'],
     kind: 'door',
     along: 'x',
-    span: [7.55, 8.15],
-    width: 0.6,
-    swing: 'slide',
-    hasWhy: false,
-  },
-  {
-    label: 'guestSanitair ↔ guestShowerCubicle',
-    spaces: ['guestSanitair', 'guestShowerCubicle'],
-    kind: 'door',
-    along: 'x',
-    span: [9.0, 9.6],
+    span: [8.2, 8.8],
     width: 0.6,
     swing: 'slide',
     hasWhy: false,
@@ -223,7 +219,7 @@ const EXPECTED_PORTS: readonly ExpectedPort[] = [
     spaces: ['guestRoom', 'guestSanitair'],
     kind: 'door',
     along: 'x',
-    span: [7.4, 8.1],
+    span: [8.1, 8.8],
     width: 0.7,
     swing: 'slide',
     hasWhy: true,
@@ -332,7 +328,7 @@ describe('PORT_SCHEDULE', () => {
     );
   });
 
-  it('holds 20 ports: 19 doors and the single living-room opening', () => {
+  it('holds 19 ports: 18 doors and the single living-room opening', () => {
     const doors = PORT_SCHEDULE.filter((port) => port.kind === 'door');
     const openings = PORT_SCHEDULE.filter((port) => port.kind === 'opening');
 
@@ -395,7 +391,7 @@ describe('PORT_SCHEDULE', () => {
       expect(port.swing).toBe(expected.swing);
     });
 
-    it('slides exactly the five leaves that have no floor to swing into', () => {
+    it('slides exactly the four leaves that have no floor to swing into', () => {
       const sliding = PORT_SCHEDULE.filter((port) => port.swing === 'slide').map((port) =>
         pairKey(port.spaces),
       );
@@ -405,7 +401,6 @@ describe('PORT_SCHEDULE', () => {
         [
           pairKey(['guestRoom', 'guestSanitair']),
           pairKey(['guestSanitair', 'guestBathCubicle']),
-          pairKey(['guestSanitair', 'guestShowerCubicle']),
           pairKey(['mainSanitair', 'mainBathCubicle']),
           pairKey(['mainSanitair', 'mainShowerCubicle']),
         ].sort(),
@@ -452,7 +447,7 @@ describe('PORT_SCHEDULE', () => {
       );
     });
 
-    it('leaves the other nine ports with no reason at all', () => {
+    it('leaves the other eight ports with no reason at all', () => {
       const silent = PORT_SCHEDULE.filter((port) => !Object.hasOwn(port, 'why'));
 
       expect(silent).toHaveLength(EXPECTED_PORT_COUNT - EXPECTED_WHY_COUNT);

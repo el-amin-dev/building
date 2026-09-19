@@ -11,8 +11,8 @@ import { ROOM_TARGETS, getRoomTargets } from './roomTargets.ts';
 /** The two spaces of the plan with no floor: open to the sky, not places a person can be. */
 const VOID_IDS: readonly SpaceId[] = Object.freeze(['voidWest', 'voidEast']);
 
-/** Rooms to offer: the 22 spaces of the plan less the two voids. */
-const EXPECTED_TARGET_COUNT = 20;
+/** Rooms to offer: the 21 spaces of the plan less the two voids. */
+const EXPECTED_TARGET_COUNT = 19;
 
 /** A point in the corridor's main run (x 5.60–20.20, z 4.00–5.50), the far side of a door. */
 const IN_CORRIDOR: PlanPoint = Object.freeze({ x: 8.0, z: 4.65 });
@@ -63,7 +63,7 @@ describe('getRoomTargets', () => {
 });
 
 describe('ROOM_TARGETS', () => {
-  it('holds the twenty walkable rooms of the floor', () => {
+  it('holds the nineteen walkable rooms of the floor', () => {
     expect(ROOM_TARGETS).toHaveLength(EXPECTED_TARGET_COUNT);
   });
 
@@ -96,7 +96,7 @@ describe('the floor-agnostic shape of a room target', () => {
   it('answers with plain spaces of the plan, carrying no storey of their own', () => {
     // A guard, not a feature. Every storey repeats the typical floor, so "which rooms can
     // be walked to" has one answer for the whole stack: baking a floor number in here would
-    // turn twenty rooms into twenty per storey — 200 at the maximum — for no new fact. The
+    // turn nineteen rooms into nineteen per storey — 190 at the maximum — for no new fact. The
     // storey belongs to the *identity of a place* (`FloorSpaceRef`) and to the label the HUD
     // asks `getSpaceLabel` for, both of which the caller supplies.
     ROOM_TARGETS.forEach((space) => {
@@ -106,7 +106,7 @@ describe('the floor-agnostic shape of a room target', () => {
     });
   });
 
-  it('offers the same twenty rooms however tall the building is', () => {
+  it('offers the same nineteen rooms however tall the building is', () => {
     // The list is resolved once at module level from one floor's reachability graph, and
     // nothing about the stack reaches it. Asserted through the store the stack's height
     // actually lives in, so a future coupling would fail here rather than in the HUD.

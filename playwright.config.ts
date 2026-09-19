@@ -23,12 +23,32 @@ const CI_WORKERS = 1;
 const LOCAL_WORKERS = 1;
 const WEB_SERVER_TIMEOUT_MS = 120_000;
 /**
- * Share of a frame allowed to differ from its screenshot baseline, for every comparison.
+ * Pixels two renders of the same scene may differ by before a baseline comparison fails.
  *
- * A settled scene is compared, so a real change is far larger than this; what it absorbs is
- * the single-pixel noise a software WebGL rasteriser leaves along the edges of the geometry.
+ * A COUNT, not a ratio, and that is the point of it. The old rule was a 1 % diff-pixel
+ * ratio, which reads as a small number and means 9 216 pixels of a 1280 × 720 frame —
+ * room for a corner of the building to move unnoticed. It did: `exterior-default` was
+ * written at `1351df3` and went untouched through `b333280`, the commit that rebuilt the
+ * whole floor on a new source of truth, because the frame it produced was inside 1 % of
+ * the frame before it. A ratio also rescales with the viewport, so the same number quietly
+ * means something different at another size; a count does not.
+ *
+ * **Measured, on this machine, on 2026-09-19: the noise floor is zero.** Both baselines
+ * were regenerated with the HUD hidden rather than masked, and then compared 20 times over
+ * with this value set to 0 — all 20 passed. The software rasteriser is deterministic here,
+ * so there is no per-run noise to accommodate at all.
+ *
+ * 200 is therefore a deliberate cushion rather than a measured tolerance: about 0.02 % of
+ * the frame, against the 9 216 the ratio allowed, and enough that a Mesa or driver update
+ * that shifts a few edge pixels reports a diff to look at instead of a red suite with no
+ * diagnosis. Shipping the measured 0 would have been the more precise lie.
+ *
+ * A loaded sample was attempted and abandoned: driving the machine to a load average near
+ * 30 makes the heavy interactive tests starve for reasons that have nothing to do with
+ * rendering (`docs/RUNBOOK.md` already records that), so it measures the machine and not
+ * the picture. Re-measuring is a matter of re-running the idle protocol above.
  */
-const MAX_DIFF_PIXEL_RATIO = 0.01;
+const MAX_DIFF_PIXELS = 200;
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -46,7 +66,7 @@ export default defineConfig({
    */
   updateSnapshots: isCI ? 'none' : 'missing',
   expect: {
-    toHaveScreenshot: { maxDiffPixelRatio: MAX_DIFF_PIXEL_RATIO },
+    toHaveScreenshot: { maxDiffPixels: MAX_DIFF_PIXELS },
   },
   use: {
     baseURL: BASE_URL,

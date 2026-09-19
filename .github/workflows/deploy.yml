@@ -1,0 +1,158 @@
+name: Deploy
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# Never cancel a deploy in progress: a cancelled run can leave a half-finished
+# upload in the new release directory. Runs queue behind each other instead.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # This workflow is not the authoritative deploy path today.
+    #
+    # GitHub Actions has a billing problem on this repository, so runs here are
+    # advisory at best - the merge gate is the green local full gate, and a
+    # release is deployed by running the same commands by hand from a checkout of
+    # the tag (docs/RUNBOOK.md, "Deploy"). This file exists to be reviewed, to be
+    # dispatchable from the Actions tab, and to take over unchanged the day billing
+    # is restored: the commands below are literally the ones in the runbook.
+    #
+    # The deploy steps are also inert until the host exists. Every one of them is
+    # guarded on `vars.DEPLOY_HOST` being set, so pushing a tag on a repository with
+    # no host configured still installs, builds, checks the bundle budget and uploads
+    # the build artifact, and reports green - rather than failing on a missing secret
+    # and making a red run the normal state of a release.
+    #
+    # Configuration it reads (Settings -> Secrets and variables -> Actions):
+    #   vars.DEPLOY_HOST        - hostname or IP of the web server; unset disables the deploy
+    #   vars.DEPLOY_USER        - SSH user the release is uploaded as
+    #   vars.DEPLOY_PATH        - absolute path on the host holding `releases/` and `current`
+    #   vars.DEPLOY_PORT        - SSH port; optional, defaults to 22
+    #   vars.DEPLOY_URL         - public URL of the deployed site, for the smoke check
+    #   secrets.DEPLOY_SSH_KEY  - private half of a deploy-only SSH key, OpenSSH format
+    #   secrets.DEPLOY_KNOWN_HOSTS - the host's public key line, so the connection is
+    #                             verified rather than trusted on first use
+    #
+    # The key must be a deploy-only key and nothing else: its entry in the host's
+    # `authorized_keys` is restricted with `command="<wrapper>",restrict`, so the key
+    # can only run the upload-and-swap wrapper and cannot open a shell. No step here
+    # ever echoes a secret - the key is written straight to a file from the environment
+    # and never passed on a command line.
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      # The bundle budget. A release that blew past it is a release nobody should
+      # be able to deploy without noticing, so this runs before anything is uploaded.
+      - name: Check the bundle budget
+        run: pnpm size
+
+      # Uploaded whether or not a host is configured: with no host, this artifact is
+      # the output of the run, and it is what a hand deploy would otherwise rebuild.
+      - name: Upload the build
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Report that the deploy is disabled
+        if: ${{ vars.DEPLOY_HOST == '' }}
+        run: |
+          echo "No DEPLOY_HOST is configured, so the deploy steps were skipped." >> "$GITHUB_STEP_SUMMARY"
+          echo "The build was produced and uploaded as the \`dist\` artifact." >> "$GITHUB_STEP_SUMMARY"
+          echo "Deploy it by hand with the commands in docs/RUNBOOK.md, \"Deploy\"." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install the deploy key
+        if: ${{ vars.DEPLOY_HOST != '' }}
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          # Written from the environment, never interpolated into the command line
+          # and never printed, so the key cannot reach the log.
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      # One release per commit, uploaded beside the others and not over them, so the
+      # live site is untouched until the symlink swaps below.
+      - name: Upload the release
+        if: ${{ vars.DEPLOY_HOST != '' }}
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+        run: |
+          set -eu
+          ssh_command="ssh -i $HOME/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts -p $DEPLOY_PORT"
+          rsync -az --delete -e "$ssh_command" \
+            --rsync-path="mkdir -p '$DEPLOY_PATH/releases/$GITHUB_SHA' && rsync" \
+            dist/ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/releases/$GITHUB_SHA/"
+
+      # The swap. `ln -sfn` on an existing symlink unlinks it before relinking, which
+      # is a window where the web root does not exist; creating the link under a
+      # temporary name and `mv -T`ing it over `current` is one rename syscall, so a
+      # request either sees the old release or the new one and never neither.
+      # Then keep the five newest releases: a rollback is re-pointing `current`.
+      - name: Swap the current release
+        if: ${{ vars.DEPLOY_HOST != '' }}
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+        run: |
+          set -eu
+          ssh -i "$HOME/.ssh/deploy_key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -p "$DEPLOY_PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "set -eu; cd '$DEPLOY_PATH'; ln -sfn 'releases/$GITHUB_SHA' current.tmp; mv -Tf current.tmp current; ls -1dt releases/*/ | tail -n +6 | xargs -r rm -rf"
+
+      # The deploy is not done until the deployed URL answers. `-f` makes an HTTP
+      # error status an exit code, and the retries absorb a web server reloading
+      # its root right after the swap.
+      - name: Smoke check the deployed site
+        if: ${{ vars.DEPLOY_HOST != '' && vars.DEPLOY_URL != '' }}
+        env:
+          DEPLOY_URL: ${{ vars.DEPLOY_URL }}
+        run: curl -fsS --retry 5 --retry-delay 3 --retry-all-errors "$DEPLOY_URL" > /dev/null
+
+      - name: Clean up the deploy key
+        if: ${{ always() }}
+        run: rm -f ~/.ssh/deploy_key

@@ -1,7 +1,7 @@
 {
   "name": "floor",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "packageManager": "pnpm@11.21.0",
   "engines": {
@@ -13,12 +13,14 @@
     "preview": "vite preview",
     "typecheck": "tsc -b",
     "lint": "eslint .",
-    "format": "prettier --write src scripts tests docs README.md index.html \"*.{js,ts,json}\"",
-    "format:check": "prettier --check src scripts tests docs README.md index.html \"*.{js,ts,json}\"",
+    "format": "prettier --write src scripts tests docs README.md CHANGELOG.md .github index.html \"*.{js,ts,json}\"",
+    "format:check": "prettier --check src scripts tests docs README.md CHANGELOG.md .github index.html \"*.{js,ts,json}\"",
     "verify:plan": "node scripts/source-of-truth/verify.mjs",
+    "size": "node scripts/check-bundle-size.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "capture:docs": "CAPTURE_DOCS=1 playwright test tests/e2e/docsCapture.spec.ts"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.8",

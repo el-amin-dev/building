@@ -2,19 +2,24 @@
  * What this file used to assert, and why the figures moved.
  *
  * The floor was rebuilt from the single source of truth
- * (`sourceOfTruth/plan.ts`): 18 spaces became 22 — each bathroom grew a walled
- * bath and a walled shower — and `linkCorridor` was deleted. Two totals this
- * file pinned came from that superseded plan and are re-measured here rather
- * than carried:
+ * (`sourceOfTruth/plan.ts`): 18 spaces became 21 — each bathroom grew a walled
+ * bath, the main one a walled shower as well — and `linkCorridor` was deleted.
+ * (The guest suite was drawn with a shower cubicle of its own for a while; the
+ * owner dropped it, restoring brief §7.3's own table, which gives the guest
+ * sanitair a sink and a bath and no shower. That is why the count is 21 and not
+ * 22, and why the guest suite's three rooms are the shape they are: the suite
+ * slid east onto the floor the cubicle held and the guest room grew into the
+ * west end it left.) Two totals this file pinned came from that superseded plan
+ * and are re-measured here rather than carried:
  *
- * - `FLOOR_AREA_TOTAL` was 167.38 m². The slabs now cover 165.515 m²: the
- *   source of truth's own FLOOR total of 163.515 m² (`room` / `circulation` /
+ * - `FLOOR_AREA_TOTAL` was 167.38 m². The slabs now cover 165.920 m²: the
+ *   source of truth's own FLOOR total of 163.920 m² (`room` / `circulation` /
  *   `openAir`, which excludes the stair bay) plus the 2.00 m² arrival landing,
  *   the only part of the bay that is floor at this storey;
  * - the "15.10 m² void" was the old side-B strip. The plan's two `'void'`
  *   spaces measure 9.36 m², and the bay contributes a second unpaved area the
  *   old plan did not have: 6.00 m² of open shaft;
- * - `EXPECTED_SLAB_COUNT` was 18 and is 23, and the guest room is no longer the
+ * - `EXPECTED_SLAB_COUNT` was 18 and is 22, and the guest room is no longer the
  *   only space made of several rects — the corridor and the kitchen are too, so
  *   the rect counts are read off the plan instead of being named.
  *
@@ -56,23 +61,23 @@ const ONE = 1;
 
 /**
  * One slab per clear rect of every floored space, except the stair bay, whose
- * one rect yields one arrival-landing slab: 20 floored spaces, of which the
+ * one rect yields one arrival-landing slab: 19 floored spaces, of which the
  * corridor, the guest room and the kitchen carry two rects each.
  */
-const EXPECTED_SLAB_COUNT = 23;
-/** The 22 spaces of the plan minus its two voids. */
-const EXPECTED_FLOORED_SPACE_COUNT = 20;
+const EXPECTED_SLAB_COUNT = 22;
+/** The 21 spaces of the plan minus its two voids. */
+const EXPECTED_FLOORED_SPACE_COUNT = 19;
 /** Slabs whose footprint is a plan rect copied verbatim: every one but the bay's. */
-const PLAN_RECT_SLAB_COUNT = 22;
+const PLAN_RECT_SLAB_COUNT = 21;
 /** Slabs whose footprint comes from a stair piece instead: the arrival landing. */
 const LEVEL_RECT_SLAB_COUNT = 1;
 
 /**
  * Floor total the slabs must add up to, in square metres: the source of truth's
- * FLOOR total of 163.515 (which excludes the stair bay) plus the 2.00 m²
+ * FLOOR total of 163.920 (which excludes the stair bay) plus the 2.00 m²
  * arrival landing. Measured against the plan below, not merely written here.
  */
-const FLOOR_AREA_TOTAL = 165.515;
+const FLOOR_AREA_TOTAL = 165.92;
 /** The two `'void'` spaces of the plan, in square metres: never paved. */
 const VOID_AREA_TOTAL = 9.36;
 /** The stair bay, in square metres, as the plan declares the `stairs` space. */
@@ -194,7 +199,7 @@ describe('floor slabs', () => {
       expect(SLABS.map((slab) => slab.spaceId)).toContain(id);
     });
 
-    it('covers the 165.515 m² the plan floors outside the bay, plus the landing', () => {
+    it('covers the 165.920 m² the plan floors outside the bay, plus the landing', () => {
       expect(PLAN_FLOORED_AREA_OUTSIDE_BAY + LANDING_AREA).toBeCloseTo(
         FLOOR_AREA_TOTAL,
         PRECISION_DIGITS,

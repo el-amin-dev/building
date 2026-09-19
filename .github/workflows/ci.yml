@@ -23,8 +23,14 @@ jobs:
     # arrangement whose local result predicts this one. That suite went from 9 tests to
     # 18 and now takes some 13 of the 15 minutes this job used to allow, leaving nothing
     # for the install, typecheck, lint, plan check, unit tests and build ahead of it, nor
-    # for a retry. 25 restores the margin.
-    timeout-minutes: 25
+    # for a retry. 25 restored the margin.
+    #
+    # 40 now, because this release adds a full room tour to that suite: the e2e leg was
+    # already ~13 of the 25 minutes, the tour walks every room rather than a couple of
+    # them, and the rest of the chain costs ~5. A run that retries a flaky tour once
+    # would pass the old ceiling and go red for a reason that has nothing to do with the
+    # code under test - the one failure mode a timeout must never have.
+    timeout-minutes: 40
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -65,6 +71,12 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      # Right after the build, while dist/ is still there and before the browser download:
+      # the check is a few seconds of gzipping, and it is the only thing standing between
+      # the bundle and the 1.4 MB single chunk it used to be. Budgets: tooling/bundleBudget.ts.
+      - name: Check bundle size
+        run: pnpm size
 
       - name: Install Playwright Chromium
         run: pnpm exec playwright install --with-deps chromium

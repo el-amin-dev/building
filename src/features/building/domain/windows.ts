@@ -509,3 +509,32 @@ export function getWindows(
     ),
   );
 }
+
+/**
+ * Picks every window that looks into or out of one space.
+ *
+ * A window is DECLARED from one side — the schedule names a pair and
+ * {@link FloorWindow.spaceId} is the first of the two, the room the span is
+ * measured from — but what it cuts is a hole in a wall that two spaces share,
+ * so it belongs to both of them. The kitchen's food pass is the case that makes
+ * that plain: it is declared `guestRoom ↔ kitchen`, and it is as much the
+ * kitchen's window as the guest room's. Matching {@link FloorWindow.spaceId}
+ * alone would hand the kitchen one window where it has two, and would leave the
+ * void-facing rooms — every `air` and `light` window of the floor is declared
+ * from the room and not from the void — looking out of nothing.
+ *
+ * The other side of a window found this way is therefore whichever of its two
+ * ids is not the queried one; a window never names the same space twice, so
+ * that is unambiguous.
+ *
+ * @param windows - The windows of the floor, as {@link getWindows} realised
+ *   them. Not mutated.
+ * @param id - Identifier of the space to look at.
+ * @returns A frozen array of the windows naming the space on either side, in
+ *   the schedule order of `windows`; empty when nothing glazes it.
+ */
+export function getWindowsOf(windows: readonly FloorWindow[], id: SpaceId): readonly FloorWindow[] {
+  return Object.freeze(
+    windows.filter((window) => window.spaceId === id || window.neighbourId === id),
+  );
+}

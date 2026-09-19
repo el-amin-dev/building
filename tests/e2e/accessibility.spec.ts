@@ -24,7 +24,7 @@ import { expectCameraIdle, expectCanvasVisible } from './sceneCapture.ts';
  *
  * The HUD is not one DOM. The exterior view renders the camera pad and no interior panel; the
  * interior renders the readout, the room menu, the minimap and the remote control; opening the
- * room list adds twenty buttons and the `aria-expanded`/`aria-controls` pair, which is where
+ * room list adds nineteen buttons and the `aria-expanded`/`aria-controls` pair, which is where
  * most of the new ARIA of this part lives; and below the `sm` breakpoint the minimap is gone,
  * the hint is the short one and the pad is anchored to the bottom of the screen outside the
  * HUD band. An audit of one of those says nothing about the other three.
