@@ -49,5 +49,18 @@ export default defineConfig([
       'no-console': 'off',
     },
   },
+  {
+    // `reportError.ts` IS the console seam of the browser bundle: one module, one
+    // `console.error`, one JSON line per failure. `no-console` stays an error everywhere
+    // else precisely so that every other file has to go through it — a scene that fails
+    // should say so in one shape, in one place, and say nothing about the viewer.
+    // Scoped here rather than waived with an inline `eslint-disable` comment, because a
+    // comment is invisible from this file, needs no review to add, and travels with the
+    // line it sits above the first time someone copies it into a component.
+    files: ['src/app/observability/reportError.ts'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
   eslintConfigPrettier,
 ]);

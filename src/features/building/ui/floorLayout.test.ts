@@ -8,12 +8,7 @@ import type { PlanBox } from '../domain/planBox.ts';
 import { rectContainsRect } from '../domain/planGeometry.ts';
 import { PORT_SCHEDULE } from '../domain/ports/index.ts';
 import { PARAPET_WALLS, WINDOWS } from '../domain/sourceOfTruth/plan.ts';
-import {
-  FLOOR_MATERIAL_KEYS,
-  getCeilingLayout,
-  getFixtureLayout,
-  getFloorLayout,
-} from './floorLayout.ts';
+import { FLOOR_MATERIAL_KEYS, getCeilingLayout, getFloorLayout } from './floorLayout.ts';
 import { getSlabMaterialKey, MATERIAL_PALETTE } from './floorMaterials.ts';
 import type { FloorMaterialKey } from './floorMaterials.ts';
 
@@ -36,11 +31,11 @@ const SYNTHETIC_HEIGHTS: FloorHeights = Object.freeze({
   railing: 2,
 });
 const SYNTHETIC_FLOOR = getBuiltFloor(FLOOR_PLAN, PORT_SCHEDULE, SYNTHETIC_HEIGHTS);
-// The third parameter of `getFloorLayout` is the fixture list, not the heights: a layout
-// takes every level from the built floor it is handed. Passing `SYNTHETIC_HEIGHTS` here
-// type-checked as nothing (it was read as `readonly SpecFixture[]`) and threw
-// `fixtures.filter is not a function` at module load, so this file loaded zero tests and
-// every assertion below was silently unrun.
+// A layout takes every level from the built floor it is handed, never from an argument of
+// its own. That used to be easy to get wrong, because a third parameter carried the fixture
+// list and a `FloorHeights` passed there type-checked as nothing and threw at module load,
+// taking every assertion in this file with it silently. The parameter is gone: fixtures
+// arrive on the built floor, so there is nothing left here to mistake for the heights.
 const SYNTHETIC_LAYOUT = getFloorLayout(SYNTHETIC_FLOOR, FLOOR_PLAN);
 
 /** The real wall top: it may not appear in a layout built from other heights. */
@@ -95,26 +90,50 @@ const COINCIDENT_LAYOUT = getFloorLayout(
   FLOOR_PLAN,
 );
 
-/** The buckets that hold slabs, one per walkable space kind plus the wet rooms. */
+/** The buckets that hold slabs, one per walkable space kind plus the serviced rooms. */
 const SLAB_KEYS: readonly FloorMaterialKey[] = [
   'slabRoom',
   'slabCirculation',
   'slabOpenAir',
-  'slabWet',
+  'slabServiced',
 ];
 
 /**
- * The spaces whose slab is tiled rather than screeded: the two bathrooms and the four bath
- * and shower cubicles inside them.
+ * The spaces floored in marble rather than carpeted: the two bathrooms, the three bath and
+ * shower cubicles inside them, the laundry, the kitchen and the control center.
  *
- * A wet room is not a space kind — every one of these is an ordinary `room` — so this is the
- * one slab material a kind cannot choose. `floorLayout.ts` derives the set from the sanitary
- * ware the spec stands in each room; this list is that answer, pinned.
+ * Being serviced is not a space kind — every one of these is an ordinary `room` — so this is
+ * the one slab material a kind cannot choose. The set is derived from what a room holds
+ * (`isServicedSpace`, `domain/fixtures.ts`); this list is that answer, pinned, and the point
+ * of pinning it is that three entries could not be guessed from the word "bathroom":
+ *
+ * - the **laundry**, because brief §7.1 requires the hand-wash sink the owner's mother
+ *   prefers to the machine, and a room with a plumbed-in basin is not carpeted;
+ * - the **kitchen**, which on this floor has NO basin at all and would have stayed carpeted
+ *   under the wet-room rule this replaced — its counter is dry joinery, so what makes it
+ *   marble is the cooker and the fridge;
+ * - the **control center**, whose one services cabinet is the gas, water and electricity
+ *   risers, and a carpet in front of a riser is nobody's idea.
+ *
+ * Two rooms left this list on 2026-09-19 and neither left quietly:
+ *
+ * - `guestShowerCubicle` went with the room, which the owner dropped;
+ * - the **guest room** was in here for a day and is the reason the rule was rewritten. It
+ *   is a sitting room with a sofa and a coffee table, and it landed in this list only
+ *   because the `passCounter` built out from the kitchen wall was classed a `fitting` and
+ *   `isServicedSpace` asked "is anything here not furniture?". That question laid a
+ *   bathroom floor under a sofa. `FIXTURE_ROLES` now has a fifth role, `joinery` — built
+ *   in, but nothing runs to it — the pass counter and the kitchen counter are both in it,
+ *   and the question is asked positively against `SERVICING_ROLES` instead. The kitchen
+ *   did not move with its counter because it still has appliances; the guest room, which
+ *   had nothing but carpentry and furniture, did. `fixtures.test.ts` pins the role set.
  */
-const WET_SPACE_IDS: readonly SpaceId[] = [
+const SERVICED_SPACE_IDS: readonly SpaceId[] = [
+  'controlCenter',
   'guestSanitair',
   'guestBathCubicle',
-  'guestShowerCubicle',
+  'kitchen',
+  'laundry',
   'mainSanitair',
   'mainBathCubicle',
   'mainShowerCubicle',
@@ -124,8 +143,10 @@ const WET_SPACE_IDS: readonly SpaceId[] = [
  * Every space that has a slab above it, in plan order: every room and circulation space
  * except the stairs, whose dog-leg rises through the slab above.
  *
- * Sixteen now rather than thirteen: `linkCorridor` is gone, and the four bath and shower
- * cubicles are rooms of their own and so are roofed and lit like any other.
+ * Fifteen now. It was thirteen before `linkCorridor` went and the bath and shower cubicles
+ * became rooms of their own — which is what gives them walls, doors, a ceiling and a light
+ * like any other room — and sixteen until the guest shower was dropped (owner, 2026-09-19),
+ * which took one room, one ceiling and one light panel off the floor with it.
  */
 const ROOFED_SPACE_IDS: readonly SpaceId[] = [
   'masterBedroom',
@@ -141,7 +162,6 @@ const ROOFED_SPACE_IDS: readonly SpaceId[] = [
   'mainSanitair',
   'utilityRoom',
   'guestBathCubicle',
-  'guestShowerCubicle',
   'mainBathCubicle',
   'mainShowerCubicle',
 ];
@@ -158,11 +178,11 @@ const UNROOFED_SPACE_IDS: readonly SpaceId[] = [
 
 /**
  * One ceiling box per clear rect of a roofed space: the corridor, the guest room and the
- * kitchen are two rects each, so nineteen boxes roof sixteen spaces.
+ * kitchen are two rects each, so eighteen boxes roof fifteen spaces.
  */
-const CEILING_BOX_COUNT = 19;
+const CEILING_BOX_COUNT = 18;
 /** One light panel per roofed space, whatever its number of rects. */
-const LIGHT_PANEL_COUNT = 16;
+const LIGHT_PANEL_COUNT = 15;
 
 const ONCE = 1;
 const NONE = 0;
@@ -219,13 +239,18 @@ describe('getFloorLayout', () => {
     }
   });
 
-  it('leaves the ceilings, light panels and sanitary ware to the other two builders', () => {
+  it('leaves the ceilings and light panels to the other builder, and draws the fixtures itself', () => {
     expect(LAYOUT.ceiling).toHaveLength(NONE);
     expect(LAYOUT.lightPanel).toHaveLength(NONE);
-    expect(LAYOUT.sanitaryWare).toHaveLength(NONE);
     // Empty here because someone else fills them, not because there is nothing to draw.
     expect(CEILING_LAYOUT.ceiling.length).toBeGreaterThan(NONE);
-    expect(getFixtureLayout().sanitaryWare.length).toBeGreaterThan(NONE);
+    // The fixtures are the other way round now: they are on the built floor, so this
+    // builder buckets them rather than leaving them to a second layout.
+    expect(LAYOUT.sanitaryWare.length).toBeGreaterThan(NONE);
+    expect(LAYOUT.joinery.length).toBeGreaterThan(NONE);
+    expect(LAYOUT.appliance.length).toBeGreaterThan(NONE);
+    expect(LAYOUT.worktop.length).toBeGreaterThan(NONE);
+    expect(LAYOUT.softFurnishing.length).toBeGreaterThan(NONE);
   });
 
   it('splits every wall piece into the wall and parapet buckets', () => {
@@ -319,9 +344,13 @@ describe('getFloorLayout', () => {
       return;
     }
 
-    const expectedKey = WET_SPACE_IDS.includes(spaceId)
-      ? 'slabWet'
-      : getSlabMaterialKey(space.kind);
+    // A room is marble when something in it is plumbed, powered or a riser, and carpeted
+    // otherwise — which no space KIND can ask for, every one of them being an ordinary
+    // `room` (`isServicedSpace`, `floorLayout.ts`). Circulation and open air are decided
+    // by kind above that question.
+    const kindKey = getSlabMaterialKey(space.kind);
+    const expectedKey =
+      kindKey === 'slabRoom' && SERVICED_SPACE_IDS.includes(spaceId) ? 'slabServiced' : kindKey;
     expect(slabs.length).toBeGreaterThan(NONE);
     for (const slab of slabs) {
       expect(LAYOUT[expectedKey], expectedKey).toContain(slab);
@@ -331,14 +360,14 @@ describe('getFloorLayout', () => {
     }
   });
 
-  it('tiles the wet rooms and nothing else', () => {
-    const wetSlabSpaces = new Set(
+  it('floors the serviced rooms in marble and nothing else', () => {
+    const servicedSlabSpaces = new Set(
       BUILT_FLOOR.slabs
-        .filter((slab) => LAYOUT.slabWet.includes(slab))
+        .filter((slab) => LAYOUT.slabServiced.includes(slab))
         .map((slab) => slab.spaceId as SpaceId),
     );
 
-    expect([...wetSlabSpaces].sort()).toEqual([...WET_SPACE_IDS].sort());
+    expect([...servicedSlabSpaces].sort()).toEqual([...SERVICED_SPACE_IDS].sort());
   });
 
   it('puts every step of the dog-leg in the stairs bucket', () => {
@@ -378,11 +407,22 @@ describe('getFloorLayout', () => {
       BUILT_FLOOR.tvPanel,
     ];
     const bucketTotal = FLOOR_MATERIAL_KEYS.reduce((sum, key) => sum + LAYOUT[key].length, NONE);
+    // A fixture is one to three boxes, so it contributes its parts rather than itself.
+    const fixtureParts = BUILT_FLOOR.fixtures.reduce(
+      (sum, fixture) => sum + fixture.parts.length,
+      NONE,
+    );
 
     // The railings are the one group converted rather than moved, so they are counted, not
-    // looked up by identity: a `Railing` is a rect and a top, not a box.
-    expect(bucketTotal).toBe(solids.length + BUILT_FLOOR.railings.length);
+    // looked up by identity: a `Railing` is a rect and a top, not a box. The fixture parts
+    // are counted for the same reason, and their boxes are identity-checked below with the
+    // rest, so nothing here is taken on trust twice.
+    expect(bucketTotal).toBe(solids.length + BUILT_FLOOR.railings.length + fixtureParts);
     expect(countsInLayout(solids)).toStrictEqual(solids.map(() => ONCE));
+    const partBoxes = BUILT_FLOOR.fixtures.flatMap((fixture) =>
+      fixture.parts.map((part) => part.box),
+    );
+    expect(countsInLayout(partBoxes)).toStrictEqual(partBoxes.map(() => ONCE));
   });
 
   it('freezes the layout and each of its buckets', () => {
@@ -409,7 +449,7 @@ describe('getCeilingLayout', () => {
     expect(ROOFED_SPACE_IDS).toHaveLength(LIGHT_PANEL_COUNT);
   });
 
-  it('accounts for every space: sixteen roofed, six open to the sky', () => {
+  it('accounts for every space: fifteen roofed, six open to the sky', () => {
     expect(ROOFED_SPACE_IDS.length + UNROOFED_SPACE_IDS.length).toBe(FLOOR_PLAN.spaces.length);
     expect(ROOFED_SPACE_IDS.filter((id) => UNROOFED_SPACE_IDS.includes(id))).toEqual([]);
   });

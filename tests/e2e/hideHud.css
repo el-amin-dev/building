@@ -1,0 +1,30 @@
+/*
+ * Hides the HUD for the duration of a screenshot, so a frame comparison sees the rendered
+ * scene and nothing else.
+ *
+ * Injected by Playwright's `style` / `stylePath` screenshot option from `sceneCapture.ts`; it
+ * is never part of the application's own CSS and never reaches the browser outside a capture.
+ *
+ * `[data-hud-overlay]` is the contract stamped on the one overlay div in `src/app/App.tsx`
+ * that wraps every HUD panel, and `getHudOverlay` in `sceneCapture.ts` keys on the same
+ * string: one selector, used to hide and to count, so the two cannot drift apart. `#leva__root`
+ * is the tweak panel, mounted only when the debug flag is on, hidden here so a run with the
+ * flag set compares the same frame as a run without it.
+ *
+ * `opacity`, not `display` and not `visibility`. `display: none` would reflow everything below
+ * the panels, so the frame would differ from an unhidden one by more than the pixels the HUD
+ * painted. `visibility: hidden` keeps the boxes but takes the elements out of the accessibility
+ * and focus model, and the browser BLURS whatever inside them held focus — which a capture must
+ * never do, because these helpers are called from tests that then assert where focus is. It
+ * cost an afternoon: `navigation.spec.ts` asserts the view toggle still holds focus after a key
+ * is pressed at it, and the assertion failed on a quiet machine, deterministically, because the
+ * capture two lines earlier had silently blurred the button. A screenshot helper may not change
+ * the state of the page it photographs.
+ *
+ * `opacity: 0` paints nothing, moves nothing and blurs nothing. `!important` because the app's
+ * own utility classes are of equal specificity and land later in the cascade.
+ */
+[data-hud-overlay],
+#leva__root {
+  opacity: 0 !important;
+}

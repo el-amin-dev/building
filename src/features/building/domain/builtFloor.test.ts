@@ -2,19 +2,27 @@
  * What this file used to assert, and why the figures moved.
  *
  * The floor was rebuilt from the single source of truth
- * (`sourceOfTruth/plan.ts`): 18 spaces became 22 — each bathroom grew a walled
- * bath and a walled shower, each with its own door — `linkCorridor` was deleted,
- * and the ports went 19 → 20 and the windows 8 → 9, so 24 openings became 29.
- * Three totals this file pinned came from the superseded plan and are
- * re-measured here:
+ * (`sourceOfTruth/plan.ts`): 18 spaces became 21 — each bathroom grew a walled
+ * bath, and the main one a walled shower as well, each with its own door — and
+ * `linkCorridor` was deleted. This file pinned 24 openings; the rebuilt plan
+ * declares 19 ports and 8 windows, so 27 holes are punched. Three totals it
+ * pinned came from the superseded plan and are re-measured here:
  *
- * - `WALL_FOOTPRINT_AREA` was 42.52 m² and is 44.125 m²;
- * - `FLOOR_AREA_TOTAL` was 167.38 m² and is 165.515 m²: the source of truth's
- *   FLOOR total of 163.515 m², which excludes the stair bay, plus the 2.00 m²
+ * - `WALL_FOOTPRINT_AREA` was 42.52 m² and is 43.720 m²;
+ * - `FLOOR_AREA_TOTAL` was 167.38 m² and is 165.920 m²: the source of truth's
+ *   FLOOR total of 163.920 m², which excludes the stair bay, plus the 2.00 m²
  *   arrival landing, the only part of the bay that is floor at this storey;
  * - the "15.10 m² void" was the old side-B strip. The plan's two `'void'`
  *   spaces measure 9.36 m², and the bay adds a second unpaved area: 6.00 m² of
  *   open shaft, which the old plan did not have.
+ *
+ * The guest suite accounts for the last move of all three. It was drawn for a
+ * while with a shower cubicle of its own, which made 22 spaces, 20 ports and 9
+ * windows; the owner dropped it, restoring brief §7.3's own table — guest
+ * sanitair: sink and bath, no shower — and the sanitair and its bath cubicle
+ * slid east onto the floor it held while the guest room grew into the west end
+ * they left. That is one room, one port and one `air` window fewer, and it is
+ * where the 0.405 m² that left the walls and arrived in the floor comes from.
  *
  * The plot closure is therefore in four parts rather than three —
  * FLOOR + VOID + WALLS + SHAFT = 225.00 m² — and it is asserted from the parts
@@ -25,7 +33,7 @@
  *
  * - windows no longer take their sill and head from `FloorHeights`. Each one
  *   declares its own in the schedule, because they differ by purpose: an `air`
- *   window vents a shower at 1.90–2.30, a `pass` window hands coffee through at
+ *   window vents a wet cubicle at 1.90–2.30, a `pass` window hands coffee at
  *   1.00–1.80, a `light` window sits at 0.90–2.10. So the old "the windows get
  *   `heights.windowSill` and `heights.windowHead`" is replaced by "each window
  *   gets the sill and head the schedule declares", and the injected-heights
@@ -36,8 +44,8 @@
  *   ADR-011, where the owner chose 1.10 and the entry was rewritten to carry
  *   `HEIGHTS.railing` itself rather than a second literal), so one block is a
  *   parapet whose top no injected height moves. That is also why the wall
- *   BLOCK COUNT is not height-independent: it is 237 at production heights and
- *   235 at the injected ones, because a parapet that stays put merges with its
+ *   BLOCK COUNT is not height-independent: it is 238 at production heights and
+ *   236 at the injected ones, because a parapet that stays put merges with its
  *   neighbours differently. The old `keeps the plan figures` case asserted the
  *   count was unchanged; it now asserts what really cannot change — the
  *   footprint area, the floor area and the opening counts — and pins the count
@@ -49,10 +57,10 @@
  *   stood on `balconySlabB`. The rebuilt plan has three railings, one of them on
  *   the control-centre balcony, so the case is now "each railing stands on the
  *   slab of the floored space it guards", read off the railing's own pair;
- * - the port hole table built its cases from `openings.slice(0, 19)` against a
- *   20-port schedule, so the last port's opening was `undefined` and the case
- *   threw inside a helper instead of checking anything. The count is pinned
- *   against `PORT_SCHEDULE.length` before the table is built.
+ * - the port hole table built its cases from a slice shorter than the schedule,
+ *   so the last port's opening was `undefined` and the case threw inside a
+ *   helper instead of checking anything. The count is pinned against
+ *   `PORT_SCHEDULE.length` before the table is built.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -97,13 +105,13 @@ const SLAB_BOTTOM = -toPlanLength(FLOOR_HEIGHTS.floorToFloor - FLOOR_HEIGHTS.wal
  * ------------------------------------------------------------------ */
 
 /** Ports of the declared schedule: one per door of the source of truth. */
-const PORT_COUNT = 20;
+const PORT_COUNT = 19;
 /** Windows of the declared schedule: the owner's air, pass and light openings. */
-const WINDOW_COUNT = 9;
+const WINDOW_COUNT = 8;
 /** Holes fed to the wall generator: every port opening, then every window opening. */
 const OPENING_COUNT = PORT_COUNT + WINDOW_COUNT;
 /**
- * Wall blocks left once the 29 openings are punched out.
+ * Wall blocks left once the 27 openings are punched out.
  *
  * PROVISIONAL: a defect in the isolation rule of `walls.ts` is under
  * investigation, and a change to which stretches are built heavy changes how the
@@ -111,13 +119,13 @@ const OPENING_COUNT = PORT_COUNT + WINDOW_COUNT;
  * (FLOOR + VOID + WALLS + SHAFT = 225.00 m²) does not, which is why it is
  * asserted from the parts rather than from these literals.
  */
-const WALL_PIECE_COUNT = 237;
+const WALL_PIECE_COUNT = 238;
 /** Blocks that start at the underside of the slab. PROVISIONAL, see above. */
-const BASE_PIECE_COUNT = 201;
+const BASE_PIECE_COUNT = 204;
 /** Blocks that start at the head of an opening: the lintels. PROVISIONAL, see above. */
-const HEAD_PIECE_COUNT = 36;
+const HEAD_PIECE_COUNT = 34;
 /** One slab per clear rect of every floored space, the bay floored only at its landing. */
-const SLAB_COUNT = 23;
+const SLAB_COUNT = 22;
 /** Guard railings: the two fall edges of the side-B voids, plus the balcony one. */
 const RAILING_COUNT = 3;
 /** Step boxes of the half-turn stair: nine risers each side of this floor. */
@@ -134,13 +142,13 @@ const RISERS_PER_FLIGHT = RISER_COUNT / TWO;
 /**
  * Wall footprint of the typical floor, in square metres.
  *
- * PROVISIONAL: this is the figure the code measures today, 44.125, and it is the
+ * PROVISIONAL: this is the figure the code measures today, 43.720, and it is the
  * one under review by the isolation-rule investigation. It is also the number
- * behind the published "WALLS 44.13" — the same area rounded to two decimals.
+ * behind the published "WALLS 43.72" — the same area rounded to two decimals.
  */
-const WALL_FOOTPRINT_AREA = 44.125;
+const WALL_FOOTPRINT_AREA = 43.72;
 /** Floor total: what the slabs cover, the bay counted only at its landing. */
-const FLOOR_AREA_TOTAL = 165.515;
+const FLOOR_AREA_TOTAL = 165.92;
 /** The two `'void'` spaces of the plan: the side-B holes. */
 const VOID_AREA = 9.36;
 /** The open stair shaft: the bay less its arrival landing. */
@@ -236,14 +244,14 @@ const FORBIDDEN_LEVELS: readonly number[] = Object.freeze(
  * Mutation-guard figures.
  * ------------------------------------------------------------------ */
 
-/** Wall blocks when only the 20 port openings are punched out. PROVISIONAL, see above. */
-const PORT_ONLY_PIECE_COUNT = 198;
+/** Wall blocks when only the 19 port openings are punched out. PROVISIONAL, see above. */
+const PORT_ONLY_PIECE_COUNT = 194;
 /**
  * Wall blocks at the injected heights: two fewer than at production heights,
  * because the stated 1.10 m parapet does not move with `heights.wall` and so
  * merges with its neighbours differently. PROVISIONAL, see above.
  */
-const INJECTED_WALL_PIECE_COUNT = 235;
+const INJECTED_WALL_PIECE_COUNT = 236;
 /** Blocks covering a window centre when the windows are dropped: the wall is solid. */
 const SOLID_PIECES_AT_WINDOW = 1;
 
@@ -575,11 +583,11 @@ describe('the composed floor', () => {
 });
 
 describe('the four parts of the plot', () => {
-  it('walls 44.125 m² of the plot', () => {
+  it('walls 43.720 m² of the plot', () => {
     expect(getWallFootprintArea(FLOOR.walls)).toBeCloseTo(WALL_FOOTPRINT_AREA, PRECISION_DIGITS);
   });
 
-  it('floors 165.515 m² of the plot', () => {
+  it('floors 165.920 m² of the plot', () => {
     expect(totalRectArea(FLOOR.slabs)).toBeCloseTo(FLOOR_AREA_TOTAL, PRECISION_DIGITS);
   });
 
@@ -714,7 +722,7 @@ describe('nothing intersects in three dimensions', () => {
 
   it('stands each railing on the slab of the floored space it guards', () => {
     // A railing straddles the slab/void edge by design (`railings.ts`): it is a
-    // rail on floor area already counted in the 165.515 m², not a wall, so this
+    // rail on floor area already counted in the 165.920 m², not a wall, so this
     // one footprint overlap is the documented behaviour rather than a clash.
     // The floored side is read off the railing's own pair — the void first, then
     // the space it guards — so the three railings of the plan check three

@@ -46,7 +46,7 @@ const STAIRS_ARRIVAL_POINT: PlanPoint = Object.freeze({
  * @param ports - The port schedule placed in that plan.
  * @param from - Where the viewer stands, in plan coordinates.
  * @returns The reachable spaces, frozen, in {@link SPACE_IDS} order — which is the source of
- *   truth's matricule order R01…R22. A reachable set comes out in breadth-first discovery
+ *   truth's matricule order R01…R21. A reachable set comes out in breadth-first discovery
  *   order, so a walk of the floor would reshuffle it; ordering here by the plan's own order
  *   is what makes the answer independent of where the viewer happens to be.
  * @throws RangeError naming the point when it lies in no space of the plan or in one with no

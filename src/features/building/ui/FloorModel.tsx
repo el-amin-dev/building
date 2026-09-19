@@ -1,13 +1,14 @@
 import type { PlanBox } from '../domain/planBox.ts';
 import { BUILT_FLOOR } from './floorInstance.ts';
-import {
-  FLOOR_MATERIAL_KEYS,
-  getCeilingLayout,
-  getFixtureLayout,
-  getFloorLayout,
-} from './floorLayout.ts';
+import { FLOOR_MATERIAL_KEYS, getCeilingLayout, getFloorLayout } from './floorLayout.ts';
 import type { CeilingLayout, FloorLayout } from './floorLayout.ts';
 import { MATERIAL_PALETTE } from './floorMaterials.ts';
+import {
+  createBoucleTexture,
+  createCarpetTexture,
+  createMarbleTexture,
+  createOakTexture,
+} from './textures.ts';
 import type { FloorMaterialKey } from './floorMaterials.ts';
 import { MergedBoxesMesh } from './MergedBoxesMesh.tsx';
 import { getStoreyLevelsFor, getTopStoreyLevelFor } from './storeyLevels.ts';
@@ -28,22 +29,57 @@ import { getStoreyLevelsFor, getTopStoreyLevelFor } from './storeyLevels.ts';
  */
 const FLOOR_LAYOUT = getFloorLayout(BUILT_FLOOR);
 
+/**
+ * The families drawn with a generated texture, built once for the life of the page.
+ *
+ * Every family the scheme speaks to has one, since ADR-020 took the scheme whole-building: a
+ * bouclé weave, an oak grain, a flat weave and a marble vein are what make a room read as
+ * furnished rather than as coloured blocks. The families that carry no scheme — sanitary ware,
+ * appliances, the artwork, the ceiling, the walls — stay flat colours, which is right: a matte
+ * white wall is the one surface in the brief that is supposed to have nothing on it.
+ *
+ * **The floors take their own repeat.** The merged geometry gives every face the same 0…1 UV
+ * square however wide the box really is, so one texture object cannot serve both a 0.60 m
+ * wardrobe door and a 10 m corridor floor — at the furniture repeat the corridor's grain is
+ * five metres from line to line, which reads as a smear. Each floor family therefore builds its
+ * own instance at a floor-scale repeat rather than sharing the furniture's; they are four more
+ * 256 px canvases, which is nothing, and the alternative is a floor that looks wrong.
+ *
+ * Built at module level for the same reason the layouts are: a texture is an upload to the GPU,
+ * and rebuilding one per render would upload it again. Each generator returns `undefined` where
+ * there is no canvas to draw on — jsdom, so the whole unit suite — and a material with
+ * `map={undefined}` is simply the flat colour it was before.
+ */
+const CARPET_FLOOR_REPEAT = 16;
+const OAK_FLOOR_REPEAT = 12;
+const MARBLE_FLOOR_REPEAT = 3;
+
+const FAMILY_TEXTURE: Partial<Record<FloorMaterialKey, ReturnType<typeof createOakTexture>>> =
+  Object.freeze({
+    slabRoom: createCarpetTexture(CARPET_FLOOR_REPEAT),
+    slabCirculation: createOakTexture(OAK_FLOOR_REPEAT),
+    slabServiced: createMarbleTexture(MARBLE_FLOOR_REPEAT),
+    stairs: createOakTexture(),
+    joinery: createOakTexture(),
+    worktop: createMarbleTexture(),
+    softFurnishing: createBoucleTexture(),
+  });
+
 /** The ceilings and light panels, built once for the same reason. */
+
 const CEILING_LAYOUT = getCeilingLayout();
 
 /**
- * Everything drawn in both views, in one object: the built floor plus the sanitary ware.
+ * Everything drawn in both views.
  *
- * The fixtures come from the spec rather than from a `BuiltFloor` (`floorLayout.ts`), so
- * they arrive as a second layout and are folded into the first here. Merging once, at module
- * level, is what keeps the rule of this component intact: one mesh per material, over one
- * object, whatever bucket a solid happened to be derived by. Every bucket keeps its identity
- * for the life of the page, which is what `MergedBoxesMesh` needs.
+ * This used to merge two layouts, because the fixtures were derived from the spec here in
+ * the UI rather than being part of a `BuiltFloor`. Since Part 4 they are on the built floor
+ * like the walls, so there is one layout again and the merge is gone. What the merge existed
+ * to protect is unchanged and still matters: one mesh per material over one object, with
+ * every bucket keeping its identity for the life of the page, which is what
+ * `MergedBoxesMesh` needs to avoid rebuilding a geometry it already holds.
  */
-const ALWAYS_DRAWN_LAYOUT: FloorLayout = Object.freeze({
-  ...FLOOR_LAYOUT,
-  ...getFixtureLayout(),
-});
+const ALWAYS_DRAWN_LAYOUT: FloorLayout = FLOOR_LAYOUT;
 
 /** The two material families that exist only while the interior is shown. */
 const CEILING_MATERIAL_KEYS: readonly (keyof CeilingLayout)[] = Object.freeze([
@@ -102,7 +138,7 @@ function MaterialMesh({ materialKey, boxes, levels }: MaterialMeshProps) {
   }
   return (
     <MergedBoxesMesh boxes={boxes} levels={levels}>
-      <meshStandardMaterial {...MATERIAL_PALETTE[materialKey]} />
+      <meshStandardMaterial {...MATERIAL_PALETTE[materialKey]} map={FAMILY_TEXTURE[materialKey]} />
     </MergedBoxesMesh>
   );
 }

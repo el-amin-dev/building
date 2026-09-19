@@ -28,10 +28,17 @@ import {
   PORTS,
   WINDOWS,
   FIXTURES,
+  FIXTURE_SPEC,
+  FIXTURE_ROLES,
+  compareFixturePosition,
   INSULATED_WALLS,
   PARAPET_WALLS,
   SIDES,
 } from '../../src/features/building/domain/sourceOfTruth/plan.ts';
+import {
+  getClearanceRect,
+  getSwingRect,
+} from '../../src/features/building/domain/swingClearance.ts';
 import { deriveWalls, wallsByRoom } from './walls.mjs';
 
 /** @import { Axis, DerivedOpening, MutableSpan, PlanSpec, Side, Span, Wall } from './walls.mjs' */
@@ -40,6 +47,7 @@ import { deriveWalls, wallsByRoom } from './walls.mjs';
  *   PlanRectCoordinates, PlanRoom, PlanRoomId, PlanRoomKind }
  *   from '../../src/features/building/domain/sourceOfTruth/plan.ts'
  */
+/** @import { PlanRect, RectSide } from '../../src/features/building/domain/planGeometry.ts' */
 
 /**
  * One of the stairwell's pieces, as {@link STAIR_PIECES} reads it out of STAIRS.
@@ -92,6 +100,9 @@ const SPEC = {
   PORTS,
   WINDOWS,
   FIXTURES,
+  FIXTURE_SPEC,
+  FIXTURE_ROLES,
+  compareFixturePosition,
   INSULATED_WALLS,
   PARAPET_WALLS,
   SIDES,
@@ -232,6 +243,39 @@ const rectsOverlap = (a, b) =>
  * @returns {boolean} Whether it lands on the grid.
  */
 const onGrid = (v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6;
+
+/**
+ * A rect as the domain hands it back, as the four numbers this script speaks.
+ *
+ * `swingClearance.ts` returns a `PlanRect` object and every rect here is a
+ * `[minX, maxX, minZ, maxZ]` tuple, so the two vocabularies meet in exactly one
+ * place: this function. Its edges are already on the centimetre grid —
+ * `toPlanLength` put them there — and `cm` is applied anyway so that a rect
+ * built here is indistinguishable from one built by the arithmetic above it.
+ *
+ * @param {PlanRect} rect A rectangle as the domain names its faces.
+ * @returns {PlanRectCoordinates} The same rectangle, as this script's tuple.
+ */
+const tupleOf = (rect) => [cm(rect.minX), cm(rect.maxX), cm(rect.minZ), cm(rect.maxZ)];
+
+/**
+ * The compass name of a derived wall's face, as the coordinate name the domain
+ * uses for the same face.
+ *
+ * `walls.mjs` names a face by where it looks (`north`), `planGeometry.ts` names
+ * it by the coordinate it lies on (`minZ`): a room's north face IS its `minZ`,
+ * and inward from it is `+z`. The mapping is stated once, here, and checked by
+ * the table in the `swingClearance.ts` module docstring, which was written
+ * against the four-branch ternary this replaces.
+ *
+ * @type {Readonly<Record<Side, RectSide>>}
+ */
+const FACE_OF_SIDE = Object.freeze({
+  north: 'minZ',
+  south: 'maxZ',
+  east: 'maxX',
+  west: 'minX',
+});
 
 const walls = deriveWalls(SPEC);
 const byRoom = wallsByRoom(walls);
@@ -1465,13 +1509,31 @@ check('8. Wall thickness, per contact: every stretch built what the rules ask');
 check('9. Fixtures: inside their room, clear of each other and of every door swing');
 {
   /**
+   * The fixtures and the rooms, widened from the frozen `as const` literals to
+   * the interfaces the plan declares for them.
+   *
+   * WHY, and it is not a formality: `as const` gives `approach`, `note` and
+   * `open` only to the entries that happen to carry one today, so a checker
+   * reading the literal type can ask after an override only where an override
+   * already exists — which is precisely the case it does not need to check. They
+   * are optional fields of EVERY fixture and EVERY room, the interfaces say so,
+   * and these two aliases are what make the rules below hold for a fixture that
+   * has not been written yet.
+   *
+   * @type {readonly PlanFixture[]}
+   */
+  const fixtures = FIXTURES;
+  /** @type {readonly PlanRoom[]} */
+  const rooms = ROOMS;
+
+  /**
    * Keyed by plain string, and widened to `PlanRoom`: a fixture names its room
    * as data, and check 9's first failure is precisely a name the plan does not
    * hold — so the lookup has to be askable with any string.
    *
    * @type {Map<string, PlanRoom>}
    */
-  const roomById = new Map(ROOMS.map((r) => /** @type {[string, PlanRoom]} */ ([r.id, r])));
+  const roomById = new Map(rooms.map((r) => /** @type {[string, PlanRoom]} */ ([r.id, r])));
   /**
    * @param {PlanRectCoordinates} rect The rect to test.
    * @param {PlanRectCoordinates} bounds The rect it has to sit wholly inside.
@@ -1483,7 +1545,70 @@ check('9. Fixtures: inside their room, clear of each other and of every door swi
     rect[2] >= minZ - EPS &&
     rect[3] <= maxZ + EPS;
 
-  for (const [i, f] of FIXTURES.entries()) {
+  /**
+   * One opening on one wall face, in the terms `swingClearance.ts` takes: which
+   * face of the room it is hung in, where that face lies, and the stretch of it
+   * the opening covers. Inward is into the room the wall belongs to, which is
+   * why this is asked of a derived wall rather than of a PORTS entry — a port
+   * is a pair of rooms, a wall face is one of them.
+   *
+   * @param {Wall} wall The face the opening sits on.
+   * @param {DerivedOpening} op The opening.
+   * @returns {import('../../src/features/building/domain/swingClearance.ts').ClearanceFace}
+   *   The face, ready for `getSwingRect` or `getClearanceRect`.
+   */
+  const faceOf = (wall, op) => ({
+    side: FACE_OF_SIDE[wall.side],
+    at: wall.at,
+    spanMin: op.spanMin,
+    width: op.width,
+  });
+
+  /**
+   * The clear distance from each face of a fixture to the corresponding face of
+   * the room rect it stands in, in metres.
+   *
+   * Named in the compass terms the rest of the report uses, so a gap can be read
+   * against the wall register without translating: a fixture's `west` gap is the
+   * one measured to the room's west face.
+   *
+   * @param {PlanRectCoordinates} rect The fixture's rect.
+   * @param {PlanRectCoordinates} bounds The room rect that contains it.
+   * @returns {Record<'west' | 'east' | 'north' | 'south', number>} The four gaps.
+   */
+  const gapsTo = (rect, [minX, maxX, minZ, maxZ]) => ({
+    west: cm(rect[0] - minX),
+    east: cm(maxX - rect[1]),
+    north: cm(rect[2] - minZ),
+    south: cm(maxZ - rect[3]),
+  });
+
+  /**
+   * The four faces of a fixture, in the order the approach rule breaks ties in —
+   * minZ, maxZ, minX, maxX — each with the gap that measures it and the
+   * room-side face `getClearanceRect` reaches the band from.
+   *
+   * The third column is the one that repays reading twice. `getClearanceRect`
+   * reaches INWARD of the face it is given, and the floor a fixture is reached
+   * across lies OUTWARD of the fixture — so the band in front of a fixture's
+   * `minZ` face is the inward clearance of a `maxZ` face standing at the same
+   * coordinate. The opposite face is not a trick: it is what "outward" means
+   * when the only derivation available speaks inward.
+   *
+   * @type {ReadonlyArray<[RectSide, 'west' | 'east' | 'north' | 'south', RectSide]>}
+   */
+  const FIXTURE_FACES = [
+    ['minZ', 'north', 'maxZ'],
+    ['maxZ', 'south', 'minZ'],
+    ['minX', 'west', 'maxX'],
+    ['maxX', 'east', 'minX'],
+  ];
+
+  /** Room rect a fixture was found wholly inside, by its index in FIXTURES. */
+  /** @type {Map<number, PlanRectCoordinates>} */
+  const hostRect = new Map();
+
+  for (const [i, f] of fixtures.entries()) {
     const room = roomById.get(f.room);
     if (!room) {
       fail(`FIXTURES[${i}] ${f.kind} names room '${f.room}', which does not exist`);
@@ -1492,10 +1617,17 @@ check('9. Fixtures: inside their room, clear of each other and of every door swi
     // One rect, not the union: a fixture straddling two rects of an L-shaped
     // room would sit across the internal seam, which is a corner in the room,
     // not a wall — nothing stands there.
-    if (!room.rects.some((r) => inside(f.rect, r))) {
+    const host = room.rects.find((r) => inside(f.rect, r));
+    if (!host) {
       fail(
         `FIXTURES[${i}] ${f.kind} [${f.rect.map(n).join(', ')}] is not wholly inside any rect of ${f.room}`,
       );
+    } else {
+      // Kept, because every rule below — the mount claim, the approach band —
+      // is measured against THIS rect and not against the room's bounding box:
+      // the seam between two rects of an L-shaped room is a corner, not a wall,
+      // and nothing backs onto it.
+      hostRect.set(i, host);
     }
     const offGrid = f.rect.filter((v) => !onGrid(v));
     if (offGrid.length)
@@ -1504,13 +1636,160 @@ check('9. Fixtures: inside their room, clear of each other and of every door swi
       );
   }
 
-  for (let i = 0; i < FIXTURES.length; i += 1) {
-    for (let j = i + 1; j < FIXTURES.length; j += 1) {
-      if (rectsOverlap(FIXTURES[i].rect, FIXTURES[j].rect)) {
+  for (let i = 0; i < fixtures.length; i += 1) {
+    for (let j = i + 1; j < fixtures.length; j += 1) {
+      if (rectsOverlap(fixtures[i].rect, fixtures[j].rect)) {
         fail(
-          `${FIXTURES[i].kind} (${FIXTURES[i].room}) overlaps ${FIXTURES[j].kind} (${FIXTURES[j].room})`,
+          `${fixtures[i].kind} (${fixtures[i].room}) overlaps ${fixtures[j].kind} (${fixtures[j].room})`,
         );
       }
+    }
+  }
+
+  /**
+   * The mount claim, and the floor a fixture is reached across.
+   *
+   * `mount` is a claim about the walls — the arithmetic each value stands for is
+   * written out in the `PlanFixtureMount` docstring, and this is where the claim
+   * is either honoured or not. `approach` is a claim about the room: SOME face
+   * of the fixture has to have clear floor in front of it, or nobody can use the
+   * thing.
+   *
+   * Both are measured against the room rect the fixture was found inside, not
+   * against the room's bounding box, for the reason the containment test gives.
+   */
+  /** Freestanding fixtures, listed out loud: the claim is not an error, but it is not silent either. */
+  /** @type {string[]} */
+  const freestanding = [];
+  /** Fixtures reached across less than the default, each with the room that forced it. */
+  /** @type {string[]} */
+  const reduced = [];
+  /** The face each fixture's approach was satisfied at, for the per-room register. */
+  /** @type {Map<PlanFixture, string>} */
+  const reachedFrom = new Map();
+  for (const [i, f] of fixtures.entries()) {
+    const host = hostRect.get(i);
+    // No host rect means the fixture is not in the room it names, which has
+    // already failed above. Measuring it against a room it is not in would add
+    // a second, derived failure saying nothing new.
+    if (!host) continue;
+    const gaps = gapsTo(f.rect, host);
+    const printed = FIXTURE_FACES.map(([, name]) => `${name} ${m(gaps[name])}`).join(', ');
+    /** @type {'west' | 'east' | 'north' | 'south'} */
+    let nearestName = 'north';
+    let nearest = Infinity;
+    for (const [, name] of FIXTURE_FACES) {
+      if (gaps[name] < nearest) {
+        nearest = gaps[name];
+        nearestName = name;
+      }
+    }
+    const slack = FIXTURE_SPEC.wallGap;
+    if (f.mount === 'mounted' && nearest > EPS) {
+      fail(
+        `${f.kind} in ${f.room} is declared 'mounted' but hangs on nothing: its nearest face is ` +
+          `${m(nearest)} from the room's ${nearestName} face, and a mounted fixture is flush (gaps ${printed})`,
+      );
+    } else if (f.mount === 'standing' && nearest > slack + EPS) {
+      fail(
+        `${f.kind} in ${f.room} is declared 'standing' but backs onto nothing: its nearest face is ` +
+          `${m(nearest)} from the room's ${nearestName} face, over the ${m(slack)} wall gap (gaps ${printed})`,
+      );
+    } else if (f.mount === 'freestanding' && nearest <= slack + EPS) {
+      fail(
+        `${f.kind} in ${f.room} is declared 'freestanding' but its ${nearestName} face is ` +
+          `${m(nearest)} from the room, within the ${m(slack)} wall gap (gaps ${printed})`,
+      );
+    }
+    if (f.mount === 'freestanding') {
+      freestanding.push(
+        `${f.kind} in ${f.room} (nearest wall ${m(nearest)} ${nearestName}${f.note ? `, ${f.note}` : ''})`,
+      );
+    }
+
+    // The depth of the band. `approach` is an override and not a restatement, so
+    // the default is read here and the override only where the room could not
+    // give it — which is exactly the case that must be printed out loud.
+    const depth = f.approach ?? FIXTURE_SPEC.approach;
+    if (f.approach !== undefined && f.approach < FIXTURE_SPEC.approach - EPS) {
+      reduced.push(
+        `${f.kind} in ${f.room}: ${m(f.approach)} instead of ${m(FIXTURE_SPEC.approach)}, ` +
+          `in a rect ${m(host[1] - host[0])} × ${m(host[3] - host[2])}`,
+      );
+    }
+    // Every face, and one of them has to give. NOT the face with the largest gap
+    // to the room: that was a guess at which way a fixture faces, and `rect`
+    // carries no orientation to guess from — a bed against the north wall with a
+    // nightstand either side has its largest gap to the east, so the guess
+    // measured the band along the bed's SIDE, found the nightstand, and failed a
+    // layout that is correct. Moving the bed moves the guess to the other side;
+    // centring it hands the choice to a tie-break. The honest rule with the data
+    // we have is that a fixture is usable when there is clear floor of the
+    // required depth at SOME face, and unusable when there is none at any —
+    // which is still exactly the case worth catching: a fitting boxed in on all
+    // four sides.
+    /** What each face gives, for the failure message: the reader needs all four. */
+    /** @type {string[]} */
+    const offered = [];
+    /** The face that satisfied the rule, deepest first, ties in FIXTURE_FACES order. */
+    /** @type {{ name: RectSide, got: number } | null} */
+    let reached = null;
+    for (const [name, , outward] of FIXTURE_FACES) {
+      const alongX = name === 'minZ' || name === 'maxZ';
+      const at =
+        name === 'minZ'
+          ? f.rect[2]
+          : name === 'maxZ'
+            ? f.rect[3]
+            : name === 'minX'
+              ? f.rect[0]
+              : f.rect[1];
+      const band = tupleOf(
+        getClearanceRect(
+          {
+            side: outward,
+            at,
+            spanMin: alongX ? f.rect[0] : f.rect[2],
+            width: alongX ? cm(f.rect[1] - f.rect[0]) : cm(f.rect[3] - f.rect[2]),
+          },
+          depth,
+        ),
+      );
+      /** @type {PlanRectCoordinates} */
+      const clipped = [
+        cm(Math.max(band[0], host[0])),
+        cm(Math.min(band[1], host[1])),
+        cm(Math.max(band[2], host[2])),
+        cm(Math.min(band[3], host[3])),
+      ];
+      const got = cm(alongX ? clipped[3] - clipped[2] : clipped[1] - clipped[0]);
+      /** @type {string[]} */
+      const blockers = [];
+      for (const [j, other] of fixtures.entries()) {
+        if (j === i || !rectsOverlap(clipped, other.rect)) continue;
+        const ox = cm(Math.min(clipped[1], other.rect[1]) - Math.max(clipped[0], other.rect[0]));
+        const oz = cm(Math.min(clipped[3], other.rect[3]) - Math.max(clipped[2], other.rect[2]));
+        blockers.push(
+          `${other.kind}${other.room === f.room ? '' : ` in ${other.room}`} covers ` +
+            `${m(ox)} × ${m(oz)} = ${m(ox * oz)} m²`,
+        );
+      }
+      offered.push(
+        `${name} ${m(Math.max(got, 0))}${blockers.length ? ` (blocked: ${blockers.join(', ')})` : ''}`,
+      );
+      if (got >= depth - EPS && blockers.length === 0 && (!reached || got > reached.got)) {
+        reached = { name, got };
+      }
+    }
+    if (reached) {
+      // Carried into the register, so a reader sees that the bath is reached
+      // from the north and the basin from the west without re-deriving it.
+      reachedFrom.set(f, `${reached.name} ${m(reached.got)}`);
+    } else {
+      fail(
+        `${f.kind} in ${f.room} cannot be reached from any face: it needs ${m(depth)} clear at one ` +
+          `of them, and inside the room rect [${host.map(n).join(', ')}] it finds ${offered.join('; ')}`,
+      );
     }
   }
 
@@ -1551,24 +1830,17 @@ check('9. Fixtures: inside their room, clear of each other and of every door swi
         // reading — until the field names the room it opens into.
         undirected.set(op.matricule, op.swing);
       }
-      const from = op.spanMin;
-      const to = cm(op.spanMin + op.width);
-      const deep = op.width;
-      /** @type {PlanRectCoordinates} */
-      const rect =
-        w.side === 'north'
-          ? [from, to, w.at, cm(w.at + deep)]
-          : w.side === 'south'
-            ? [from, to, cm(w.at - deep), w.at]
-            : w.side === 'east'
-              ? [cm(w.at - deep), w.at, from, to]
-              : [w.at, cm(w.at + deep), from, to];
-      swings.push({ wall: w, op, rect });
+      // One derivation, two callers. This used to be a four-branch ternary over
+      // `w.side`, and `ports/queries.ts` needed the same rectangle on the
+      // TypeScript side; the second copy would have been the one to drift. The
+      // compass vocabulary is this script's, the face vocabulary is the
+      // domain's, and FACE_OF_SIDE is the whole of the translation.
+      swings.push({ wall: w, op, rect: tupleOf(getSwingRect(faceOf(w, op))) });
     }
   }
 
   for (const swing of swings) {
-    for (const f of FIXTURES) {
+    for (const f of fixtures) {
       if (f.room !== swing.wall.roomId) continue;
       if (!rectsOverlap(f.rect, swing.rect)) continue;
       const ox = cm(Math.min(f.rect[1], swing.rect[1]) - Math.max(f.rect[0], swing.rect[0]));
@@ -1580,9 +1852,105 @@ check('9. Fixtures: inside their room, clear of each other and of every door swi
     }
   }
 
+  /**
+   * A leafless port has no leaf to swing, and that is precisely why it needs
+   * this: nothing in the swing test above would ever look at it, so a sofa could
+   * be stood in the living room's 3.50 m opening and the floor would still read
+   * as closing. The band is `FIXTURE_SPEC.openingClearance` deep on BOTH faces —
+   * a passage is only a passage if you can walk out of it as well as into it.
+   *
+   * @type {{ wall: Wall, op: DerivedOpening, rect: PlanRectCoordinates }[]}
+   */
+  const passages = [];
+  for (const w of walls) {
+    for (const op of w.openings) {
+      if (op.kind !== 'opening') continue;
+      passages.push({
+        wall: w,
+        op,
+        rect: tupleOf(getClearanceRect(faceOf(w, op), FIXTURE_SPEC.openingClearance)),
+      });
+    }
+  }
+
+  for (const passage of passages) {
+    for (const f of fixtures) {
+      if (f.room !== passage.wall.roomId) continue;
+      if (!rectsOverlap(f.rect, passage.rect)) continue;
+      const ox = cm(Math.min(f.rect[1], passage.rect[1]) - Math.max(f.rect[0], passage.rect[0]));
+      const oz = cm(Math.min(f.rect[3], passage.rect[3]) - Math.max(f.rect[2], passage.rect[2]));
+      fail(
+        `${f.kind} in ${f.room} stands in ${passage.op.matricule}: the ${m(FIXTURE_SPEC.openingClearance)} ` +
+          `passage [${passage.rect.map(n).join(', ')}] is covered ${m(ox)} × ${m(oz)} = ${m(ox * oz)} m²`,
+      );
+    }
+  }
+
+  /**
+   * How thick the wall is where an opening sits.
+   *
+   * `wall.thickness` is the THICKEST contact of the face, kept for quantities; a
+   * face that wraps one neighbour heavy and divides another thin is two
+   * thicknesses, and the doorway is as deep as the stretch it is actually cut
+   * through. So the contact under the opening's midpoint is the one asked.
+   *
+   * @param {Wall} wall The face the opening is cut in.
+   * @param {DerivedOpening} op The opening.
+   * @returns {number} Built width of the wall there, in metres.
+   */
+  const thicknessAt = (wall, op) => {
+    const mid = op.spanMin + op.width / 2;
+    const contact = wall.contacts.find((c) => mid >= c.spanMin - EPS && mid <= c.spanMax + EPS);
+    return contact ? contact.thickness : wall.thickness;
+  };
+
+  /**
+   * The doorway itself: the hole in the wall you walk through.
+   *
+   * A DIFFERENT question from the swing band above, and the reason it has to be
+   * asked separately is a real defect this caught. The guest sanitair's shower
+   * door is a sliding leaf, and a sliding leaf is rightly exempt from the swing
+   * test — it needs no floor to open into. But a fitting parked in the doorway
+   * blocks the door just as completely as one parked in a leaf's arc, and until
+   * this check existed nothing asked after it: the basin stood squarely across
+   * the shower doorway and the floor read as closing.
+   *
+   * So it applies to EVERY port kind — leaves that swing, leaves that slide, and
+   * the leafless opening — and it is the opening's own span by the built
+   * thickness of the wall there, taken inward on each face, because a fixture
+   * stands in a room and the hole is in the wall between two of them.
+   *
+   * @type {{ wall: Wall, op: DerivedOpening, built: number, rect: PlanRectCoordinates }[]}
+   */
+  const doorways = [];
+  for (const w of walls) {
+    for (const op of w.openings) {
+      if (op.kind !== 'door' && op.kind !== 'opening') continue;
+      const built = thicknessAt(w, op);
+      // A zero-thickness join is not a wall, so it has no doorway to stand in —
+      // and `getClearanceRect` rejects a depth of zero rather than inventing one.
+      if (built <= EPS) continue;
+      doorways.push({ wall: w, op, built, rect: tupleOf(getClearanceRect(faceOf(w, op), built)) });
+    }
+  }
+
+  for (const doorway of doorways) {
+    for (const f of fixtures) {
+      if (f.room !== doorway.wall.roomId) continue;
+      if (!rectsOverlap(f.rect, doorway.rect)) continue;
+      const ox = cm(Math.min(f.rect[1], doorway.rect[1]) - Math.max(f.rect[0], doorway.rect[0]));
+      const oz = cm(Math.min(f.rect[3], doorway.rect[3]) - Math.max(f.rect[2], doorway.rect[2]));
+      fail(
+        `${f.kind} in ${f.room} stands in the doorway of ${doorway.op.matricule}: the opening itself ` +
+          `— ${m(doorway.op.width)} wide by the ${m(doorway.built)} wall ` +
+          `[${doorway.rect.map(n).join(', ')}] — is covered ${m(ox)} × ${m(oz)} = ${m(ox * oz)} m²`,
+      );
+    }
+  }
+
   /** @type {Map<string, PlanFixture[]>} */
   const byFixtureRoom = new Map();
-  for (const f of FIXTURES) {
+  for (const f of fixtures) {
     // `get` then fill, rather than `has` then `get`: one lookup instead of two,
     // and the list is a value the reader can see is present.
     let list = byFixtureRoom.get(f.room);
@@ -1592,17 +1960,54 @@ check('9. Fixtures: inside their room, clear of each other and of every door swi
     }
     list.push(f);
   }
-  for (const [roomId, list] of byFixtureRoom) {
+  /**
+   * The room half of a fixture's matricule, built the way `walls.mjs` builds it
+   * for a wall: floor, room number, room type. `F1-R12-LND-X3` is then that
+   * prefix and the fixture's place in `compareFixturePosition` order — the same
+   * number the drawing prints beside the shape and the Registers page prints in
+   * its MATRICULE column, because all three sort by the same comparator.
+   *
+   * @param {PlanRoom} room The room the fixture stands in.
+   * @returns {string} e.g. `F1-R12-LND`.
+   */
+  const roomPrefix = (room) => `F${FLOOR_NUMBER}-R${String(room.n).padStart(2, '0')}-${room.type}`;
+
+  // Room by room, in matricule order. At forty-odd fixtures the old flat list
+  // was a
+  // wall of rectangles: what makes it readable is that each row carries the name
+  // the rest of the drawing calls it by, and each room closes with how much of
+  // its floor is standing under something.
+  const registers = [...byFixtureRoom].sort(
+    ([a], [b]) =>
+      (roomById.get(a)?.n ?? Number.MAX_SAFE_INTEGER) -
+      (roomById.get(b)?.n ?? Number.MAX_SAFE_INTEGER),
+  );
+  for (const [roomId, list] of registers) {
     const room = roomById.get(roomId);
-    line(`${room ? `${room.name} (${m(roomArea(room))} m²)` : roomId}:`);
-    for (const f of list) {
+    const area = room ? roomArea(room) : 0;
+    line(`${room ? `${room.name} (${m(area)} m²)` : roomId}:`);
+    const ordered = [...list].sort(compareFixturePosition);
+    const taken = cm(ordered.reduce((sum, f) => sum + rectArea(f.rect), 0));
+    ordered.forEach((f, index) => {
+      const matricule = `${room ? roomPrefix(room) : roomId}-X${index + 1}`;
       line(
-        `   ${f.kind.padEnd(7)} ${m(f.rect[1] - f.rect[0])} × ${m(f.rect[3] - f.rect[2])}` +
-          `  at x ${m(f.rect[0])}–${m(f.rect[1])}, z ${m(f.rect[2])}–${m(f.rect[3])}`,
+        `   ${matricule.padEnd(17)} ${f.kind.padEnd(15)} ` +
+          `${m(f.rect[1] - f.rect[0])} × ${m(f.rect[3] - f.rect[2])}` +
+          `  at x ${m(f.rect[0])}–${m(f.rect[1])}, z ${m(f.rect[2])}–${m(f.rect[3])}` +
+          `  reached from ${reachedFrom.get(f) ?? 'nowhere'}` +
+          (f.note ? `  — ${f.note}` : ''),
       );
-    }
+    });
+    line(
+      `   occupancy: ${m(taken)} m² of ${m(area)} m²` +
+        `${area > EPS ? ` (${Math.round((taken / area) * 100)}%)` : ''}`,
+    );
   }
-  line(`${FIXTURES.length} fixtures, ${swings.length} door faces checked for swing`);
+  line(
+    `${fixtures.length} fixtures, ${swings.length} door faces checked for swing, ` +
+      `${passages.length} leafless port faces checked for a clear ${m(FIXTURE_SPEC.openingClearance)} passage, ` +
+      `${doorways.length} port faces checked for a fixture standing in the doorway itself`,
+  );
   // Named out loud so an exemption is never silent.
   line(
     exempt.size
@@ -1613,6 +2018,54 @@ check('9. Fixtures: inside their room, clear of each other and of every door swi
     line(
       `swing given but not directional, so still tested inward on both faces: ${[...undirected].map(([mat, s]) => `${mat} (swing '${s}')`).join('; ')}`,
     );
+  }
+  // A freestanding fixture is a claim, not an error — a dining table is MEANT to
+  // stand clear. But one that drifted off its wall and one that was meant to
+  // stand in the open are the same four numbers, so the claim is read back out.
+  line(
+    freestanding.length
+      ? `freestanding by declaration, reachable from all four sides: ${freestanding.join('; ')}`
+      : 'nothing is declared freestanding: every fixture backs onto a wall',
+  );
+  // A reduced approach is a recorded decision with a figure on it. Printed every
+  // run, because the one way it could become a mistake is by going unread.
+  line(
+    reduced.length
+      ? `approach reduced below the ${m(FIXTURE_SPEC.approach)} default: ${reduced.join('; ')}`
+      : `no fixture asks for less than the ${m(FIXTURE_SPEC.approach)} default approach`,
+  );
+
+  // The swing inventory. `src/features/building/domain/ports/queries.test.ts`
+  // pins the same rectangles on the TypeScript side, derived from PORTS and the
+  // room rects rather than from the wall register — two routes to one number.
+  // This is the list a human compares the two by, so it prints every door face,
+  // including both faces of a shared door, which is what the test also holds.
+  line('swing inventory — the floor each leaf needs, by door face:');
+  for (const swing of [...swings].sort((a, b) =>
+    a.op.matricule === b.op.matricule
+      ? a.wall.roomId.localeCompare(b.wall.roomId)
+      : a.op.matricule.localeCompare(b.op.matricule),
+  )) {
+    line(
+      `   ${swing.op.matricule.padEnd(17)} ${swing.wall.roomId.padEnd(18)} ` +
+        `${m(swing.op.width)} × ${m(swing.op.width)} inward of ${swing.wall.side}` +
+        `  [${swing.rect.map(n).join(', ')}]`,
+    );
+  }
+
+  // The owner's own unresolved items, on the rooms they belong to. They live on
+  // PlanRoom rather than only in the brief because the brief is a document you
+  // have to know to open; printing them here is what puts them in front of him
+  // in the same run that proves the floor closes.
+  const unsettled = rooms.filter((room) => (room.open?.length ?? 0) > 0);
+  line(
+    unsettled.length
+      ? `OPEN ITEMS — ${unsettled.length} room(s) carry something the owner has not settled:`
+      : 'OPEN ITEMS — none: no room carries an unresolved item',
+  );
+  for (const room of unsettled) {
+    line(`   ${roomPrefix(room)} ${room.name}:`);
+    for (const item of room.open ?? []) line(`      · ${item}`);
   }
 }
 

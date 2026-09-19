@@ -57,8 +57,8 @@ const APPROACH_SET_BACK = 0.3;
 const EXPECTED_BODY_RADIUS = 0.25;
 const EXPECTED_APPROACH_MARGIN = 0.05;
 
-/** Spaces an explorer can reach from the arrival: all 22 of the plan but its two voids. */
-const REACHABLE_SPACE_COUNT = 20;
+/** Spaces an explorer can reach from the arrival: all 21 of the plan but its two voids. */
+const REACHABLE_SPACE_COUNT = 19;
 
 /** Longest distance between two samples of a leg, in metres. */
 const SAMPLE_STEP_METRES = 0.05;
@@ -305,11 +305,17 @@ describe('the destination of a space', () => {
 
   it('sends the walker into the guest room, not into its 0.75 m circulation strip', () => {
     const [strip, room] = getSpace(FLOOR_PLAN, 'guestRoom').rects;
-    // The strip is the larger rect by plain area, and the wrong answer.
+    // The strip is STILL the larger rect by plain area, and still the wrong
+    // answer — but only just. The leg grew from 2.80 m wide to 3.80 when the
+    // guest shower was dropped and the suite slid east, so 4.34 m² became 5.89
+    // against the strip's unchanged 6.075. The margin the rule is decided on is
+    // standing area, not this one: eroded by the 0.25 m body the strip keeps
+    // 7.60 × 0.25 = 1.90 and the leg 3.30 × 1.05 = 3.465.
     expect(rectArea(strip)).toBeCloseTo(6.075, PRECISION_DIGITS);
-    expect(rectArea(room)).toBeCloseTo(4.34, PRECISION_DIGITS);
+    expect(rectArea(room)).toBeCloseTo(5.89, PRECISION_DIGITS);
+    expect(rectArea(strip)).toBeGreaterThan(rectArea(room));
     const destination = destinationOf(FLOOR_PLAN, 'guestRoom');
-    expect(destination).toEqual({ x: 5.5, z: 7.825 });
+    expect(destination).toEqual({ x: 6, z: 7.825 });
     expect(rectContainsPoint(room, destination)).toBe(true);
     expect(rectContainsPoint(strip, destination)).toBe(false);
   });
@@ -366,8 +372,11 @@ describe('getRouteWaypoints', () => {
       { x: 5.3, z: 4.75 },
       { x: 5.1, z: 5.7 },
       { x: 5.1, z: 6.6 },
-      { x: 5.5, z: 7.05 },
-      { x: 5.5, z: 7.825 },
+      // The seam between the guest room's two rects, crossed square-on: a body
+      // radius short of it, then a body radius past it.
+      { x: 6, z: 6.8 },
+      { x: 6, z: 7.3 },
+      { x: 6, z: 7.825 },
     ]);
   });
 
@@ -380,7 +389,9 @@ describe('getRouteWaypoints', () => {
         ARRIVAL,
       ),
     ).toEqual([
-      { x: 5.5, z: 7.05 },
+      // Leaving the room leg for the strip, the same seam is crossed the other way.
+      { x: 6, z: 7.3 },
+      { x: 6, z: 6.8 },
       { x: 5.1, z: 6.6 },
       { x: 5.1, z: 5.7 },
       { x: 5.3, z: 4.75 },
@@ -388,6 +399,70 @@ describe('getRouteWaypoints', () => {
       { x: 13.15, z: 5.2 },
       { x: 13.15, z: 6.1 },
       { x: 13.15, z: 7.2 },
+    ]);
+  });
+
+  /**
+   * The guest suite is the tightest chain on the floor, and the one the room tour
+   * spends longest on: a 0.55 m open part, one cubicle 0.70 m deep behind a 0.60 m
+   * leaf, and a seam to cross before any of it. The sweep over every reachable
+   * space, below, already proves no waypoint of it stands in masonry — but it
+   * proves that of 342 routes at once and names none of them. These three pin the
+   * chain itself, so a regression here reads as "the guest suite" rather than as
+   * one number in a table of hundreds.
+   *
+   * The suite is a chain and no longer a fork: the shower the walk used to branch
+   * to at the open part is gone (owner, 2026-09-19), so the second half of this
+   * test compares the bath route against the route that stops at the open part
+   * instead of against the shower's.
+   */
+  it('threads the guest suite, through its 0.55 m open part into its one cubicle', () => {
+    const toBath = getRouteWaypoints(
+      FLOOR_PLAN,
+      PORT_SCHEDULE,
+      ['guestRoom', 'guestSanitair', 'guestBathCubicle'],
+      ARRIVAL,
+    );
+    expect(toBath).toEqual([
+      // Out of the room leg, across the seam, into the circulation strip.
+      { x: 6, z: 7.3 },
+      { x: 6, z: 6.8 },
+      // The strip carries the walk east to the sanitair door — x 8.10–8.80 now
+      // that the suite has slid east, so 8.45 on its centre line — and the open
+      // part takes its approach point at its own mid-depth: 0.55 m leaves 0.025 m
+      // at each side of a 0.50 m body, which is the whole of what this room has.
+      { x: 8.45, z: 6.75 },
+      { x: 8.45, z: 7.475 },
+      // The 0.60 m cubicle leaf at x 8.20–8.80, crossed square-on either side,
+      // then the centre of the cubicle it opens into. The suite's two leaves sit
+      // in OPPOSITE faces of a room 0.55 m deep — the room door at x 8.10–8.80 in
+      // the north face, this one at 8.20–8.80 in the south — so the walk crosses
+      // the open part almost straight through and barely moves along x.
+      { x: 8.5, z: 7.475 },
+      { x: 8.5, z: 8.2 },
+      { x: 8.95, z: 8.25 },
+    ]);
+    const toOpenPart = getRouteWaypoints(
+      FLOOR_PLAN,
+      PORT_SCHEDULE,
+      ['guestRoom', 'guestSanitair'],
+      ARRIVAL,
+    );
+    // The walk to the open part IS the first half of the walk to the bath: the
+    // two share every waypoint up to it, and only then does the cubicle leg begin.
+    expect(toOpenPart.slice(0, 4)).toEqual(toBath.slice(0, 4));
+    // And the shorter walk is asserted whole, not as the prefix restated: the
+    // prefix case above would pass on any tail at all, so the one waypoint that is
+    // this route's own — the open part's own destination, the centre of a room that
+    // is 1.80 m wide and 0.55 m deep — is the only part of it that is being tested
+    // here. It stops at the seam it entered by, on the same z as the approach point,
+    // because there is no second leaf to cross.
+    expect(toOpenPart).toEqual([
+      { x: 6, z: 7.3 },
+      { x: 6, z: 6.8 },
+      { x: 8.45, z: 6.75 },
+      { x: 8.45, z: 7.475 },
+      { x: 8.95, z: 7.475 },
     ]);
   });
 
@@ -536,13 +611,18 @@ describe('an approach point in a shallow room', () => {
       ARRIVAL,
     );
     expect(waypoints).toEqual([
-      { x: 5.5, z: 7.05 },
-      { x: 7.75, z: 6.75 },
-      { x: 7.75, z: 7.475 },
+      // Out of the room leg, square-on across the seam, and only then along the
+      // strip. This is the walk that used to wedge: with one waypoint on the seam
+      // the next leg ran diagonally to the door and clipped the notch at x 6.90,
+      // 0.06 m inside the wall, every single time.
+      { x: 6, z: 7.3 },
+      { x: 6, z: 6.8 },
+      { x: 8.45, z: 6.75 },
       { x: 8.45, z: 7.475 },
+      { x: 8.95, z: 7.475 },
     ]);
     const [openPart] = getSpace(FLOOR_PLAN, 'guestSanitair').rects;
-    const inside = waypoints[2];
+    const inside = waypoints[3];
     // 0.025 m clear at each side; a flat 0.30 would have put the body's far
     // edge exactly on the far wall at z 7.75.
     expect(inside.z - BODY_RADIUS - openPart.minZ).toBeCloseTo(0.025, PRECISION_DIGITS);
@@ -552,7 +632,7 @@ describe('an approach point in a shallow room', () => {
 });
 
 describe('an intra-space connector', () => {
-  it('lands on the face the two rects of the guest room share', () => {
+  it('crosses the face the two rects of the guest room share square-on', () => {
     const waypoints = getRouteWaypoints(
       FLOOR_PLAN,
       PORT_SCHEDULE,
@@ -560,11 +640,22 @@ describe('an intra-space connector', () => {
       ARRIVAL,
     );
     const [strip, room] = getSpace(FLOOR_PLAN, 'guestRoom').rects;
-    const connector = waypoints[waypoints.length - 2];
-    expect(connector).toEqual({ x: 5.5, z: 7.05 });
-    expect(connector.z).toBe(strip.maxZ);
-    expect(connector.z).toBe(room.minZ);
-    expect(isBodyCovered(connector, getFloorRects())).toBe(true);
+    // A pair, not a point: a body radius either side of the seam and at the same
+    // position along it, so the crossing is perpendicular. A single waypoint on the
+    // face let the body arrive along one diagonal and leave along another, and the
+    // corner it cut between them is the notch the connector exists to avoid.
+    const before = waypoints[waypoints.length - 3];
+    const after = waypoints[waypoints.length - 2];
+    // This route arrives in the strip and ends in the room leg, so the body leaves
+    // the strip first: 6.80 is a body radius short of the seam, 7.30 a radius past it.
+    expect(before).toEqual({ x: 6, z: 6.8 });
+    expect(after).toEqual({ x: 6, z: 7.3 });
+    expect(before.x).toBe(after.x);
+    expect(strip.maxZ).toBe(room.minZ);
+    expect(before.z + BODY_RADIUS).toBeCloseTo(strip.maxZ, PRECISION_DIGITS);
+    expect(after.z - BODY_RADIUS).toBeCloseTo(room.minZ, PRECISION_DIGITS);
+    expect(isBodyCovered(before, getFloorRects())).toBe(true);
+    expect(isBodyCovered(after, getFloorRects())).toBe(true);
   });
 
   it('is left out when a space is entered and left through the same rect', () => {
@@ -574,7 +665,7 @@ describe('an intra-space connector', () => {
       ['stairs', 'corridor', 'kitchen'],
       ARRIVAL,
     );
-    // Two crossings, two points each, then the destination: no connector.
+    // Two crossings, two points each, then the destination: no connector pair.
     expect(waypoints).toHaveLength(5);
   });
 });
@@ -608,6 +699,44 @@ describe('the wall-crossing proof', () => {
         }
         previous = waypoint;
       });
+    }
+    expect(offFloor).toEqual([]);
+  });
+
+  it('keeps it on the floor from every room, not only from the stair arrival', () => {
+    // The test above walks from ONE point, and that is how a real defect survived it:
+    // every leg out of the guest room's south leg cut the notch where its two rects
+    // stop overlapping, and no route from the arrival starts there. Seven of these
+    // pairs walked through wall before the seam was crossed square-on.
+    const reachable = [...getReachableSpaceIds(FLOOR_PLAN, PORT_SCHEDULE, ARRIVAL)];
+    const floor = getFloorRects();
+    const offFloor: string[] = [];
+    for (const fromId of reachable) {
+      const [rect] = getSpace(FLOOR_PLAN, fromId).rects;
+      const standing: PlanPoint = Object.freeze({
+        x: (rect.minX + rect.maxX) / 2,
+        z: (rect.minZ + rect.maxZ) / 2,
+      });
+      if (!isBodyCovered(standing, floor)) {
+        continue;
+      }
+      for (const toId of reachable) {
+        const route = findSpaceRoute(FLOOR_PLAN, PORT_SCHEDULE, standing, toId);
+        if (route.length === 0) {
+          continue;
+        }
+        const waypoints = getRouteWaypoints(FLOOR_PLAN, PORT_SCHEDULE, route, standing);
+        const allowed = getAllowedRects(route);
+        let previous = standing;
+        for (const waypoint of waypoints) {
+          for (const sample of sampleLeg(previous, waypoint)) {
+            if (!isBodyCovered(sample, allowed)) {
+              offFloor.push(`${fromId} → ${toId} at (${String(sample.x)}, ${String(sample.z)})`);
+            }
+          }
+          previous = waypoint;
+        }
+      }
     }
     expect(offFloor).toEqual([]);
   });

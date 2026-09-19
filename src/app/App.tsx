@@ -1,18 +1,62 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { useViewStore } from '../features/building/application/viewStore.ts';
-import { BuildingScene } from '../features/building/ui/BuildingScene.tsx';
 import { CameraModeToggle } from '../features/building/ui/CameraModeToggle.tsx';
-import { DebugPanel } from '../features/building/ui/DebugPanel.tsx';
 import { FloorCountStepper } from '../features/building/ui/FloorCountStepper.tsx';
 import { Minimap } from '../features/building/ui/Minimap.tsx';
 import { NavigationHint } from '../features/building/ui/NavigationHint.tsx';
 import { OrbitPad } from '../features/building/ui/OrbitPad.tsx';
 import { RemoteControl } from '../features/building/ui/RemoteControl.tsx';
+import { RoomInfoPanel } from '../features/building/ui/RoomInfoPanel.tsx';
+import { SceneErrorBoundary } from '../features/building/ui/SceneErrorBoundary.tsx';
+import { SceneLoading } from '../features/building/ui/SceneLoading.tsx';
+import { SceneUnavailable } from '../features/building/ui/SceneUnavailable.tsx';
+import { detectWebGLSupport } from '../features/building/ui/webglSupport.ts';
 import { RoomMenu } from '../features/building/ui/RoomMenu.tsx';
 import { RoomReadout } from '../features/building/ui/RoomReadout.tsx';
 import { usePrefersReducedMotion } from '../features/building/ui/usePrefersReducedMotion.ts';
 import { ViewModeToggle } from '../features/building/ui/ViewModeToggle.tsx';
 import { appConfig } from './config.ts';
+
+/**
+ * The 3D scene, loaded on its own chunk.
+ *
+ * Every HUD panel above is three.js-free; the whole 3D payload — three, `@react-three/fiber`,
+ * drei and the building model — is reachable only through `BuildingScene`, so this one dynamic
+ * import is what separates the shell from the megabyte behind it. Statically imported it made a
+ * single 1.4 MB entry chunk (402 kB gzipped), and the HUD could not paint until all of it had
+ * parsed. The budget in `tooling/bundleBudget.ts` is what keeps it that way: it asserts on the
+ * *initial* set — the entry plus what it statically imports — so a stray top-level import of
+ * anything under the scene would fail `pnpm size` rather than quietly rejoin the two.
+ */
+const BuildingScene = lazy(() =>
+  import('../features/building/ui/BuildingScene.tsx').then((module) => ({
+    default: module.BuildingScene,
+  })),
+);
+
+/**
+ * The Leva tweak panel, loaded on its own chunk and hidden unless it is wanted.
+ *
+ * Lazy so that Leva is not in the initial chunk — it is development furniture and a visitor
+ * should not wait for it.
+ *
+ * **It is always mounted, and that is load-bearing.** Leva injects a panel of its own the
+ * moment anything calls `useControls` without a `<Leva>` root in the tree, and `SceneLighting`
+ * does exactly that (ADR-009). The injected panel arrives uncollapsed and positioned over the
+ * HUD, where at a phone width it sits on top of the view toggle and swallows its clicks. So
+ * the mount suppresses Leva's own panel and the `visible` prop decides whether ours is shown;
+ * gating the mount on the flag looks like a tidier saving and silently hands the page back to
+ * Leva. `DebugPanel`'s own docblock says so, and this comment exists because that was not
+ * enough to stop it happening once.
+ *
+ * Mounting it costs no bytes a visitor would otherwise avoid: `SceneLighting` imports Leva
+ * regardless, so it travels with the scene chunk either way.
+ */
+const DebugPanel = lazy(() =>
+  import('../features/building/ui/DebugPanel.tsx').then((module) => ({
+    default: module.DebugPanel,
+  })),
+);
 
 /**
  * Root component: a full-screen 3D scene with a HUD overlay on top.
@@ -24,16 +68,25 @@ import { appConfig } from './config.ts';
  * "Add a floor", "Go to room", and the pad buttons. The readout, the stepper's own reading
  * and the minimap are not tab stops; they are read, not operated.
  *
- * **Every panel sits inside the one overlay div**, which is also the element the end-to-end
- * screenshot helper masks (`tests/e2e/sceneCapture.ts` finds it as the child of `<main>`
- * holding the view status). The readout, the minimap and a held pad button all change as
- * the viewer walks, so a panel left outside that mask would make a frame comparison pass on
- * its own pixels. Each panel decides for itself whether the current view wants it, so they
- * are all mounted unconditionally: the readout is `sr-only` and out of flow while there is
- * nothing to announce, the menu, hint, minimap and remote control render nothing outside the
- * interior, and the orbit pad renders nothing outside the exterior. The floor stepper is the
- * one panel with no such branch at all: how tall the building is, is as much a fact of the
- * exterior it is seen from as of the interior it is walked in.
+ * **Every panel sits inside the one overlay div, and that div carries `data-hud-overlay`.**
+ * That attribute is a **test contract**, not decoration: the end-to-end screenshot helper
+ * (`tests/e2e/sceneCapture.ts`) finds the HUD by this exact string and hides it before every
+ * frame comparison, and the stylesheet that hides it keys on the same string, so locator and
+ * rule cannot drift apart. It is deliberately a production attribute, in the same family as
+ * `data-camera-transition` on the view region (`ui/BuildingScene.tsx`, the gate that stops a
+ * screenshot mid-flight) and `data-plan-x` / `data-plan-z` on the minimap marker
+ * (`ui/Minimap.tsx`, how a walking test reads a live coordinate). **Do not remove it while
+ * refactoring this markup.** Nothing would break loudly: the readout, the minimap and a held
+ * pad button all change as the viewer walks, so an unhidden HUD makes a frame comparison pass
+ * on its own pixels — every screenshot baseline would silently start comparing the HUD again,
+ * and the scene it is meant to compare would go unchecked.
+ *
+ * Each panel decides for itself whether the current view wants it, so they are all mounted
+ * unconditionally: the readout is `sr-only` and out of flow while there is nothing to announce,
+ * the menu, hint, minimap and remote control render nothing outside the interior, and the orbit
+ * pad renders nothing outside the exterior. The floor stepper is the one panel with no such
+ * branch at all: how tall the building is, is as much a fact of the exterior it is seen from as
+ * of the interior it is walked in.
  *
  * On a narrow viewport the stack would eat the top half of the screen and leave the 3D view a
  * strip, which defeats the pad it hosts: the pad is the only way to move for someone without a
@@ -50,10 +103,21 @@ import { appConfig } from './config.ts';
  * deterministic object for the tests. It governs the exterior↔interior camera flight and
  * nothing else (`application/viewStore.ts`): an automatic walk is locomotion, not decoration.
  *
+ * The scene is wrapped rather than merely lazied, and each layer answers a different failure:
+ * the capability check decides before anything is fetched, the boundary catches a render-phase
+ * throw and a chunk that will not load — which the deploy of ADR-018 makes reachable, since a
+ * client holding a cached `index.html` can ask for a hashed chunk a later release has pruned —
+ * and the Suspense fallback covers the wait in between. Without the boundary a rejected
+ * `import()` unmounts the whole root and takes the HUD with it.
+ *
  * @returns The application shell.
  */
 export function App() {
   const prefersReducedMotion = usePrefersReducedMotion();
+  // Asked once for the life of the page, and asked BEFORE the lazy subtree renders: a browser
+  // that cannot draw the scene must not download it. `detectWebGLSupport` reports the
+  // unsupported case itself, so there is nothing to report here.
+  const [webglSupport] = useState(detectWebGLSupport);
   const setPrefersReducedMotion = useViewStore((state) => state.setPrefersReducedMotion);
 
   useEffect(() => {
@@ -63,15 +127,29 @@ export function App() {
   return (
     <main className="relative h-full w-full overflow-hidden">
       <h1 className="sr-only">{appConfig.appTitle}</h1>
-      <BuildingScene />
-      <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-start p-2 sm:p-4">
+      {webglSupport === 'unsupported' ? (
+        <SceneUnavailable reason="webgl-unsupported" />
+      ) : (
+        <SceneErrorBoundary>
+          <Suspense fallback={<SceneLoading />}>
+            <BuildingScene />
+          </Suspense>
+        </SceneErrorBoundary>
+      )}
+      <div
+        data-hud-overlay=""
+        className="pointer-events-none absolute inset-x-0 top-0 flex justify-start p-2 sm:p-4"
+      >
         <div className="pointer-events-auto flex flex-col items-start gap-2">
           <div className="flex flex-wrap items-start gap-2">
             <ViewModeToggle />
             <CameraModeToggle />
             <FloorCountStepper />
           </div>
-          <RoomMenu />
+          <div className="flex flex-wrap items-start gap-2">
+            <RoomMenu />
+            <RoomInfoPanel />
+          </div>
           <NavigationHint />
           <RoomReadout />
           <Minimap />
@@ -79,7 +157,9 @@ export function App() {
           <OrbitPad />
         </div>
       </div>
-      <DebugPanel visible={appConfig.showDebugPanel} />
+      <Suspense fallback={null}>
+        <DebugPanel visible={appConfig.showDebugPanel} />
+      </Suspense>
     </main>
   );
 }

@@ -26,7 +26,7 @@ const NO_WALL = 0;
 /** The one join the owner kept at the drawn 0.20 (ADR-006). */
 const UTILITY_VOID_THICKNESS = 0.2;
 /** Every pair of adjacent spaces of the real plan. A tripwire on the sweeps below. */
-const ADJACENT_PAIR_COUNT = 52;
+const ADJACENT_PAIR_COUNT = 49;
 
 const PLOT = makeRect(0, 15, 0, 8);
 const INTERIOR = makeRect(0.3, 14.7, 0.3, 7.7);

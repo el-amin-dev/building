@@ -838,32 +838,6 @@ function buildWindowsTable(spec, index) {
 }
 
 /**
- * Position order of two fixtures in the same room: plan reading order.
- *
- * A fixture's number is part of its matricule, so this comparator decides what
- * `F1-R13-BTH-X1` names — and the plan page must reach the same answer, or the
- * two pages disagree about which fitting is which while both look correct. The
- * rule is therefore fixed here, in one place, and justified rather than assumed:
- * north strip first (`minZ`, since z runs C→B), then west to east (`minX`), which
- * is how the drawing is read.
- *
- * It is not an arbitrary pick between that and `minX`-first. Sorting the main
- * sanitair this way yields sink, shower, bath, and the guest sanitair sink, bath
- * — exactly the owner's own recorded notation for the two rooms,
- * `[open sink [shower][bath]]` and `[open sink [bath]]` (ADR-006, TASKS §Part 1).
- * Sorting by `minX` first yields bath, sink, shower, which matches nothing the
- * owner ever said, and declaration order swaps the shower and the bath. The
- * ordering that reproduces the owner's description is the one that is right.
- *
- * @param {{ rect: readonly number[] }} a
- * @param {{ rect: readonly number[] }} b
- * @returns {number} Negative when `a` is read first.
- */
-function byPosition(a, b) {
-  return a.rect[2] - b.rect[2] || a.rect[0] - b.rect[0];
-}
-
-/**
  * Describe the rectangle a fixture occupies, in the form the wall runs use.
  *
  * A fixture is a footprint, not a run, so both spans are stated: the reader
@@ -880,76 +854,103 @@ function describeRect(rect) {
 }
 
 /**
- * Fixture kinds that are a screen wall inside a room rather than a fitting.
+ * What is printed for a kind the spec's role record does not classify.
  *
- * Conservative on purpose: a kind that is not listed here is reported as a
- * fitting, so a structural kind added to the spec later shows up as a fitting
- * until it is named here. That is the safe direction to be wrong in — a screen
- * miscounted as a basin is a visible oddity in a six-row table, whereas a basin
- * miscounted as a screen would quietly understate what the owner asked for.
+ * `FIXTURE_ROLES` is declared `satisfies Record<PlanFixtureKind, PlanFixtureRole>`,
+ * so a kind that is in the union and missing from the record fails the build
+ * before it reaches this page: the only way to arrive here is a `kind` that is
+ * not in the union at all, which is a fact about the data and not a gap in the
+ * classification. Saying so is the conservative answer. This page used to
+ * default an unknown kind to `fitting`, which read as a plumbed-in fixture the
+ * owner could check off his list — a guess presented as an answer, and the one
+ * direction it is not safe to be wrong in.
  */
-const SCREEN_WALL_KINDS = Object.freeze(['partition']);
-
-/** Role of a fixture that divides space rather than being used. */
-const ROLE_SCREEN = 'screen wall';
-
-/** Role of an ordinary fitting: something installed to be used. */
-const ROLE_FITTING = 'fitting';
+const ROLE_UNCLASSIFIED = 'unclassified';
 
 /**
- * Whether a fixture is a screen wall or a fitting.
+ * Index of the ROLE cell in a fixture row.
  *
- * The owner reads this register to check the fittings they asked for, and a
- * T-shaped screen is not one: it is a piece of wall inside a room, held in
- * `FIXTURES` because that is where its rectangle lives, not because it is a
- * basin. Saying so in its own column is what keeps the table honest.
- *
- * The distinction is deliberately presentational, and touches neither the
- * ordering nor the number. Both are shared with the plan page, which sorts every
- * fixture of a room together (`fixturesByRoom`, `render-plan.mjs`), so pulling
- * the screens out into their own block here would renumber the fittings and make
- * the two pages disagree about what `F1-R10-BTH-X3` names. The consequence is
- * that the two rects of one screen can be numbered apart, interleaved with the
- * fittings they enclose; this column is precisely what stops that reading as a
- * mistake.
- *
- * @param {string} kind - A fixture's `kind`; every declared fixture carries one.
- * @returns {string} {@link ROLE_SCREEN} or {@link ROLE_FITTING}.
+ * {@link summariseFixtures} counts the roles, and a role is now one of four
+ * words rather than one of two, so searching the whole row for a known string
+ * would miscount the moment a note or a room name happened to contain one of
+ * them. The column is named once, here, next to the row that is built with it.
  */
-function fixtureRole(kind) {
-  return SCREEN_WALL_KINDS.includes(kind) ? ROLE_SCREEN : ROLE_FITTING;
+const ROLE_COLUMN = 3;
+
+/**
+ * What a fixture is FOR, read from the spec rather than decided here.
+ *
+ * The roles — `fitting`, `appliance`, `furniture`, `services` — are the owner's
+ * distinction between what is plumbed into the building, what is delivered and
+ * connected, what he may rearrange the day he moves in, and what belongs to the
+ * building's own services. That is a fact about the kind, so it lives beside the
+ * kinds in `plan.ts` as a total record, and this page looks the answer up
+ * instead of holding a second, partial opinion about it.
+ *
+ * The role is presentational only: it touches neither the ordering nor the
+ * number. Both are shared with the plan page, which sorts every fixture of a
+ * room together, so grouping the rows by role here would renumber them and make
+ * the two pages disagree about what `F1-R10-BTH-X3` names.
+ *
+ * @param {PlanSpec} spec - The plan namespace, for its `FIXTURE_ROLES`.
+ * @param {string} kind - A fixture's `kind`; every declared fixture carries one.
+ * @returns {string} The spec's role for that kind, or {@link ROLE_UNCLASSIFIED}.
+ */
+function fixtureRole(spec, kind) {
+  /** @type {Readonly<Record<string, string>>} */
+  const roles = spec.FIXTURE_ROLES;
+  return roles[kind] ?? ROLE_UNCLASSIFIED;
 }
 
 /**
- * Count the fixture rows for the table's title.
+ * Count the fixture rows for the table's title, by role.
  *
  * The title is the line a reader trusts to say what the table contains, so it is
- * counted from the rendered rows rather than written down: while every row is a
- * fitting it says so, and as soon as the spec holds something that is not one it
- * reports the split instead of quietly calling a screen wall a fitting.
+ * counted from the rendered rows rather than written down. It is counted BY ROLE
+ * because at forty-odd entries "42 fittings" would be false as well as useless:
+ * four of them are plumbed in, the rest are machines and furniture, and the
+ * owner reads the register to check what he asked for room by room.
  *
  * The rows are searched for the role text rather than indexed by column number,
  * so inserting a column cannot silently turn this count into nonsense; no other
  * column can hold that text.
  *
  * @param {Row[]} rows - The fixture rows, already built.
- * @returns {string} e.g. `'9 entries: 7 fittings and 2 screen walls'`.
+ * @returns {string} e.g. `'42 entries: 5 fittings, 6 appliances, 30 furniture, 1 services'`.
  */
 function summariseFixtures(rows) {
-  const screens = rows.filter((row) => row.cells.includes(ROLE_SCREEN)).length;
-  const fittings = rows.length - screens;
-  /** @type {(count: number, noun: string) => string} */
-  const plural = (count, noun) => `${count} ${noun}${count === 1 ? '' : 's'}`;
-  if (screens === 0) return plural(rows.length, 'fitting');
-  const entries = `${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}`;
-  return `${entries}: ${plural(fittings, 'fitting')} and ${plural(screens, 'screen wall')}`;
+  const body = rows.filter((row) => row.kind === 'body');
+  /** @type {Map<string, number>} */
+  const counts = new Map();
+  for (const row of body) {
+    const role = row.cells[ROLE_COLUMN] ?? ROLE_UNCLASSIFIED;
+    counts.set(role, (counts.get(role) ?? 0) + 1);
+  }
+  /**
+   * The plural of a role. `furniture` is a mass noun and `services` is already
+   * plural, so the rule cannot be "add an s" — and a title reading
+   * "24 furnitures" is the kind of small wrongness that makes a reader distrust
+   * the numbers beside it.
+   *
+   * @type {(count: number, noun: string) => string}
+   */
+  const plural = (count, noun) =>
+    `${count} ${count === 1 || noun.endsWith('s') || noun === 'furniture' ? noun : `${noun}s`}`;
+  const split = [...counts]
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+    .map(([role, count]) => plural(count, role));
+  if (split.length <= 1) return plural(body.length, split[0] ?? 'entry');
+  return `${body.length} entries: ${split.join(', ')}`;
 }
 
 /**
- * FIXTURES: what stands in the rooms — the fittings, the television, and the
- * screen walls that divide a room without reaching the ceiling.
+ * FIXTURES: what stands in the rooms — the sanitary ware, the appliances and the
+ * furniture the owner listed room by room.
  *
- * Numbered per room with the tag `X`, in {@link byPosition} order, on the room
+ * Numbered per room with the tag `X`, in `compareFixturePosition` order — the
+ * spec's own comparator, because the number it decides is part of a matricule
+ * and therefore part of the plan's identity scheme, not a presentation choice
+ * this page is free to make. It is on the room
  * matricule the other tables already use: `F1-R13-BTH-X1`. The room part is taken
  * from the derived walls exactly as {@link buildRoomsTable} takes it, so a room
  * cannot be `R13` in one table and `R13` in another by coincidence rather than by
@@ -989,7 +990,8 @@ function buildFixturesTable(spec, walls) {
   for (const [roomId, list] of ordered) {
     const room = roomsById.get(roomId);
     const prefix = room ? roomMatricule(spec, room, prefixes) : roomId;
-    [...list].sort(byPosition).forEach((fixture, index) => {
+    let roomArea = 0;
+    [...list].sort(spec.compareFixturePosition).forEach((fixture, index) => {
       if (!kinds.includes(fixture.kind)) kinds.push(fixture.kind);
       // Read through a plain list of numbers, the shape {@link describeRect} also
       // takes, so the defensive `?? []` survives typing: the union of the tuple
@@ -999,18 +1001,38 @@ function buildFixturesTable(spec, walls) {
       const rect = fixture.rect ?? [];
       const [minX, maxX, minZ, maxZ] = rect;
       const hasRect = typeof minX === 'number' && typeof minZ === 'number';
+      const area = hasRect ? (maxX - minX) * (maxZ - minZ) : 0;
+      roomArea += area;
       rows.push({
         kind: 'body',
         cells: [
           `${prefix}-X${index + 1}`,
           spaceName(names, roomId),
           fixture.kind ?? ABSENT,
-          fixtureRole(fixture.kind),
+          fixtureRole(spec, fixture.kind),
           describeRect(fixture.rect),
           hasRect ? `${metres(maxX - minX)} × ${metres(maxZ - minZ)}` : ABSENT,
-          hasRect ? metres((maxX - minX) * (maxZ - minZ)) : ABSENT,
+          hasRect ? metres(area) : ABSENT,
+          fixture.note ?? '',
         ],
       });
+    });
+    // Each room closes with what is standing in it, the way the walls table
+    // closes each room with its wall length. At forty-odd rows the register is
+    // read a room at a time, and the question asked of a room is how much of its
+    // floor is under something — which no individual row answers.
+    rows.push({
+      kind: 'subtotal',
+      cells: [
+        '',
+        `subtotal — ${spaceName(names, roomId)}`,
+        `${list.length} fixture${list.length === 1 ? '' : 's'}`,
+        '',
+        '',
+        '',
+        metres(roomArea),
+        '',
+      ],
     });
   }
 
@@ -1024,6 +1046,7 @@ function buildFixturesTable(spec, walls) {
       { head: 'OCCUPIES', align: 'left' },
       { head: 'SIZE m', align: 'left' },
       { head: 'AREA m²', align: 'right' },
+      { head: 'NOTE', align: 'left' },
     ],
     rows,
   };

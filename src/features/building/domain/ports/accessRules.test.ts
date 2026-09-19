@@ -6,8 +6,8 @@ import { getPortPartners, getPortsOf } from './queries.ts';
 import { validatePorts } from './validatePorts.ts';
 
 const PRECISION_DIGITS = 9;
-const EXPECTED_PORT_COUNT = 20;
-const EXPECTED_DOOR_COUNT = 19;
+const EXPECTED_PORT_COUNT = 19;
+const EXPECTED_DOOR_COUNT = 18;
 const EXPECTED_OPENING_COUNT = 1;
 const SINGLE_PORT = 1;
 
@@ -41,9 +41,14 @@ const RISER_DOOR_WIDTH = 1.2;
  *
  * Rewritten for the new plan: `linkCorridor` is gone, so the five doors that
  * used to reach the stairs, the control center and the guest room through it are
- * gone with it, and the guest room's north strip does that job instead. The four
+ * gone with it, and the guest room's north strip does that job instead. The three
  * bath and shower cubicles are rooms now, so they carry ports of their own, and
  * `ccBalcony` is new.
+ *
+ * The guest suite lost its shower (owner, 2026-09-19): brief §7.3's own table
+ * asked for `Sink (open) + Bath — NO shower`, and `guestShowerCubicle` had been
+ * added against that row. So `guestSanitair` now serves ONE cubicle, and the leaf
+ * that used to reach the shower is gone with the room.
  */
 const EXPECTED_PORT_PARTNERS: Readonly<Record<SpaceId, readonly SpaceId[]>> = {
   balconyA: ['masterBedroom', 'guestRoom'],
@@ -63,7 +68,7 @@ const EXPECTED_PORT_PARTNERS: Readonly<Record<SpaceId, readonly SpaceId[]>> = {
   ],
   controlCenter: ['guestRoom', 'ccBalcony'],
   guestRoom: ['stairs', 'balconyA', 'controlCenter', 'guestSanitair'],
-  guestSanitair: ['guestRoom', 'guestBathCubicle', 'guestShowerCubicle'],
+  guestSanitair: ['guestRoom', 'guestBathCubicle'],
   kitchen: ['corridor', 'balconySlabB'],
   laundry: ['mainSanitair', 'balconySlabB'],
   mainSanitair: ['corridor', 'laundry', 'mainBathCubicle', 'mainShowerCubicle'],
@@ -73,7 +78,6 @@ const EXPECTED_PORT_PARTNERS: Readonly<Record<SpaceId, readonly SpaceId[]>> = {
   voidWest: [],
   voidEast: [],
   guestBathCubicle: ['guestSanitair'],
-  guestShowerCubicle: ['guestSanitair'],
   mainBathCubicle: ['mainSanitair'],
   mainShowerCubicle: ['mainSanitair'],
 };
@@ -84,8 +88,8 @@ const EXPECTED_PORT_PARTNERS: Readonly<Record<SpaceId, readonly SpaceId[]>> = {
  * There is no single default width any more: each width is a consequence of the
  * room it serves, so each one is pinned here rather than checked against a list
  * of permitted values. Most depart from 0.90 downwards — 0.65 into the 0.75 m
- * deep guest-room strip, 0.60 into the guest cubicles, 0.70 where a cubicle or
- * the control-center balcony is too shallow for more — but the control-center
+ * deep guest-room strip, 0.60 into the guest bath cubicle, 0.70 where a cubicle
+ * or the control-center balcony is too shallow for more — but the control-center
  * door departs upwards, at 1.20, because what has to pass through it is a water
  * heater or a gas bottle rather than a person. So 0.90 is the usual width here
  * and neither the smallest nor the largest, and a row that reads `DOOR_WIDTH`
@@ -105,7 +109,6 @@ const EXPECTED_WIDTHS: readonly (readonly [SpaceId, SpaceId, number])[] = [
   ['controlCenter', 'guestRoom', RISER_DOOR_WIDTH],
   ['controlCenter', 'ccBalcony', 0.7],
   ['guestSanitair', 'guestBathCubicle', 0.6],
-  ['guestSanitair', 'guestShowerCubicle', 0.6],
   ['mainSanitair', 'mainBathCubicle', 0.7],
   ['mainSanitair', 'mainShowerCubicle', 0.65],
   ['guestRoom', 'guestSanitair', 0.7],
@@ -157,7 +160,7 @@ describe('hard access rules (brief §6)', () => {
     expect(validatePorts(FLOOR_PLAN, PORT_SCHEDULE)).toBe(PORT_SCHEDULE);
   });
 
-  it('schedules 20 ports: 19 doors and one opening', () => {
+  it('schedules 19 ports: 18 doors and one opening', () => {
     expect(PORT_SCHEDULE).toHaveLength(EXPECTED_PORT_COUNT);
     expect(PORT_SCHEDULE.filter((port) => port.kind === 'door')).toHaveLength(EXPECTED_DOOR_COUNT);
     expect(PORT_SCHEDULE.filter((port) => port.kind === 'opening')).toHaveLength(
@@ -217,12 +220,8 @@ describe('hard access rules (brief §6)', () => {
   });
 
   describe('the bathrooms', () => {
-    it('enters the guest sanitair from the guest room and serves its two cubicles', () => {
-      expect(partnersOf('guestSanitair')).toEqual([
-        'guestBathCubicle',
-        'guestRoom',
-        'guestShowerCubicle',
-      ]);
+    it('enters the guest sanitair from the guest room and serves its one cubicle', () => {
+      expect(partnersOf('guestSanitair')).toEqual(['guestBathCubicle', 'guestRoom']);
     });
 
     it('enters the main sanitair from the corridor and the laundry, and serves its two cubicles', () => {
@@ -236,7 +235,6 @@ describe('hard access rules (brief §6)', () => {
 
     it.each([
       ['guestBathCubicle', 'guestSanitair', 'guestRoom'],
-      ['guestShowerCubicle', 'guestSanitair', 'kitchen'],
       ['mainBathCubicle', 'mainSanitair', 'laundry'],
       ['mainShowerCubicle', 'mainSanitair', 'utilityRoom'],
     ] as const)(

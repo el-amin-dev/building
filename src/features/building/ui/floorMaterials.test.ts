@@ -11,25 +11,33 @@ const EXPECTED_KEYS: readonly FloorMaterialKey[] = [
   'slabRoom',
   'slabCirculation',
   'slabOpenAir',
-  'slabWet',
+  'slabServiced',
   'ceiling',
   'lightPanel',
   'railing',
   'stairs',
   'tvPanel',
   'sanitaryWare',
+  // Part 4 furnished the floor, so the palette gained the four families a room's
+  // contents are drawn with. They are listed in palette order, and this test is
+  // what makes adding a fifth a deliberate act rather than a silent one.
+  'appliance',
+  'joinery',
+  'worktop',
+  'softFurnishing',
+  'artwork',
 ];
 /**
  * The three slab keys a space KIND can choose, one per walkable kind.
  *
- * `slabWet` is deliberately not here: a wet room is not a space kind — the two
- * bathrooms and the four cubicles are ordinary `room` spaces — so
- * `getSlabMaterialKey` cannot return it and `floorLayout.ts` picks it per space
- * from the sanitary ware the room holds.
+ * `slabServiced` is deliberately not here: being plumbed or powered is not a space
+ * kind — the two bathrooms, the four cubicles, the kitchen, the laundry and the
+ * control center are all ordinary `room` spaces — so `getSlabMaterialKey` cannot
+ * return it and `floorLayout.ts` picks it per space, from what stands in the room.
  */
 const SLAB_KEYS: readonly FloorMaterialKey[] = ['slabRoom', 'slabCirculation', 'slabOpenAir'];
-/** The slab of a wet room, chosen per space rather than per kind. */
-const WET_SLAB_KEY: FloorMaterialKey = 'slabWet';
+/** The slab of a serviced room, chosen per space rather than per kind. */
+const SERVICED_SLAB_KEY: FloorMaterialKey = 'slabServiced';
 /** The only key allowed to emit light: the ceiling panel that lights a room. */
 const EMISSIVE_KEY: FloorMaterialKey = 'lightPanel';
 /** Slab key expected for each space kind; a `void` space has no slab. */
@@ -89,7 +97,7 @@ describe('MATERIAL_PALETTE', () => {
 
     expect(dithered).toContain('wall');
     expect(dithered).toContain('ceiling');
-    expect(dithered).toEqual(expect.arrayContaining([...SLAB_KEYS, WET_SLAB_KEY]));
+    expect(dithered).toEqual(expect.arrayContaining([...SLAB_KEYS, SERVICED_SLAB_KEY]));
     expect(dithered).not.toContain(EMISSIVE_KEY);
     expect(dithered).not.toContain('sanitaryWare');
   });
@@ -104,34 +112,78 @@ describe('MATERIAL_PALETTE', () => {
     expect(new Set(colors).size).toBe(SLAB_KEYS.length);
   });
 
-  it('gives every family a colour of its own', () => {
+  it('gives every family a finish of its own', () => {
     // Load-bearing elsewhere: `FloorModel.test.tsx` names the bucket a mesh draws by
-    // looking its colour up in this palette. Two families sharing a colour would make
-    // that lookup answer with whichever key comes first, and every per-bucket assertion
-    // over there would quietly check the wrong mesh.
-    const colors = ENTRIES.map(([, spec]) => spec.color);
+    // looking its material settings up in this palette. Two families with identical
+    // settings would make that lookup answer with whichever key comes first, and every
+    // per-bucket assertion over there would quietly check the wrong mesh.
+    //
+    // Colour alone is no longer enough and must not be asserted: a scheme means unrelated
+    // families share a hue on purpose. What has to stay unique is the whole finish, which
+    // is also the honest claim — two surfaces of the same oak at the same roughness really
+    // are the same surface, whatever we call the second one.
+    const finishes = ENTRIES.map(
+      ([, spec]) => `${spec.color}/${String(spec.roughness)}/${String(spec.metalness)}`,
+    );
 
-    expect(new Set(colors).size).toBe(EXPECTED_KEYS.length);
+    expect(new Set(finishes).size).toBe(EXPECTED_KEYS.length);
   });
 
-  it('tells a wet room underfoot from every other slab', () => {
-    const colors = [...SLAB_KEYS, WET_SLAB_KEY].map((key) => MATERIAL_PALETTE[key].color);
+  it('tells a serviced room underfoot from every other slab', () => {
+    const colors = [...SLAB_KEYS, SERVICED_SLAB_KEY].map((key) => MATERIAL_PALETTE[key].color);
 
     expect(new Set(colors).size).toBe(SLAB_KEYS.length + 1);
   });
 
-  it('keeps the sanitary ware readable against the slab it stands on', () => {
-    const { sanitaryWare, slabWet } = MATERIAL_PALETTE;
+  /**
+   * Pairs that are seen touching, and so may not share a colour.
+   *
+   * This replaces a test that required every key in the palette to be a different
+   * colour. Since the scheme went whole-building that rule is simply false — oak
+   * joinery and an oak stair tread are the same oak on purpose — and a test that
+   * asserts a falsehood about the design is worse than no test. What actually
+   * matters is narrower and checkable: a thing standing on a surface has to be
+   * visible against it.
+   */
+  it.each([
+    ['sanitary ware on the marble it stands on', 'sanitaryWare', 'slabServiced'],
+    ['a stair tread against the landing it lands on', 'stairs', 'slabCirculation'],
+    ['upholstery on the carpet it stands on', 'softFurnishing', 'slabRoom'],
+    ['a wardrobe on the carpet it stands on', 'joinery', 'slabRoom'],
+    ['a marble top on its oak carcass', 'worktop', 'joinery'],
+    ['a parapet against the wall behind it', 'parapet', 'wall'],
+    ['the television against its wall', 'tvPanel', 'wall'],
+  ] as const satisfies readonly (readonly [string, FloorMaterialKey, FloorMaterialKey])[])(
+    'keeps %s readable',
+    (_what, standing, beneath) => {
+      expect(MATERIAL_PALETTE[standing].color).not.toBe(MATERIAL_PALETTE[beneath].color);
+    },
+  );
 
-    expect(sanitaryWare.color).not.toBe(slabWet.color);
-    expect(sanitaryWare.roughness).toBeLessThan(slabWet.roughness);
+  /**
+   * The other half of that: the families the scheme deliberately unifies.
+   *
+   * A scheme is exactly an agreement that unrelated things share a material, so
+   * this is pinned rather than left to be read as an accident by whoever next
+   * sees two identical hexadecimal strings and tidies one of them away.
+   */
+  it('draws the millwork and the stair treads from one oak, by design', () => {
+    const { joinery, stairs } = MATERIAL_PALETTE;
+
+    expect(joinery.color).toBe(stairs.color);
+    // They part company on finish, not on hue: a tread is sealed, a door is not.
+    expect(stairs.roughness).toBeLessThan(joinery.roughness);
   });
 
   it('sets the stairs and the railing apart from the walls and from each other', () => {
     const { stairs, railing, wall } = MATERIAL_PALETTE;
 
     expect(new Set([stairs.color, railing.color, wall.color]).size).toBe(3);
-    expect(railing.metalness).toBeGreaterThan(wall.metalness);
+    // The railing used to separate by metalness; since ADR-020 it is matte black and
+    // separates by value instead, which is what the brief asks for and is the stronger
+    // signal anyway — a software rasteriser renders a value difference reliably and a
+    // metalness difference only as well as its environment lets it.
+    expect(railing.color).not.toBe(wall.color);
   });
 
   it('keeps the television panel the darkest surface', () => {

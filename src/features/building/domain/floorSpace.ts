@@ -8,7 +8,7 @@
  * repeat it rather than each holding a copy.
  *
  * The pair is a struct and not a string on purpose. `SpaceId` is a literal
- * union of the 22 ids of `SPACE_IDS`, and that union is its whole value: an
+ * union of the 21 ids of `SPACE_IDS`, and that union is its whole value: an
  * exhaustive `switch` over it is checked at compile time (`getSlabMaterialKey`
  * is one), `SPACE_IDS` gives the ids a stable order, and a typo is a type error
  * rather than a miss at runtime. A branded `'F2/kitchen'` would throw all of

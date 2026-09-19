@@ -9,12 +9,15 @@
 export type { Port, PortAxis, PortKind, PortSwing } from './types.ts';
 export { PORT_SCHEDULE } from './portSchedule.ts';
 export {
+  getOpeningClearances,
   getPortContact,
   getPortOpening,
   getPortPartners,
   getPortSpan,
   getPortThicknesses,
   getPortsOf,
+  getSwingClearance,
+  getSwingClearances,
   needsSwingClearance,
 } from './queries.ts';
 export { validatePorts } from './validatePorts.ts';

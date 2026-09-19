@@ -16,14 +16,16 @@
  *   centre via the link corridor" and "the 0.80 m link door" are void. The
  *   control centre is entered through the guest room; the stairs open onto the
  *   guest room's strip, not onto a corridor of their own.
- * - **A bath and a shower are rooms.** Each bathroom is an open part with the
- *   basin plus a walled bath and a walled shower, each with its own door, so the
- *   four cubicles carry ports like every other room on the floor.
- * - **Five leaves slide** (`swing: 'slide'`), because the room they serve is
+ * - **A bath and a shower are rooms.** A bathroom is an open part with the basin
+ *   plus a walled cubicle for each of the things it has, each with its own door,
+ *   so the three cubicles carry ports like every other room on the floor. Three
+ *   and not four: the family suite has both a bath and a shower, the guest suite
+ *   only a bath, its shower having been dropped on 2026-09-19.
+ * - **Four leaves slide** (`swing: 'slide'`), because the room they serve is
  *   shallower than the leaf is wide.
  * - **Widths are no longer three values.** See `Port.width`.
  *
- * The schedule holds 20 ports: 19 doors and the single living-room opening. The
+ * The schedule holds 19 ports: 18 doors and the single living-room opening. The
  * whole structure is deeply frozen. It is not validated at module load; tests
  * run `validatePorts` on it.
  */

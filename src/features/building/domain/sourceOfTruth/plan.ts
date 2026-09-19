@@ -222,10 +222,26 @@ export interface PlanRoom {
   readonly rects: readonly PlanRectCoordinates[];
   /** What the owner wanted from this room, when the rects alone do not say it. */
   readonly note?: string;
+  /**
+   * What is still unresolved about this room, in the owner's own terms.
+   *
+   * A `note` says what the room IS; this says what has not been settled about
+   * it, and the two are kept apart because a reader acts on them differently —
+   * one is a fact of the floor, the other is a decision still owed.
+   *
+   * It lives on the room rather than only in `docs/house-design-brief.md` §9
+   * because the brief is a document you have to know to open: the app and the
+   * generated drawing both read this file, so an item written here is shown on
+   * the room it belongs to instead of being findable only by someone who
+   * already knew it existed. One sentence per item, quoting the owner rather
+   * than paraphrasing him, and the list is short on purpose — everything that
+   * is decided belongs in the geometry, not here.
+   */
+  readonly open?: readonly string[];
 }
 
 /**
- * The 22 spaces, in matricule order R01…R22.
+ * The 21 spaces, in matricule order R01…R21.
  *
  * Changed from v1: `linkCorridor` deleted; `ccBalcony` added; the stairs bay is
  * 0.50 m deeper; the corridor gains a second rect (the stair-hall widening in
@@ -260,6 +276,9 @@ export const ROOMS = deepFreeze([
     type: 'LIV',
     kind: 'room',
     rects: [[6.9, 11.9, 0.3, 3.85]],
+    open: [
+      'No daylight: it touches only the blocked side C, so it gets electric light only (ADR-006), which is still in tension with the brief §1 rule that every habitable room take light and air from side A or B.',
+    ],
   },
   {
     n: 4,
@@ -268,6 +287,9 @@ export const ROOMS = deepFreeze([
     type: 'BED',
     kind: 'room',
     rects: [[12.05, 17.05, 0.3, 3.85]],
+    open: [
+      'No daylight: it touches only the blocked side C, so it gets electric light only (ADR-006), which is still in tension with the brief §1 rule that every habitable room take light and air from side A or B.',
+    ],
   },
   {
     n: 5,
@@ -276,6 +298,9 @@ export const ROOMS = deepFreeze([
     type: 'BED',
     kind: 'room',
     rects: [[17.2, 22.2, 0.3, 3.85]],
+    open: [
+      'No daylight: it touches only the blocked side C, so it gets electric light only (ADR-006), which is still in tension with the brief §1 rule that every habitable room take light and air from side A or B.',
+    ],
   },
   {
     n: 6,
@@ -316,6 +341,9 @@ export const ROOMS = deepFreeze([
     kind: 'room',
     rects: [[1.6, 3.8, 7.2, 9.7]],
     note: 'entered from the guest-room strip above it',
+    open: [
+      'The mandatory split into two isolated compartments — gas and water in one, electricity and the low-voltage side in the other — is deferred, so the room stays one volume in the current drawing and is divided internally afterwards (brief §7.4).',
+    ],
   },
   // The north strip now runs the full width from the side-A balcony at x 1.60 to
   // x 9.70, passing over the control center (owner). That strip is what gives the
@@ -332,7 +360,7 @@ export const ROOMS = deepFreeze([
     kind: 'room',
     rects: [
       [1.6, 9.7, 6.3, 7.05],
-      [4.1, 6.9, 7.05, 8.6],
+      [4.1, 7.9, 7.05, 8.6],
     ],
     note: 'north strip reaches the side-A balcony; guest sanitair carved out of the SE corner',
   },
@@ -342,8 +370,12 @@ export const ROOMS = deepFreeze([
     name: 'Guest sanitair',
     type: 'BTH',
     kind: 'room',
-    rects: [[7.05, 9.85, 7.2, 7.75]],
-    note: 'the open part: sink, and the sliding doors into the bath and shower cubicles',
+    rects: [[8.05, 9.85, 7.2, 7.75]],
+    note: 'the open part: sink, and the sliding door into the bath cubicle',
+    open: [
+      'The suite is cut to the minimum that works, and if it proves too tight in the 3D walk-through the levers are to drop its bath or to take depth from the guest room (brief §7.3).',
+      "It has no WC, deliberately: the floor's only WC stands in the main sanitair (owner, 2026-09-19).",
+    ],
   },
   // No longer a rectangle: the corridor's television run now reaches x 11.90, so
   // the kitchen steps back at its west end and keeps its full depth
@@ -444,28 +476,29 @@ export const ROOMS = deepFreeze([
   // A bathroom is an open part with the basin, and a walled bath and a walled
   // shower each with its own door (owner). The bath and the shower are therefore
   // rooms, not fittings: that is what gives them walls, matricules and ports like
-  // everything else on the floor. Both bathrooms are the same arrangement and
-  // differ only in size — the family one has the room to be generous, the guest
-  // one is a helper and is cut to the narrowest that still takes a real bath.
+  // everything else on the floor.
+  //
+  // The two bathrooms are no longer the same arrangement. The family one keeps
+  // both cubicles; the guest one has a bath and no shower, which is what brief
+  // §7.3's own table asked for in the first place — `Guest Sanitair | Sink (open)
+  // + Bath — NO shower`. The shower was added later, against that row, and it is
+  // what made the suite the tightest thing on the floor: §7.3 stayed OPEN on
+  // whether it worked, the 3D walk-through answered no, and the owner spent the
+  // shower (2026-09-19) rather than either of the two levers the brief listed.
+  // Dropping it is also what pays for the guest room's extra metre: the suite
+  // slides east onto the floor the shower held, and the room grows into the west
+  // end it leaves behind.
   {
     n: 19,
     id: 'guestBathCubicle',
     name: 'Guest bath',
     type: 'BAT',
     kind: 'room',
-    rects: [[7.05, 8.7, 7.9, 8.6]],
-    note: 'holds a 1.50 bath across its width',
+    rects: [[8.05, 9.85, 7.9, 8.6]],
+    note: 'holds a 1.55 bath along its width, with floor left beside it',
   },
   {
     n: 20,
-    id: 'guestShowerCubicle',
-    name: 'Guest shower',
-    type: 'SHW',
-    kind: 'room',
-    rects: [[8.85, 9.85, 7.9, 8.6]],
-  },
-  {
-    n: 21,
     id: 'mainBathCubicle',
     name: 'Family bath',
     type: 'BAT',
@@ -473,7 +506,7 @@ export const ROOMS = deepFreeze([
     rects: [[17.7, 19.35, 7.45, 8.6]],
   },
   {
-    n: 22,
+    n: 21,
     id: 'mainShowerCubicle',
     name: 'Family shower',
     type: 'SHW',
@@ -561,7 +594,7 @@ export interface PlanPort {
 }
 
 /**
- * Every port: 19 doors and the single living-room opening.
+ * Every port: 18 doors and the single living-room opening.
  *
  * Gone from v1: the five `linkCorridor` doors, and the guest-room ↔ kitchen
  * door, which the owner replaced with the food-pass window. Doors sit near a
@@ -643,22 +676,22 @@ export const PORTS = deepFreeze([
     width: 0.7,
     why: '0.70, not 0.90: the balcony is only 0.80 deep now that the side-B strip is 0.80.',
   },
-  // All three guest-bathroom leaves slide: the open part is 0.55 deep, so nothing
-  // can swing into it. That is the price of keeping the guest room's tunnel to
-  // the kitchen, which needs the walking strip to run past this room to reach it.
+  // Both guest-bathroom leaves slide: the open part is 0.55 deep, so nothing can
+  // swing into it. That is the price of keeping the guest room's tunnel to the
+  // kitchen, which needs the walking strip to run past this room to reach it.
+  //
+  // Their spans moved east with the suite when the shower was dropped, and the two
+  // sit in OPPOSITE faces of a room 0.55 deep — the room leaf in the north face at
+  // x 8.10–8.80, the bath leaf in the south face at x 8.20–8.80, almost directly
+  // across from each other (owner, 2026-09-19). They do not compete for a run,
+  // which is the whole reason a 1.80 room can carry both: check 4's 0.10 rule is
+  // about two openings in ONE face. What they do is put the bathroom's two doors
+  // at the same end, so the basin keeps the east dead-end to itself.
   {
     kind: 'door',
     between: ['guestSanitair', 'guestBathCubicle'],
     along: 'x',
-    spanMin: 7.55,
-    width: 0.6,
-    swing: 'slide',
-  },
-  {
-    kind: 'door',
-    between: ['guestSanitair', 'guestShowerCubicle'],
-    along: 'x',
-    spanMin: 9.0,
+    spanMin: 8.2,
     width: 0.6,
     swing: 'slide',
   },
@@ -684,10 +717,10 @@ export const PORTS = deepFreeze([
     kind: 'door',
     between: ['guestRoom', 'guestSanitair'],
     along: 'x',
-    spanMin: 7.4,
+    spanMin: 8.1,
     width: 0.7,
     swing: 'slide',
-    why: 'Sliding, and 0.70 not 0.90. The suite is 1.40 deep, and the 0.70 wet block with its 0.15 screen leaves the open part only 0.55 (z 7.20–7.75) against the 0.70 a swinging leaf needs — the widest inward leaf that would clear is 0.55, too narrow for a bathroom. A sliding leaf needs no floor to open into.',
+    why: 'Sliding, and 0.70 not 0.90. The suite is 1.40 deep, and the 0.70 wet block with its 0.15 screen leaves the open part only 0.55 (z 7.20–7.75) against the 0.70 a swinging leaf needs — the widest inward leaf that would clear is 0.55, too narrow for a bathroom. A sliding leaf needs no floor to open into. It takes the WEST end of the 1.80 run the suite now has: the pass counter is built out from x 9.00, so a leaf any further east would open against the side of it.',
   },
   { kind: 'door', between: ['kitchen', 'balconySlabB'], along: 'x', spanMin: 12.7, width: 0.9 },
   {
@@ -760,26 +793,17 @@ export const WINDOWS = deepFreeze([
     kind: 'pass',
     between: ['guestRoom', 'kitchen'],
     along: 'z',
-    spanMin: 6.35,
-    width: 0.65,
+    spanMin: 6.4,
+    width: 0.55,
     sill: 1.0,
     head: 1.8,
-    why: "Pass food and ready coffee through to the guests (owner) — a short tunnel through the 0.30 wall. Keeping it is why the bathroom sits below the walking strip rather than taking the suite's east end: the strip has to reach the kitchen.",
+    why: "Pass food and ready coffee through to the guests (owner). No longer a hole in a 0.30 wall but the bore of a 1.00 m tunnel: the `passCounter` fixture in FIXTURES builds the other 0.70 out from the guest-room face, so the opening has a mouth at each end and a ledge at 1.00 to stand plates on. Narrowed from 0.65 to 0.55 to pay for that: the host face is 0.75, and 0.55 leaves 0.10 of masonry jamb each side instead of the bare 0.05 minimum, which is what the built-out cheeks are built against. 0.55 × 0.80 still passes a tray. Keeping the pass at all is why the bathroom sits below the walking strip rather than taking the suite's east end: the strip has to reach the kitchen.",
   },
   {
     kind: 'air',
     between: ['guestBathCubicle', 'voidWest'],
     along: 'x',
-    spanMin: 7.55,
-    width: 0.6,
-    sill: 1.9,
-    head: 2.3,
-  },
-  {
-    kind: 'air',
-    between: ['guestShowerCubicle', 'voidWest'],
-    along: 'x',
-    spanMin: 9.0,
+    spanMin: 8.6,
     width: 0.6,
     sill: 1.9,
     head: 2.3,
@@ -838,8 +862,85 @@ export const WINDOWS = deepFreeze([
   },
 ] as const satisfies readonly PlanWindow[]);
 
-/** What a fixture is: the sanitary ware, and the television on the stair-hall wall. */
-export type PlanFixtureKind = 'sink' | 'bath' | 'shower' | 'tv';
+/**
+ * What a fixture is: the sanitary ware, the appliances, and the furniture the
+ * owner listed room by room (brief §7).
+ *
+ * The union is closed on purpose. A kind is not a label a placer invents while
+ * furnishing — it is the key {@link FIXTURE_ROLES} classifies and the renderers
+ * draw from, so adding one is a decision taken here, where it can be argued
+ * about, and not a string typed into a rect.
+ *
+ * `partition` is deliberately NOT declared. An earlier version of this file
+ * reserved a partition kind for a screen standing inside one room — a divider
+ * that must stay out of the wall derivation, which works from the room
+ * rectangles and would have to split a room in two to express it. No screen is
+ * required by this layout: every division the owner asked for is a real wall
+ * between two rooms, including the bath and shower cubicles, which are rooms
+ * precisely so that they have walls and ports like everything else. A kind with
+ * no member is a kind that invites one, so it is not declared until a screen is
+ * actually asked for.
+ */
+export type PlanFixtureKind =
+  | 'barbecue'
+  | 'bath'
+  | 'artwork'
+  | 'bed'
+  | 'bookcase'
+  | 'coffeeTable'
+  | 'cooker'
+  | 'counter'
+  | 'desk'
+  | 'diningTable'
+  | 'fridge'
+  | 'nightstand'
+  | 'passCounter'
+  | 'servicesCabinet'
+  | 'shower'
+  | 'sideboard'
+  | 'sink'
+  | 'sofa'
+  | 'storageUnit'
+  | 'tv'
+  | 'wardrobe'
+  | 'washingMachine'
+  | 'wc';
+
+/** The clearances a fitting is placed by. */
+export const FIXTURE_SPEC = deepFreeze({
+  /** A standing fitting stands this clear of the wall it backs onto, in metres. */
+  wallGap: 0.05,
+  /** Clear floor in front of a fitting's working face, in metres. */
+  approach: 0.6,
+  /** Clear floor inward of a leafless port, in metres, so the passage survives. */
+  openingClearance: 0.6,
+} as const);
+
+/**
+ * How a fixture meets the walls of the room it stands in.
+ *
+ * Each value is defined against the arithmetic a checker can run, because the
+ * whole point of writing it down is that a placed rect either honours the claim
+ * or does not. Every face is compared with the corresponding face of the room
+ * rect that CONTAINS the fixture — a room with several rects is measured
+ * against the one the fixture is in, not against the room's bounding box.
+ *
+ * - `standing` — the fixture backs onto a wall: at least one of its four faces
+ *   is within {@link FIXTURE_SPEC.wallGap} of the corresponding room face.
+ *   This is the ordinary case, and the gap is the skirting-and-plaster slack a
+ *   real fitting is installed with, not a mistake to be closed to zero.
+ * - `mounted` — the fixture is fixed TO a wall: at least one face is flush with
+ *   a room face, gap exactly 0. Nothing stands on the floor, so there is no
+ *   slack to leave: a television hangs on the wall it is screwed to.
+ * - `freestanding` — nothing touches a wall: every face is further than
+ *   `wallGap` from the room's faces. This is not an error, it is a claim — a
+ *   dining table in the middle of a room is meant to be reachable from all four
+ *   sides — so the verifier prints every freestanding item out loud rather than
+ *   passing it silently. A fixture that drifted off its wall and one that was
+ *   meant to stand in the open look identical in the data; the difference is
+ *   that one of them said so.
+ */
+export type PlanFixtureMount = 'standing' | 'mounted' | 'freestanding';
 
 /** One object standing in a room, with the floor it occupies. */
 export interface PlanFixture {
@@ -849,6 +950,159 @@ export interface PlanFixture {
   readonly room: PlanRoomId;
   /** The floor it occupies, as a clear rect. */
   readonly rect: PlanRectCoordinates;
+  /** How it meets the walls of that room, and what a checker may assert about it. */
+  readonly mount: PlanFixtureMount;
+  /**
+   * What distinguishes this fixture from an otherwise identical one, e.g. the
+   * laundry's `dirty` and `clean` armoires, which are the same box twice and
+   * are two entries only because the owner asked for two (brief §7.1).
+   */
+  readonly note?: string;
+  /**
+   * Clear floor in front of this fitting's working face, in metres, where the
+   * room cannot give {@link FIXTURE_SPEC.approach}.
+   *
+   * An override, never a restatement: writing the default here again would
+   * leave two numbers for one clearance. It is stated only where the room is
+   * too tight to honour the default, so that the shortfall is a recorded
+   * decision with a figure on it rather than a check quietly skipped.
+   */
+  readonly approach?: number;
+  /**
+   * The axis a bore through this fixture runs along, where it has one.
+   *
+   * **It is the PERPENDICULAR of the opening's own `along`, and the clash of names
+   * is worth reading before trusting either.** {@link PlanOpeningAxis} is documented
+   * as "the plan axis an opening's WIDTH runs along", and by that reading the food
+   * pass is `along: 'z'` — its 0.55 m of width is measured across z. The pass counter
+   * built around that very window is `along: 'x'`, because what runs along x is the
+   * hole through it. Same field name, same type, two axes at right angles, both
+   * correct. A reader who assumes the two rows should agree will "fix" one of them.
+   *
+   * The name is kept because `boreAxis` on one kind and `along` on the other two
+   * would hide the relationship rather than explain it; the relationship is that one
+   * is always the other turned 90°, and `fixtures.test.ts` asserts the built cheeks
+   * against the window's own span, so a flip fails rather than renders wrong.
+   *
+   * Only `passCounter` reads it, and it is stated rather than inferred because
+   * `fixtures.ts` is handed a rect and nothing else. The pass counter is
+   * 0.70 × 0.75, so deducing the bore from the longer side of the rect would
+   * turn the whole geometry on a 0.05 m margin — change the opening by a
+   * centimetre and the tunnel silently rotates 90°. `heightAt` in `walls.ts`
+   * already settled this argument for wall heights ("stated beats inferred"),
+   * and `PORTS` and `WINDOWS` already carry a field of this name and type.
+   */
+  readonly along?: PlanOpeningAxis;
+}
+
+/**
+ * What a fixture is FOR, as opposed to what it is.
+ *
+ * - `fitting` — plumbed in and part of the building: it is installed, not moved;
+ * - `appliance` — a machine that is delivered, connected and can be replaced;
+ * - `furniture` — loose, and the owner may rearrange it the day he moves in;
+ * - `joinery` — built in like a fitting, but nothing runs to it: no water, no
+ *   drain, no power. The building's carpentry rather than its services;
+ * - `services` — the building's own equipment, which is why it is in the room
+ *   that centralises the utilities and not in anybody's way.
+ *
+ * `joinery` was split out of `fitting` on 2026-09-19, and the reason is that a
+ * role here is not a label — `isServicedSpace` reads it to decide whether a room
+ * gets carpet or marble underfoot (ADR-020: "a room is carpeted unless something
+ * in it is plumbed, powered or a riser"). While `fitting` meant both "plumbed in"
+ * and "built in", that question could not be answered honestly: the guest room's
+ * new pass counter is dry carpentry, and calling it a fitting laid a bathroom
+ * floor in a sitting room. The kitchen counter moved with it, because it is the
+ * same thing and leaving it behind would have made the new role arbitrary — the
+ * kitchen is still marble, serviced by its cooker and its fridge, so nothing on
+ * the floor changed finish but the guest room, which is the room that was wrong.
+ */
+export type PlanFixtureRole = 'fitting' | 'appliance' | 'furniture' | 'joinery' | 'services';
+
+/**
+ * What every fixture kind is for, as a TOTAL record over {@link PlanFixtureKind}.
+ *
+ * Total is the whole point. `satisfies Record<PlanFixtureKind, …>` makes
+ * TypeScript fail the build when a kind is added to the union without being
+ * classified here, so a new kind cannot slip through unclassified — the
+ * compiler asks the question at the moment the kind is invented, which is the
+ * only moment anyone knows the answer.
+ *
+ * That is the opposite of how `scripts/source-of-truth/render-table.mjs`
+ * classified a fixture before this record existed: it tested membership of a
+ * small list and called everything else a fitting, so an unknown kind was
+ * silently reported as plumbing. A default is the wrong shape for this
+ * question, and that script now reads the role from here and has no default
+ * left to fall through to.
+ */
+export const FIXTURE_ROLES = deepFreeze({
+  // Plumbed in, part of the building.
+  sink: 'fitting',
+  bath: 'fitting',
+  shower: 'fitting',
+  wc: 'fitting',
+  // Built in, and nothing runs to either of them. The pass counter is masonry's
+  // understudy: the owner wanted a 1 m tunnel through a 0.30 wall with a normal
+  // wall above it, which no wall in this model can be, so the missing 0.70 is
+  // built out as a fixture — installed, not moved, and dry.
+  counter: 'joinery',
+  passCounter: 'joinery',
+  // Delivered, connected, replaceable.
+  tv: 'appliance',
+  fridge: 'appliance',
+  cooker: 'appliance',
+  washingMachine: 'appliance',
+  barbecue: 'appliance',
+  // Loose: the owner may move any of these himself.
+  artwork: 'furniture',
+  bed: 'furniture',
+  bookcase: 'furniture',
+  nightstand: 'furniture',
+  wardrobe: 'furniture',
+  desk: 'furniture',
+  sofa: 'furniture',
+  coffeeTable: 'furniture',
+  diningTable: 'furniture',
+  sideboard: 'furniture',
+  storageUnit: 'furniture',
+  // The building's own equipment.
+  servicesCabinet: 'services',
+} as const satisfies Readonly<Record<PlanFixtureKind, PlanFixtureRole>>);
+
+/**
+ * Plan reading order for the fixtures of one room: top to bottom, then left to
+ * right — `minZ` first (z runs C→B, so north comes first), then `minX`.
+ *
+ * WHY a comparator lives in a data file, which is normally a presentation
+ * choice made by whoever is presenting: a fixture's X-number is part of its
+ * matricule. `F1-R13-BTH-X1` names a particular basin, and which fitting that
+ * is depends entirely on the order the room's fixtures are read in — so the
+ * order is part of the plan's own identity scheme, exactly like the room
+ * numbering and the wall numbering, and it belongs beside them rather than in
+ * whichever renderer happened to need it first.
+ *
+ * It is not an arbitrary pick between z-first and x-first. Sorting the main
+ * sanitair this way yields sink, shower, bath and the guest sanitair sink,
+ * bath — the owner's own recorded notation for those rooms, `[open sink
+ * [shower][bath]]` and `[open sink [bath]]` (ADR-006). Sorting by `minX` first
+ * yields bath, sink, shower, which matches nothing he ever said.
+ *
+ * This ordering used to exist twice, as `byPosition` in
+ * `scripts/source-of-truth/render-table.mjs` and inline in `fixturesByRoom` in
+ * `scripts/source-of-truth/render-plan.mjs`. Two copies of a rule that decides
+ * a matricule is the same defect as two copies of the geometry: the two pages
+ * would disagree about which fitting is which while both looked correct. Both
+ * now take this function as an argument, so the drawing and the register are
+ * sorted by the same comparator or by none.
+ *
+ * @param a - A fixture of the room.
+ * @param b - Another fixture of the same room.
+ * @returns Negative when `a` is read first, positive when `b` is, 0 when the
+ *   two share a north-west corner — which cannot happen for fixtures that do
+ *   not overlap, and is why no third key is needed.
+ */
+export function compareFixturePosition(a: PlanFixture, b: PlanFixture): number {
+  return a.rect[2] - b.rect[2] || a.rect[0] - b.rect[0];
 }
 
 /**
@@ -856,10 +1110,10 @@ export interface PlanFixture {
  * has to fit in it rather than by its area alone. Matricule tag `X`, since `W`,
  * `P` and `G` are taken by walls, ports and glazing.
  *
- * `partition` is a fixture rather than a wall on purpose: it is a screen inside
- * one room, not a boundary between two, so it must not enter the wall derivation
- * — which works from the room rectangles and would have to split a room in half
- * to express it.
+ * No partition fixture is declared, and {@link PlanFixtureKind} says why: a
+ * screen standing inside one room would have to be a fixture rather than a wall,
+ * so that it stays out of the wall derivation — but this layout asks for no
+ * screen, every division the owner wanted being a real wall between two rooms.
  *
  * The television is here for the same reason the corridor was widened: it hangs
  * on the stair-hall wall facing the living room across the corridor, and that run
@@ -872,23 +1126,327 @@ export const FIXTURES = deepFreeze([
   // the model holds no sanitary ware at all — the drawing could not show a bath,
   // and the door-swing check would pass every cubicle vacuously because there
   // would be nothing inside it to hit.
-  { kind: 'sink', room: 'mainSanitair', rect: [19.6, 20.3, 6.0, 6.45] },
-  { kind: 'bath', room: 'mainBathCubicle', rect: [17.75, 19.25, 7.85, 8.55] },
-  { kind: 'shower', room: 'mainShowerCubicle', rect: [19.55, 20.3, 7.8, 8.55] },
-  // The guest suite: a small shower for a quick wash, a short bath beside it and
-  // the basin in the open, which is what the owner asked for. Everything here is
-  // cut to the minimum that still works — the suite gives the bathroom only
-  // 1.40 m of depth once the walking strip to the kitchen has taken its share.
-  { kind: 'sink', room: 'guestSanitair', rect: [8.95, 9.65, 7.25, 7.7] },
-  { kind: 'bath', room: 'guestBathCubicle', rect: [7.1, 8.65, 7.95, 8.55] },
-  { kind: 'shower', room: 'guestShowerCubicle', rect: [8.95, 9.8, 7.95, 8.55] },
+  //
+  // Every mount below was measured against the rect of the room named on the
+  // row, face by face, and the gap that earns the value is written beside it.
+  // R13 main sanitair x 17.70–20.35 · z 5.80–7.30: the basin backs east, 0.05
+  // clear of the room's east face (its other gaps are 1.90 west, 0.20 north,
+  // 0.85 south, all far wider).
+  { kind: 'sink', room: 'mainSanitair', rect: [19.6, 20.3, 6.0, 6.45], mount: 'standing' },
+  // R21 family bath x 17.70–19.35 · z 7.45–8.60: 0.05 west and 0.05 south, the
+  // tub laid along the cubicle's long wall (0.10 east, 0.40 north).
+  // A cubicle is stepped into, not stood in front of: the room is the bath's
+  // clearance, so the 0.40 left between the tub and the door wall is the whole
+  // of it and is declared rather than failed.
+  {
+    kind: 'bath',
+    room: 'mainBathCubicle',
+    rect: [17.75, 19.25, 7.85, 8.55],
+    mount: 'standing',
+    approach: 0.4,
+    note: 'entered through its own sliding door; the cubicle is the clearance',
+  },
+  // R22 family shower x 19.50–20.35 · z 7.45–8.60: 0.05 on three faces — west,
+  // east and south — the tray filling the width of its cubicle (0.35 north).
+  {
+    kind: 'shower',
+    room: 'mainShowerCubicle',
+    rect: [19.55, 20.3, 7.8, 8.55],
+    mount: 'standing',
+    approach: 0.35,
+    note: 'entered through its own sliding door; the cubicle is the clearance',
+  },
+  // The guest suite: a short bath and the basin in the open. No shower — brief
+  // §7.3's own table asked for `Sink (open) + Bath — NO shower` and the shower was
+  // added later against it; §7.3 stayed OPEN on whether the suite worked, the 3D
+  // walk-through said it did not, and the owner spent the shower on 2026-09-19.
+  //
+  // What that bought is not just elbow room in the bathroom. The whole suite slid
+  // east onto the floor the shower held — sanitair and bath both x 8.05–9.85 now,
+  // where they were 7.05–9.85 and 7.05–8.70 — and the guest room's lower leg grew
+  // west-to-east into the metre they left, 2.80 to 3.80. The bath cubicle came out
+  // ahead as well: it absorbed the 0.15 partition that used to separate it from the
+  // shower, so it is 1.80 wide against the 1.65 it had.
+  //
+  // R10 guest sanitair x 8.05–9.85 · z 7.20–7.75: still only 0.55 deep, so the basin
+  // is still 0.45 and still 0.05 off both faces — dropping the shower gave this room
+  // width, not depth, and depth is what it was short of.
+  //
+  // The basin CHANGED ENDS, and the reason is the same one that put it in a dead-end
+  // in the first place: it has to stand where no leaf does. Both leaves are now at the
+  // WEST end and face each other across the 0.55 m room — the door in from the guest
+  // room at x 8.10–8.80 in the north face, the bath door at x 8.20–8.80 in the south
+  // (owner, 2026-09-19). That leaves x 8.80–9.85, a clear 1.05 m, and the basin takes
+  // the last 0.35 of it rather than the first: parked at 8.80 it would stand in the
+  // 0.60 m of floor the bath leaf is approached across, and check 9 finds that approach
+  // on this room's west side. At 9.50 it is out of both leaves' way and out of the
+  // approach band between them.
+  //
+  // (An earlier version of this note put the bath door at x 8.90–9.50 and called
+  // x 9.50–9.85 the only free run. That was the span the leaf had for the few hours
+  // before the owner moved it, and the paragraph is here precisely to stop the next
+  // person moving the basin back — so it is worth more than the average comment that
+  // it states the span the schedule actually declares.)
+  //
+  // It stays a 0.35 × 0.45 corner unit, reached along the room's length rather than
+  // across it, because the room is still 0.55 deep and a 0.70 basin would still seal it.
+  {
+    kind: 'sink',
+    room: 'guestSanitair',
+    rect: [9.5, 9.85, 7.25, 7.7],
+    mount: 'standing',
+    note: 'corner basin in the east dead-end; reached along the room, not across it',
+  },
+  // R19 guest bath x 8.05–9.85 · z 7.90–8.60: the same 1.55 × 0.55 tub, and it no
+  // longer fills its cubicle to the plaster. It sits 0.05 off the west face with
+  // 0.20 of floor left east of it, and 0.15 between the rim and the doorway wall.
+  // That 0.15 is what the old note called out as 0.05 — 'no floor in front of it at
+  // all, you step in over the rim from the doorway'. There is floor in front of it
+  // now. It is still less than the 0.60 a fitting is normally given, because a
+  // cubicle is stepped into rather than stood in front of, so the approach is still
+  // declared; it is declared at three times what it was.
+  {
+    kind: 'bath',
+    room: 'guestBathCubicle',
+    rect: [8.1, 9.65, 8.05, 8.6],
+    mount: 'standing',
+    approach: 0.15,
+    note: 'entered through its own sliding door; the cubicle is the clearance',
+  },
+
+  // ─────────────────────────────── Part 4: the rooms are furnished ─────────
+  //
+  // Brief §7 room by room, plus the owner's standard bedroom and living-room set.
+  // Every rect below is anchored to a named free wall run — what is left of a face
+  // once its doors, its windows and their jambs are taken out — and the anchor is
+  // written beside it. Nothing here is a guessed coordinate.
+  //
+  // A note on what is NOT here: the corridor keeps the television and nothing else.
+  // It is the route an appliance takes (brief §7.5 sized it at 1.50 m for exactly
+  // that), and check 9 would not catch a corridor narrowed by furniture, because
+  // blocking a corridor blocks no door swing. The emptiness is deliberate.
+
+  // R02 master bedroom x 1.60–6.60 · z 0.30–3.70. Two leaves swing in: the balcony
+  // door over x 1.60–2.50 · z 1.55–2.45, and the corridor door over x 5.65–6.55 ·
+  // z 2.80–3.70. The north face is the only unbroken 5.00 m run, so the bed takes
+  // it, east of the balcony swing; the wardrobe takes the south run west of the
+  // corridor swing; the desk takes the east face, north of it.
+  { kind: 'bed', room: 'masterBedroom', rect: [2.7, 4.3, 0.35, 2.35], mount: 'standing' },
+  { kind: 'nightstand', room: 'masterBedroom', rect: [2.25, 2.7, 0.35, 0.75], mount: 'standing' },
+  { kind: 'nightstand', room: 'masterBedroom', rect: [4.3, 4.75, 0.35, 0.75], mount: 'standing' },
+  { kind: 'wardrobe', room: 'masterBedroom', rect: [1.65, 3.65, 3.1, 3.65], mount: 'standing' },
+  { kind: 'desk', room: 'masterBedroom', rect: [5.95, 6.55, 0.35, 1.55], mount: 'standing' },
+
+  // R03 living room x 6.90–11.90 · z 0.30–3.85, arranged as the owner asked for it on
+  // 2026-09-19: a library along the back, and the seating in THREE — back, left and
+  // right — with the front deliberately left open.
+  //
+  // "Front" is the south face, where the 3.50 m leafless opening at x 7.50–11.00 looks
+  // across the corridor at the television. That is the room's whole point, so the 0.60 m
+  // band inward of the opening stays clear and every seat faces it. A fourth sofa there
+  // would have its back to the one thing the room is pointed at.
+  //
+  // The sideboard and the dining table that stood here are gone. They were the standard
+  // set, chosen before the owner said what he wanted in this room; the library and the
+  // third seat need their wall runs, and a room this size cannot hold both.
+  { kind: 'bookcase', room: 'livingRoom', rect: [9.85, 11.85, 0.35, 0.75], mount: 'standing' },
+  { kind: 'sofa', room: 'livingRoom', rect: [7.0, 9.2, 0.35, 1.25], mount: 'standing' },
+  { kind: 'sofa', room: 'livingRoom', rect: [6.95, 7.85, 1.35, 3.15], mount: 'standing' },
+  { kind: 'sofa', room: 'livingRoom', rect: [10.95, 11.85, 1.35, 3.15], mount: 'standing' },
+  {
+    kind: 'coffeeTable',
+    room: 'livingRoom',
+    rect: [8.6, 9.7, 1.8, 2.4],
+    mount: 'freestanding',
+  },
+  // Flush on the back wall, above the library: a large abstract canvas, which is what
+  // carries the one warm colour in an otherwise neutral room.
+  { kind: 'artwork', room: 'livingRoom', rect: [7.0, 9.2, 0.3, 0.35], mount: 'mounted' },
+
+  // R04 and R05, the kids' bedrooms, 5.00 × 3.55 each and identical but for their
+  // x origin. Two single beds on the north run, the wardrobe on the far side face,
+  // the desk on the south run clear of the corridor leaf's swing.
+  { kind: 'bed', room: 'bedroomMaleKids', rect: [12.6, 13.5, 0.35, 2.35], mount: 'standing' },
+  { kind: 'bed', room: 'bedroomMaleKids', rect: [13.7, 14.6, 0.35, 2.35], mount: 'standing' },
+  { kind: 'wardrobe', room: 'bedroomMaleKids', rect: [16.4, 17.0, 0.35, 1.35], mount: 'standing' },
+  { kind: 'desk', room: 'bedroomMaleKids', rect: [15.2, 16.6, 3.2, 3.8], mount: 'standing' },
+  { kind: 'bed', room: 'bedroomFemaleKids', rect: [17.75, 18.65, 0.35, 2.35], mount: 'standing' },
+  { kind: 'bed', room: 'bedroomFemaleKids', rect: [18.85, 19.75, 0.35, 2.35], mount: 'standing' },
+  {
+    kind: 'wardrobe',
+    room: 'bedroomFemaleKids',
+    rect: [21.55, 22.15, 0.35, 1.35],
+    mount: 'standing',
+  },
+  { kind: 'desk', room: 'bedroomFemaleKids', rect: [20.35, 21.75, 3.2, 3.8], mount: 'standing' },
+
+  // R08 control center x 1.60–3.80 · z 7.20–9.70. ONE volume holding electricity,
+  // ethernet, gas, water, the heater and the air conditioning, and one rather than
+  // six on purpose: brief §7.4 defers the mandatory split into a wet-and-gas
+  // compartment and an electrical one, and a single object is what there is to
+  // divide when that happens. It is wider than the 1.20 m leaf that serves this
+  // room, so it goes in as parts — which is what that unusually wide door is for.
+  // The south face is the only run clear of both leaves.
+  {
+    kind: 'servicesCabinet',
+    room: 'controlCenter',
+    rect: [1.65, 3.05, 9.05, 9.65],
+    mount: 'standing',
+  },
+
+  // R09 guest room, lower leg x 4.10–7.90 · z 7.05–8.60 — a SITTING room now, not a
+  // guest bedroom. The owner walked it in 3D on 2026-09-19 and asked for the sofa and
+  // the table guests actually sit at; the bed and the wardrobe are what paid for them.
+  //
+  // The wardrobe went first and by name: a 0.60 × 0.90 × 2.20 oak box against the east
+  // wall, and at 2.20 m the tallest thing in a 1.55 m deep room — "the yellow thing".
+  // The bed went because arithmetic said so. The leg is 1.55 deep; a bed is 0.90 and a
+  // sofa is 0.80, and 0.90 + 0.80 = 1.70 does not fit across it however the two are
+  // turned. Widening the leg to 3.80 bought length, not depth, so the choice was a bed
+  // or a sofa and the owner chose the sofa. The room keeps its own bathroom suite.
+  // (0.80 and 0.90 are the built depths, not round numbers: `verify:plan` prints the
+  // sofa as 2.20 × 0.80, and the bed that stood here was 2.00 × 0.90.)
+  //
+  // NEITHER of these needs an approach override, which is worth saying out loud in a
+  // room that has needed one everywhere else. Check 9 asks for 0.60 clear at ONE face:
+  // the sofa is reached from its east face, where 1.50 m of open floor runs to x 7.90,
+  // and the table from its west face, 0.65 m to x 4.10. The 0.10 m between the sofa and
+  // the table is not a clearance failure — it is what a table in front of a sofa is.
+  //
+  // The table's north edge is at z 7.25 and not a centimetre further north, which is
+  // the one number here that was not chosen for comfort. The stairwell leaf at
+  // x 4.65–5.55 swings 0.90 into this room, to z 7.20 — 0.15 past the seam, because
+  // the strip above it is only 0.75 deep and a 0.90 leaf does not fit in it. Drawn at
+  // z 7.15 the table took 0.04 m² of that swing and check 9 caught it. 7.25 leaves the
+  // leaf its floor with 0.05 to spare.
+  { kind: 'sofa', room: 'guestRoom', rect: [4.2, 6.4, 7.75, 8.55], mount: 'standing' },
+  {
+    kind: 'coffeeTable',
+    room: 'guestRoom',
+    rect: [4.75, 5.85, 7.25, 7.65],
+    mount: 'freestanding',
+  },
+  // The north strip (z 6.30–7.05) stays empty AS A ROUTE — it is the only way to the
+  // control center, the side-A balcony and the guest bathroom, and ADR-011 accepted the
+  // guest room's §6 access rule on the strength of it being circulation. The pass
+  // counter below stands past the end of that route, not on it: everything the strip
+  // has to reach is west of x 8.80, and the counter starts at x 9.00 in the dead end
+  // the strip has always terminated in. The strip is 8.10 m long and the counter takes
+  // the last 0.70 of it.
+  //
+  // It is the tunnel the owner asked for: "not just a window, a tunnel, hosting two
+  // windows — one on the kitchen side, one on the guest side — and just the bottom,
+  // the top keep it a normal wall." That last clause is why this is a fixture and not
+  // masonry. A wall in this model is the gap between two room rects and its thickness
+  // is ONE number for its whole height, so moving the guest room's east face west to
+  // x 9.00 would have built a 1.00 m wall to the ceiling, and PARAPET_WALLS only lowers
+  // a whole wall face, which would have left an open slot over the pass instead of the
+  // plain wall the owner asked for. Built out as a unit, the masonry stays 0.30 and the
+  // tunnel stops at 1.90: above that there is nothing but the normal wall.
+  {
+    kind: 'passCounter',
+    room: 'guestRoom',
+    rect: [9.0, 9.7, 6.3, 7.05],
+    along: 'x',
+    mount: 'standing',
+    note: 'built out from the pass so the opening is a 1.00 m tunnel with a ledge at 1.00; flush to the wall on three faces by necessity, not by drift',
+  },
+
+  // R11 kitchen, an L of x 10.00–12.20 · z 6.30–8.60 and x 12.20–14.10 · z 5.80–8.60.
+  // A fixture may not straddle the seam between two rects of one room (check 9 tests
+  // containment in ONE rect), so the counters break at x 12.20 by construction.
+  // The west run sits under the 0.65 m food pass, whose sill is 1.00 m and whose
+  // whole purpose is handing food through to the guest room — a 0.90 m counter top
+  // passes under it, and the cooker is kept south of it, because a hob does not
+  // belong beneath a serving hatch.
+  { kind: 'counter', room: 'kitchen', rect: [10.05, 10.65, 6.35, 7.85], mount: 'standing' },
+  { kind: 'cooker', room: 'kitchen', rect: [10.05, 10.65, 7.9, 8.5], mount: 'standing' },
+  { kind: 'counter', room: 'kitchen', rect: [11.3, 12.15, 7.95, 8.55], mount: 'standing' },
+  // The fridge is the tightest thing on the floor. Its rect is set by the two 0.90 m
+  // leaves that swing into this leg — the corridor door over z 5.80–6.70 and the
+  // balcony door over z 7.70–8.60 — which leave exactly 1.00 m of east wall between
+  // them for a 0.90 m appliance.
+  { kind: 'fridge', room: 'kitchen', rect: [13.35, 14.05, 6.75, 7.65], mount: 'standing' },
+
+  // R12 laundry x 14.25–17.55 · z 5.80–8.60 — every item of brief §7.1. Its south
+  // face carries the balcony door AND a 1.90 m window whose sill is 0.60 m, so that
+  // whole face has no free run at all and nothing stands on it: the machine, the
+  // hand-wash sink his mother prefers to it and the cleaning store take the north
+  // run, and the two armoires take the east one. Dirty and clean stay separate
+  // boxes with their own notes, which is the separation the brief asks for — the
+  // west face could not hold either of them, since the balcony leaf swings across
+  // it and the machine needs its own floor to stand at.
+  //
+  // The armoires are 0.60 m rather than the 0.90 m first drawn, and they stop at
+  // z 8.15. Twice reduced, twice for a measured reason: the east face gives only
+  // 1.75 m between the sanitair door's swing and the far wall, and at 0.80 m the
+  // clean one reached z 8.55, which put a 2.20 m carcass 0.05 m in front of the
+  // 1.90 m window whose sill is 0.60 — blocking 0.40 m of it over its whole height.
+  // No check on this floor can see that: check 9 tests footprints, and a fixture's
+  // height against a window's sill is a fact only `fixtures.ts` knows. It was found
+  // by reading, which is why it is written down here.
+  { kind: 'washingMachine', room: 'laundry', rect: [14.3, 14.9, 5.85, 6.45], mount: 'standing' },
+  { kind: 'sink', room: 'laundry', rect: [14.95, 15.55, 5.85, 6.3], mount: 'standing' },
+  {
+    kind: 'storageUnit',
+    room: 'laundry',
+    rect: [15.6, 16.2, 5.85, 6.45],
+    mount: 'standing',
+    note: 'cleaning and housekeeping store',
+  },
+  {
+    kind: 'wardrobe',
+    room: 'laundry',
+    rect: [16.9, 17.5, 6.9, 7.5],
+    mount: 'standing',
+    note: 'dirty clothes',
+  },
+  {
+    kind: 'wardrobe',
+    room: 'laundry',
+    rect: [16.9, 17.5, 7.55, 8.15],
+    mount: 'standing',
+    note: 'clean clothes',
+  },
+
+  // R13 main sanitair x 17.70–20.35 · z 5.80–7.30. The floor's ONLY WC (owner,
+  // 2026-09-19): the guest suite's open part is 0.55 m deep and cannot take a pan at
+  // all, which is recorded on that room's own open list rather than left for someone
+  // to rediscover. It stands on the SOUTH strip, in the 0.80 m of it left between
+  // the two cubicle doorways — the north-west corner is where the laundry door both
+  // swings and lands, and the north-east corner is the basin's.
+  { kind: 'wc', room: 'mainSanitair', rect: [18.85, 19.55, 6.85, 7.25], mount: 'standing' },
+
+  // R14 utility room x 20.50–22.20 · z 4.15–9.70, a 1.70 m wide slot 5.55 m long.
+  // Two deep runs of shelving on the east face, south of the corridor leaf's swing.
+  { kind: 'storageUnit', room: 'utilityRoom', rect: [21.55, 22.15, 5.2, 7.4], mount: 'standing' },
+  { kind: 'storageUnit', room: 'utilityRoom', rect: [21.55, 22.15, 7.45, 9.65], mount: 'standing' },
+
+  // R16 side-B balcony slab x 11.65–15.35 · z 8.90–9.70, run as an extension of the
+  // kitchen (brief §7.2). The strip is 0.80 m deep and both doors open onto it, so a
+  // 0.60 m grill would leave 0.15 m to stand in: this one is 0.40 m deep, built in
+  // against the parapet and worked from the side, with what is actually left in front
+  // of it declared rather than assumed.
+  {
+    kind: 'barbecue',
+    room: 'balconySlabB',
+    rect: [11.7, 12.4, 9.25, 9.65],
+    mount: 'standing',
+    approach: 0.35,
+    note: 'built in against the parapet; worked from the side, not stood in front of',
+  },
+
   // The television wall, facing the living room opening across the corridor.
   // Flush against the corridor's south face at z 6.00, not the 5.90 of the
   // corridor before the stair bay deepened. `tvPanel.ts` derives the panel from
   // that face and ignores this z on purpose, so a stale value here does not move
   // the model — it moves the DRAWING, which reads the fixture, and would have
   // shown the television hanging 0.10 clear of the wall it is mounted on.
-  { kind: 'tv', room: 'corridor', rect: [7.5, 11.0, 5.92, 6.0] },
+  // Gap 0 on the south face: the corridor's second rect is x 5.60–11.90 ·
+  // z 5.50–6.00 and the panel's maxZ is that face exactly, which is what
+  // `mounted` asserts — it is screwed to the wall, it does not stand on the
+  // floor, so it leaves none of the 0.05 a standing fitting leaves.
+  { kind: 'tv', room: 'corridor', rect: [7.5, 11.0, 5.92, 6.0], mount: 'mounted' },
 ] as const satisfies readonly PlanFixture[]);
 
 /** One wall face the owner named off the register as built for isolation. */
@@ -964,18 +1522,32 @@ export const INSULATED_WALLS = deepFreeze([
   // there stays 0.30 all the same, because it faces an open balcony and the
   // weather rule outranks the isolation list — it is wide for warmth, not quiet.
   { matricule: 'F1-R06-STR-W4', length: 2.0 },
-  // The guest room, wrapped on every side that is its own boundary (owner).
-  // Deliberately NOT its two walls to the guest sanitair: that room is inside
-  // the wrap, so isolating against it would be isolating the suite from itself.
-  // All six faces of the guest room's new outline. It has six walls rather than
-  // the earlier eight because the bathroom took the suite's east end, and every
-  // one of these is the room's own boundary — including its wall to the bathroom,
-  // which the owner asked to be hard.
-  // Its walls to its own bathroom are deliberately NOT here. That suite has only
-  // 1.40 m of bathroom depth left once the walking strip has taken its share, and
-  // a 0.30 wall inside one suite costs more floor than the quiet is worth.
+  // The guest room, wrapped on every side that is its own boundary (owner). That is
+  // FOUR of its eight faces, and the four are listed rather than described because
+  // the other four are each left off for their own reason:
+  //
+  //   W1  8.10  north, to the stairwell and the corridor   insulated, here
+  //   W2  0.75  east,  to the kitchen                      insulated, here
+  //   W5  3.80  south, to the cc balcony and the void      insulated, here
+  //   W6  1.55  west,  to the control center               insulated, here
+  //   W3  1.80  south, to the guest sanitair               NOT insulated
+  //   W4  1.55  east,  to the guest sanitair and its bath  NOT insulated
+  //   W7  2.50  south, to the control center               0.30 of it only
+  //   W8        west,  to the side-A balcony               the balcony's own spine
+  //
+  // W3 and W4 are the two walls to its own bathroom, and they are off the list on
+  // purpose: that suite is INSIDE the wrap, so isolating against it would be
+  // isolating the suite from itself. It also could not afford the wall — the
+  // bathroom has 1.40 m of depth once the walking strip has taken its share, and a
+  // 0.30 wall inside one suite costs more floor than the quiet is worth.
+  //
+  // (An earlier version of this block said "all six faces … including its wall to
+  // the bathroom, which the owner asked to be hard", directly above a sentence
+  // saying the bathroom walls are deliberately absent, above a list of three. All
+  // three claims cannot hold; the data says four faces and no bathroom wall, and
+  // `pnpm verify:plan` check 10 is what settles it.)
   { matricule: 'F1-R09-GST-W2', length: 0.75 },
-  { matricule: 'F1-R09-GST-W5', length: 2.8 },
+  { matricule: 'F1-R09-GST-W5', length: 3.8 },
   { matricule: 'F1-R09-GST-W6', length: 1.55 },
 ] as const satisfies readonly InsulatedWall[]);
 

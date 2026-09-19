@@ -590,6 +590,14 @@ interface RectJoin {
   readonly overlapMin: number;
   /** End of the shared face, on the other axis, in metres. */
   readonly overlapMax: number;
+  /**
+   * Which way the body travels across the face: `1` toward increasing coordinates.
+   *
+   * The face alone cannot say. It is one coordinate shared by both rects, so a
+   * standoff point placed from it would be on the wrong side half the time — and a
+   * standoff on the wrong side is a waypoint inside a wall.
+   */
+  readonly direction: TravelDirection;
 }
 
 /**
@@ -607,6 +615,7 @@ function findRectJoin(a: PlanRect, b: PlanRect, diameter: number): RectJoin | un
     {
       faceAxis: 'x',
       face: a.maxX,
+      direction: 1,
       gap: b.minX - a.maxX,
       overlapMin: Math.max(a.minZ, b.minZ),
       overlapMax: Math.min(a.maxZ, b.maxZ),
@@ -614,6 +623,7 @@ function findRectJoin(a: PlanRect, b: PlanRect, diameter: number): RectJoin | un
     {
       faceAxis: 'x',
       face: a.minX,
+      direction: -1,
       gap: a.minX - b.maxX,
       overlapMin: Math.max(a.minZ, b.minZ),
       overlapMax: Math.min(a.maxZ, b.maxZ),
@@ -621,6 +631,7 @@ function findRectJoin(a: PlanRect, b: PlanRect, diameter: number): RectJoin | un
     {
       faceAxis: 'z',
       face: a.maxZ,
+      direction: 1,
       gap: b.minZ - a.maxZ,
       overlapMin: Math.max(a.minX, b.minX),
       overlapMax: Math.min(a.maxX, b.maxX),
@@ -628,6 +639,7 @@ function findRectJoin(a: PlanRect, b: PlanRect, diameter: number): RectJoin | un
     {
       faceAxis: 'z',
       face: a.minZ,
+      direction: -1,
       gap: a.minZ - b.maxZ,
       overlapMin: Math.max(a.minX, b.minX),
       overlapMax: Math.min(a.maxX, b.maxX),
@@ -685,14 +697,54 @@ function findRectPath(
 }
 
 /**
+ * Places a waypoint a body radius back from a shared face, inside one of its rects.
+ *
+ * Clamped into the rect it belongs to, because a standoff taken literally would sit outside
+ * the very rect it is meant to stand in: the guest sanitair's open part is 0.55 m deep and
+ * the balcony slab 0.80 m, against a 0.25 m radius either side of the face. The clamp is what
+ * carries those two, and it is the branch that runs on this floor.
+ *
+ * The centre branch above it does **not** run on this floor, and the number says which: it
+ * needs a rect shallower than a body diameter, 0.50 m at the default tuning, and the
+ * shallowest rect in the plan is that 0.55 m strip. It is kept because `bodyRadius` is
+ * tuning rather than a constant — raise it to 0.30 m for a wider body and the strip is
+ * suddenly too shallow to stand a standoff in from either side, and the clamp would then
+ * return `min + radius > max - radius`, a point outside the rect. The centre is the only
+ * answer that stays inside it and stays square-on to the face, which is what the crossing is
+ * for. It is a guard on a tuning value, not a case anyone has seen.
+ *
+ * @param rect - The rect the waypoint must lie inside.
+ * @param join - The shared face being crossed.
+ * @param side - `-1` for the rect the body leaves, `1` for the one it enters.
+ * @param config - Tuning.
+ * @returns The coordinate on `join.faceAxis`, in metres.
+ */
+function standoffFrom(
+  rect: PlanRect,
+  join: RectJoin,
+  side: TravelDirection,
+  config: RoomRouteConfig,
+): number {
+  const [min, max] = rectExtent(rect, join.faceAxis);
+  const wanted = join.face + join.direction * side * config.bodyRadius;
+  const centre = (min + max) * HALF;
+  return max - min < config.bodyRadius * RADII_PER_DIAMETER
+    ? centre
+    : Math.min(Math.max(wanted, min + config.bodyRadius), max - config.bodyRadius);
+}
+
+/**
  * Derives the waypoints that carry a body from one rect of a space to another.
  *
  * Legs are walked straight, so a space entered in one rect and left from another
- * needs a waypoint on every rect boundary between the two; without them a leg
- * across an L-shaped space would cut the notch, which is wall. Each connector
- * sits at the centre of the shared face, kept a body radius from its ends — a
- * face at least a diameter wide already puts its centre that far in, so the
- * clamp only holds the invariant where a wider tuning would move the centre.
+ * needs waypoints on every rect boundary between the two; without them a leg
+ * across an L-shaped space would cut the notch, which is wall. Each boundary gets
+ * a PAIR of connectors, a body radius either side of the shared face and at the
+ * same position along it, so the seam is crossed square-on: a single point on the
+ * face still let the body arrive and leave along two different diagonals and clip
+ * the notch between them. They sit at the centre of the face, kept a body radius
+ * from its ends — a face at least a diameter wide already puts its centre that far
+ * in, so the clamp only holds the invariant where a wider tuning would move it.
  *
  * @param rects - The walkable rects of the space, in slab order.
  * @param fromIndex - Index of the rect the body is in.
@@ -739,7 +791,17 @@ function getConnectors(
       Math.max(centre, join.overlapMin + config.bodyRadius),
       join.overlapMax - config.bodyRadius,
     );
-    connectors.push(makeAxialWaypoint(join.faceAxis, join.face, along));
+    // Square-on, not through the corner. A single waypoint ON the seam leaves the
+    // body free to arrive along one diagonal and leave along another, and the
+    // corner it cuts on the way out is the notch this connector exists to avoid:
+    // the guest room's own L wedged a walk that way, every time, 0.06 m inside the
+    // wall that starts where its two rects stop overlapping. One standoff before
+    // the seam and one after makes the crossing perpendicular, so a leg is only
+    // ever diagonal inside a single rect, where a diagonal is safe by construction.
+    connectors.push(
+      makeAxialWaypoint(join.faceAxis, standoffFrom(rects[path[step]], join, -1, config), along),
+      makeAxialWaypoint(join.faceAxis, standoffFrom(rects[path[step + 1]], join, 1, config), along),
+    );
   }
   return connectors;
 }

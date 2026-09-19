@@ -90,14 +90,14 @@ const STOP_WALKING_NAME = 'Stop walking';
 
 /** The open room list, by its id: a plain `<ul>`, so it is found the way the readout is. */
 const ROOM_LIST_SELECTOR = '#room-list';
-/** How many rooms the list offers: the 22 spaces of the plan less its two floorless voids. */
-const ROOM_COUNT = 20;
+/** How many rooms the list offers: the 21 spaces of the plan less its two floorless voids. */
+const ROOM_COUNT = 19;
 /** The left and top edges of the window, in CSS pixels. */
 const VIEWPORT_ORIGIN_PX = 0;
 /** A narrow phone viewport, the second width the open list is measured at. */
 const PHONE_VIEWPORT = Object.freeze({ width: 400, height: 800 });
 /**
- * Budget for opening the list at two viewports and measuring twenty items in each: two page
+ * Budget for opening the list at two viewports and measuring nineteen items in each: two page
  * loads, two camera flights, and no locomotion at all.
  */
 const LIST_LAYOUT_TEST_TIMEOUT_MS = 120_000;

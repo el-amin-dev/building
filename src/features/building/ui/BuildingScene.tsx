@@ -1,6 +1,8 @@
 import { Canvas } from '@react-three/fiber';
-import { useEffect, useRef } from 'react';
+import type { RootState } from '@react-three/fiber';
+import { useCallback, useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
+import { reportError } from '../../../app/observability/reportError.ts';
 import { useFloorCountStore } from '../application/floorCountStore.ts';
 import { useRoomWalkStore } from '../application/roomWalkStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
@@ -77,6 +79,16 @@ const CANCEL_WALK_KEY_CODE = 'Escape';
  */
 const CAMERA_IDLE = 'idle';
 const CAMERA_RUNNING = 'running';
+/**
+ * The canvas event fired when the browser takes the WebGL context away.
+ *
+ * It is an event and not a throw, so `SceneErrorBoundary` never sees it: the canvas simply
+ * stops painting and the viewer is left looking at the last frame, or at nothing.
+ */
+const CONTEXT_LOST_EVENT = 'webglcontextlost';
+/** What a lost context is reported as. Says what happened, not what was on screen. */
+const CONTEXT_LOST_MESSAGE =
+  'The browser released the WebGL context of the scene canvas; the view has stopped painting.';
 /**
  * Full-size region around the canvas. The focus indicator is drawn by an `::after` layer
  * stacked above the WebGL canvas (which would paint over an outline on the region
@@ -218,6 +230,12 @@ function SceneContent({ isInterior, isTravelling, regionRef }: SceneContentProps
  * visually hidden description tells assistive technology what the current view and camera
  * mode show.
  *
+ * This is the one place the `<Canvas>` is mounted, so it is also the one place that can hear
+ * the WebGL context being taken away: `onCreated` hands over the renderer's canvas and a
+ * `webglcontextlost` listener reports it through `reportError`. An error boundary cannot —
+ * the loss is an event, not a throw — and neither can it catch a throw from the frame loop
+ * (`SceneErrorBoundary` says so at length).
+ *
  * @returns The scene description and the canvas region.
  */
 export function BuildingScene() {
@@ -229,6 +247,44 @@ export function BuildingScene() {
   const regionRef = useRef<HTMLDivElement>(null);
   /** The view of the previous render, `undefined` until the first change: see the docblock. */
   const previousViewRef = useRef<ViewMode | undefined>(undefined);
+  /** Removes the context-loss listener from the canvas it was added to, once there is one. */
+  const releaseContextLossRef = useRef<(() => void) | undefined>(undefined);
+
+  // The listener is added from `onCreated`, which has no teardown of its own, so the
+  // unmount has to come and get it: the canvas outlives this component only in the sense
+  // that nothing else would ever remove the listener.
+  useEffect(
+    () => () => {
+      releaseContextLossRef.current?.();
+      releaseContextLossRef.current = undefined;
+    },
+    [],
+  );
+
+  /**
+   * Listens for the loss of the WebGL context on the canvas three.js just created.
+   *
+   * The renderer's canvas is reachable only from here: `<Canvas>` creates it, and nothing in
+   * this tree holds a ref to it. Any earlier listener is released first, so a second
+   * `onCreated` — React re-attaching the canvas ref on a re-render — cannot leave two.
+   *
+   * The event is not cancelled. Preventing its default is how a page asks to restore the
+   * context later, and nothing here is able to rebuild the scene yet; claiming otherwise
+   * would leave a permanently blank canvas that the browser thinks is being handled.
+   *
+   * @param state - The renderer state three.js hands over once the canvas exists.
+   */
+  const handleCreated = useCallback((state: RootState) => {
+    releaseContextLossRef.current?.();
+    const canvas = state.gl.domElement;
+    const handleContextLost = () => {
+      reportError({ event: 'webgl-context-lost', message: CONTEXT_LOST_MESSAGE });
+    };
+    canvas.addEventListener(CONTEXT_LOST_EVENT, handleContextLost);
+    releaseContextLossRef.current = () => {
+      canvas.removeEventListener(CONTEXT_LOST_EVENT, handleContextLost);
+    };
+  }, []);
 
   const isInterior = viewMode === 'interior';
   const isTravelling = cameraTransition !== 'none';
@@ -265,7 +321,7 @@ export function BuildingScene() {
         aria-describedby={NAVIGATION_HINT_ID}
         data-camera-transition={isTravelling ? CAMERA_RUNNING : CAMERA_IDLE}
       >
-        <Canvas camera={CAMERA_OPTIONS}>
+        <Canvas camera={CAMERA_OPTIONS} onCreated={handleCreated}>
           <SceneContent isInterior={isInterior} isTravelling={isTravelling} regionRef={regionRef} />
         </Canvas>
       </div>

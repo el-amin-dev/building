@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetErrorSink, setErrorSink } from '../../../app/observability/reportError.ts';
+import type { ErrorReport } from '../../../app/observability/reportError.ts';
 import { useFloorCountStore } from '../application/floorCountStore.ts';
 import { useRoomWalkStore } from '../application/roomWalkStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
@@ -19,8 +21,10 @@ import type { FloorModelProps } from './FloorModel.tsx';
 import { INTERIOR_REGION_ID, NAVIGATION_HINT_ID } from './hudIds.ts';
 import { NavigationHint } from './NavigationHint.tsx';
 
-const { CANVAS_TEST_ID, STUB_FRAMING } = vi.hoisted(() => ({
+const { CANVAS_TEST_ID, GL_CANVAS_TEST_ID, STUB_FRAMING } = vi.hoisted(() => ({
   CANVAS_TEST_ID: 'scene-canvas',
+  /** The `<canvas>` three.js would have created: the element the scene listens on. */
+  GL_CANVAS_TEST_ID: 'scene-gl-canvas',
   /**
    * The only two things `BuildingScene` itself reads off the framing: where the ground plane
    * is centred, and how wide it is. Everything else the framing carries is consumed by the
@@ -35,9 +39,28 @@ const { floorModels } = vi.hoisted(() => ({ floorModels: [] as unknown[] }));
 // jsdom has no WebGL: the canvas is replaced by a plain element, so drei (and the CommonJS
 // three build it would load) is skipped and the r3f hooks are inert. It does render its
 // children, because the scene graph is where the storey count has to arrive.
+// It does carry a real `<canvas>`, handed to `onCreated` the way three.js hands over the one
+// it created: that element is where the scene listens for a lost WebGL context, and a plain
+// element would leave that listener untestable.
 vi.mock('@react-three/fiber', () => ({
-  Canvas: ({ children }: { children?: ReactNode }) => (
-    <div data-testid={CANVAS_TEST_ID}>{children}</div>
+  Canvas: ({
+    children,
+    onCreated,
+  }: {
+    children?: ReactNode;
+    onCreated?: (state: { gl: { domElement: HTMLCanvasElement } }) => void;
+  }) => (
+    <div data-testid={CANVAS_TEST_ID}>
+      <canvas
+        data-testid={GL_CANVAS_TEST_ID}
+        ref={(element) => {
+          if (element !== null) {
+            onCreated?.({ gl: { domElement: element } });
+          }
+        }}
+      />
+      {children}
+    </div>
   ),
   useFrame: vi.fn(),
   useThree: vi.fn(),
@@ -384,6 +407,74 @@ describe('the storey count in the scene', () => {
 
     expect(lastModel().floorCount).toBe(MAX_FLOOR_COUNT);
     expect(lastModel().showCeilings).toBe(true);
+  });
+});
+
+describe('a lost WebGL context', () => {
+  /** What a sink receives: the report, plus the moment it was made. */
+  type StampedReport = ErrorReport & { readonly at: string };
+
+  const ONE_REPORT = 1;
+  const NO_REPORTS = 0;
+  let reports: StampedReport[] = [];
+
+  /** The `<canvas>` the renderer handed over, which is what loses the context. */
+  function glCanvas(): HTMLElement {
+    return screen.getByTestId(GL_CANVAS_TEST_ID);
+  }
+
+  /** Loses the context the way a driver reset does: an event, never a throw. */
+  function loseContext(canvas: HTMLElement): void {
+    fireEvent(canvas, new Event('webglcontextlost'));
+  }
+
+  beforeEach(() => {
+    useViewStore.setState(useViewStore.getInitialState(), true);
+    reports = [];
+    setErrorSink((report) => {
+      reports.push(report);
+    });
+  });
+
+  afterEach(() => {
+    resetErrorSink();
+  });
+
+  it('says nothing while the context holds', () => {
+    renderScene();
+
+    expect(reports).toHaveLength(NO_REPORTS);
+  });
+
+  it('is reported once, through the error seam', () => {
+    renderScene();
+
+    loseContext(glCanvas());
+
+    expect(reports).toHaveLength(ONE_REPORT);
+    expect(reports[0].event).toBe('webgl-context-lost');
+    expect(reports[0].message).not.toBe('');
+  });
+
+  it('is reported once per loss, not once per render of the scene', () => {
+    renderScene();
+    const canvas = glCanvas();
+    toggleView();
+    endTransition();
+
+    loseContext(canvas);
+
+    expect(reports).toHaveLength(ONE_REPORT);
+  });
+
+  it('is no longer listened for once the scene is unmounted', () => {
+    const { unmount } = renderScene();
+    const canvas = glCanvas();
+
+    unmount();
+    loseContext(canvas);
+
+    expect(reports).toHaveLength(NO_REPORTS);
   });
 });
 

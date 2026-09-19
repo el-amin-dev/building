@@ -50,8 +50,10 @@
  * sitting a little outside its own wall is deliberate and permitted.
  * The side labels and the captions are placed against the *measured* bounds of
  * everything drawn, not a fixed margin, so they cannot land on a label however
- * `walls.mjs` changes. Nothing is ever dropped: an unlabelled wall would defeat
- * the point of the drawing.
+ * `walls.mjs` changes. No wall, port or window label is ever dropped: an
+ * unlabelled wall would defeat the point of the drawing. A fixture label can be,
+ * because a room can genuinely run out of floor to write on — and when it is,
+ * it is named in {@link PlanPage.droppedLabels} rather than lost.
  *
  * Cell ids are `v2-<counter>` in emission order, so two runs over the same spec
  * produce byte-identical XML and the committed HTML only changes when the
@@ -63,8 +65,8 @@
 /** @import { Axis, Contact, PlanSpec, Wall } from './walls.mjs' */
 
 /**
- * @import { InsulatedWall, PlanRectCoordinates, PlanRoom, PlanRoomType, PlanSides,
- *   PlanStairs, PlanWallThicknesses }
+ * @import { InsulatedWall, PlanFixture, PlanRectCoordinates, PlanRoom, PlanRoomType,
+ *   PlanSides, PlanStairs, PlanWallThicknesses }
  *   from '../../src/features/building/domain/sourceOfTruth/plan.ts'
  */
 
@@ -102,6 +104,25 @@
  * spec's union happens to list that kind today.
  *
  * @typedef {{ kind: string, room: string, rect: readonly number[] }} RenderFixture
+ */
+
+/**
+ * The rendered plan page, and what would not fit on it.
+ *
+ * The page used to be returned as a bare string, which left the renderer with
+ * nowhere to put a fact the caller needs: every wall, port and window label is
+ * placed or the drawing is wrong, but a FIXTURE label can legitimately find
+ * nowhere free — a small room with several things in it can genuinely run out of
+ * floor to write on. It used to be dropped in silence, which at forty-odd
+ * fixtures would routinely hand the owner a drawing that is quietly incomplete
+ * and looks finished — the worst failure mode a drawing has. The
+ * page is one value with the misses attached, so a caller cannot read the first
+ * without being handed the second.
+ *
+ * @typedef {object} PlanPage
+ * @property {string} xml The `<mxGraphModel>…</mxGraphModel>` XML of the page.
+ * @property {number} fixtureLabels How many fixture labels the page tried to place.
+ * @property {string[]} droppedLabels The text of each one that found nowhere free.
  */
 
 /**
@@ -349,7 +370,7 @@ const CHAR_W_PROSE = 0.58;
  *   `spec` is the module namespace of `sourceOfTruth/plan.ts`; `walls` is the `Wall[]` of
  *   `walls.mjs` (passed in rather than imported so this module stays a pure
  *   function of its inputs and can be exercised against a fixture).
- * @returns {string} The `<mxGraphModel>…</mxGraphModel>` XML of the page.
+ * @returns {PlanPage} The page, and the fixture labels it could not fit on it.
  */
 export function renderPlanPage({ spec, walls }) {
   // Each of these is widened from the frozen `as const` literal to the interface
@@ -412,6 +433,15 @@ export function renderPlanPage({ spec, walls }) {
    */
   const placedLabels = [];
 
+  /** How many fixture labels this page tried to place. */
+  let fixtureLabels = 0;
+  /**
+   * The text of every fixture label that found nowhere free to sit.
+   *
+   * @type {string[]}
+   */
+  const droppedLabels = [];
+
   // ---------------------------------------------------------------- the plot
   cells.push(
     shape({
@@ -428,7 +458,7 @@ export function renderPlanPage({ spec, walls }) {
   // The fixture shapes are drawn further down, on top of the room fills, but
   // their boxes are needed here: a room's matricule has to know where the bath
   // is before it can choose a corner of the room to sit in.
-  for (const [, items] of fixturesByRoom(FIXTURES ?? [], ROOMS)) {
+  for (const [, items] of fixturesByRoom(FIXTURES ?? [], ROOMS, spec.compareFixturePosition)) {
     for (const fixture of items) {
       const [minX, maxX, minZ, maxZ] = fixture.rect;
       placedLabels.push({ x0: px(minX), y0: py(minZ), x1: px(maxX), y1: py(maxZ) });
@@ -546,7 +576,11 @@ export function renderPlanPage({ spec, walls }) {
   // placed here rather than through the band machinery, which threads labels
   // along walls. Screens are numbered with the rest, so the drawing and the
   // Registers page agree on which X is which even though they carry no label.
-  for (const [roomId, items] of fixturesByRoom(FIXTURES ?? [], ROOMS)) {
+  for (const [roomId, items] of fixturesByRoom(
+    FIXTURES ?? [],
+    ROOMS,
+    spec.compareFixturePosition,
+  )) {
     const room = ROOMS.find((candidate) => candidate.id === roomId);
     if (!room) continue;
     const base = roomMatricule(FLOOR_NUMBER, room);
@@ -591,8 +625,17 @@ export function renderPlanPage({ spec, walls }) {
       // matricule-only rule the rest of the plan follows. A small rectangle is
       // the one shape here that does not say what it is on sight.
       const label = `${base}-X${index + 1} ${fixture.kind}`;
+      fixtureLabels += 1;
       const spot = placeLabelBox(label, box, roomBoxes, placedLabels);
-      if (!spot) return;
+      if (!spot) {
+        // NOT a silent return. With seven fixtures a label that found nowhere to
+        // sit was rare enough to go unnoticed; with forty-two it is routine, and
+        // the failure mode is the worst one a drawing has — it looks finished.
+        // The shape is still drawn, so the floor it occupies is still true; what
+        // is missing is its name, and the caller says so out loud.
+        droppedLabels.push(label);
+        return;
+      }
       placedLabels.push(spot);
       cells.push(
         text({
@@ -842,11 +885,14 @@ export function renderPlanPage({ spec, walls }) {
   // only, and every one of those numbers is on the Registers page. The three
   // hatched piece labels still say what the bay contains.
 
-  return (
-    '<mxGraphModel dx="669" dy="364" grid="1" gridSize="10" guides="1" tooltips="1" connect="1"' +
-    ' arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">' +
-    `<root><mxCell id="0"/><mxCell id="1" parent="0"/>${cells.join('')}</root></mxGraphModel>`
-  );
+  return {
+    xml:
+      '<mxGraphModel dx="669" dy="364" grid="1" gridSize="10" guides="1" tooltips="1" connect="1"' +
+      ' arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">' +
+      `<root><mxCell id="0"/><mxCell id="1" parent="0"/>${cells.join('')}</root></mxGraphModel>`,
+    fixtureLabels,
+    droppedLabels,
+  };
 
   // ------------------------------------------------------------- local helpers
   // These close over `cells`, `nextId` and `bands`; keeping them inside the
@@ -1052,16 +1098,18 @@ function sortedByKey(map) {
 /**
  * Group the fixtures by room and put each room's in reading order.
  *
- * Numbering is per room, not per wall: a fixture stands in a room. Ordering by
- * z and then x makes `X1`, `X2` … stable — the same fixture keeps its number
- * from one run to the next as long as it has not moved, which matters because
- * these matricules are quoted on the Registers page.
+ * Numbering is per room, not per wall: a fixture stands in a room. The order is
+ * the spec's own `compareFixturePosition`, passed in rather than repeated here:
+ * the number it decides is part of a matricule, the Registers page quotes those
+ * matricules, and a second copy of the rule would let the two pages disagree
+ * about which fixture is `X3` while both looked correct.
  *
  * @param {readonly RenderFixture[]} fixtures The spec's fixtures.
  * @param {ReadonlyArray<{id: string}>} rooms The spec's rooms, for a stable room order.
+ * @param {(a: PlanFixture, b: PlanFixture) => number} compare The spec's reading order.
  * @returns {Array<[string, RenderFixture[]]>} `[roomId, fixtures]`, rooms in spec order.
  */
-function fixturesByRoom(fixtures, rooms) {
+function fixturesByRoom(fixtures, rooms, compare) {
   const roomOrder = new Map(rooms.map((room, index) => [room.id, index]));
   /** @type {Map<string, RenderFixture[]>} */
   const grouped = new Map();
@@ -1076,7 +1124,11 @@ function fixturesByRoom(fixtures, rooms) {
     items.push(fixture);
   }
   for (const items of grouped.values()) {
-    items.sort((a, b) => a.rect[2] - b.rect[2] || a.rect[0] - b.rect[0]);
+    // The comparator reads `rect[0]` and `rect[2]` and nothing else, which every
+    // RenderFixture carries; the cast is the boundary between this module's
+    // deliberately loose fixture shape and the spec's own type, and is the only
+    // place the two meet.
+    items.sort((a, b) => compare(/** @type {PlanFixture} */ (a), /** @type {PlanFixture} */ (b)));
   }
   return [...grouped.entries()].sort(
     (a, b) => (roomOrder.get(a[0]) ?? 0) - (roomOrder.get(b[0]) ?? 0),

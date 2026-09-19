@@ -79,10 +79,10 @@ const SLAB_BOTTOM = -getSlabThickness();
  * Measured figures of the typical floor.
  * ------------------------------------------------------------------ */
 
-/** Faces the plan's 22 spaces have between them. */
-const FACE_COUNT = 96;
+/** Faces the plan's 21 spaces have between them. */
+const FACE_COUNT = 92;
 /** Contact stretches those faces are tiled by. */
-const CONTACT_COUNT = 166;
+const CONTACT_COUNT = 158;
 /**
  * Faces that are more than one thickness along their length.
  *
@@ -104,17 +104,17 @@ const SOLID_COUNT = CONTACT_COUNT - ZERO_JOIN_COUNT;
 /** Solids the owner wants built heavy for sound and heat. */
 const INSULATED_SOLID_COUNT = 63;
 
-/** Wall footprint of the floor, in square metres (TASKS.md: WALLS 44.13). */
-const WALL_FOOTPRINT_AREA = 44.125;
-/** Clear floor of every space, in square metres: 225.00 − 44.125. */
-const CLEAR_FLOOR_AREA = 180.875;
+/** Wall footprint of the floor, in square metres (`pnpm verify:plan`: walls 43.7200). */
+const WALL_FOOTPRINT_AREA = 43.72;
+/** Clear floor of every space, in square metres: 225.00 − 43.72. */
+const CLEAR_FLOOR_AREA = 181.28;
 /** The 22.50 × 10.00 plot, in square metres. */
 const PLOT_AREA = 225;
 
 /** Cells of the grid cut by the plan alone that carry a wall. */
-const CELL_COUNT = 296;
+const CELL_COUNT = 286;
 /** Of those, the ones at full wall height. */
-const FULL_HEIGHT_CELL_COUNT = 279;
+const FULL_HEIGHT_CELL_COUNT = 269;
 /** Of those, the ones inside the one face declared a parapet. */
 const PARAPET_CELL_COUNT = 17;
 /** Footprint of the balustrade, in square metres: 9.40 × 0.30. */
@@ -134,14 +134,14 @@ const PARAPET_HEIGHT = PARAPET_WALLS[0].height;
 const PARAPET_STRIP: PlanRect = makeRect(0, 0.3, 0.3, 9.7);
 
 /** Blocks the plan alone merges to, before any opening is punched. */
-const PIECE_COUNT = 93;
+const PIECE_COUNT = 92;
 /** Of those, the single parapet block: the whole balustrade in one box. */
 const PARAPET_PIECE_COUNT = 1;
 
 /** Cells once the seven fixture openings cut the grid too. */
-const FINE_CELL_COUNT = 374;
+const FINE_CELL_COUNT = 362;
 /** Blocks once those openings are punched out. */
-const FINE_PIECE_COUNT = 131;
+const FINE_PIECE_COUNT = 130;
 
 /* ------------------------------------------------------------------ *
  * Openings of the typical floor: local fixtures.
@@ -454,7 +454,7 @@ const SPACE_RECTS: readonly PlanRect[] = ROOMS.flatMap((room) =>
 );
 
 describe('derived wall faces', () => {
-  it('derives 96 frozen faces with unique matricules', () => {
+  it('derives 92 frozen faces with unique matricules', () => {
     expect(WALLS_DERIVED).toHaveLength(FACE_COUNT);
     expect(Object.isFrozen(WALLS_DERIVED)).toBe(true);
     WALLS_DERIVED.forEach((wall) => {
@@ -532,7 +532,7 @@ describe('derived wall faces', () => {
       [null, WALLS.insulated],
       ['guestSanitair', WALLS.partition],
       [null, WALLS.partition],
-      ['guestShowerCubicle', WALLS.partition],
+      ['guestBathCubicle', WALLS.partition],
     ]);
   });
 
@@ -713,7 +713,7 @@ describe('wall solids', () => {
 });
 
 describe('wall cells of the typical floor', () => {
-  it('covers the 44.125 m² wall footprint with 296 frozen cells', () => {
+  it('covers the 43.720 m² wall footprint with 286 frozen cells', () => {
     expect(CELLS).toHaveLength(CELL_COUNT);
     expect(cellArea(CELLS)).toBeCloseTo(WALL_FOOTPRINT_AREA, PRECISION_DIGITS);
     expect(Object.isFrozen(CELLS)).toBe(true);
@@ -820,7 +820,7 @@ describe('wall cells of the typical floor', () => {
 });
 
 describe('wall blocks of the typical floor', () => {
-  it('merges the plan’s walls into 93 frozen blocks', () => {
+  it('merges the plan’s walls into 92 frozen blocks', () => {
     expect(PIECES).toHaveLength(PIECE_COUNT);
     expect(Object.isFrozen(PIECES)).toBe(true);
     PIECES.forEach((piece) => {

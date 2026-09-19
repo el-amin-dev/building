@@ -28,7 +28,7 @@ const KITCHEN_SHIFT_X = 0.05;
  * Pinned so that the gap checks cannot quietly start measuring fewer walls than
  * the floor has.
  */
-const CONTACT_COUNT = 116;
+const CONTACT_COUNT = 110;
 
 /** Thickness of the one join the owner kept at a hand-set 0.20 m (voidEast ↔ utilityRoom). */
 const KEPT_DRAWN_WALL = 0.2;
@@ -115,7 +115,7 @@ const JOIN_EXCEPTIONS: readonly (readonly [SpaceId, SpaceId, number])[] = [
  *
  * Changed with the redrawn floor: `linkCorridor` is gone, absorbed into the
  * guest room's north strip, which is why the guest room now reaches the side-A
- * balcony and the stairs; `ccBalcony` is new; and the four bath and shower
+ * balcony and the stairs; `ccBalcony` is new; and the three bath and shower
  * cubicles are rooms, so they have neighbours of their own.
  */
 const EXPECTED_NEIGHBOURS: Readonly<Record<SpaceId, readonly SpaceId[]>> = {
@@ -150,13 +150,13 @@ const EXPECTED_NEIGHBOURS: Readonly<Record<SpaceId, readonly SpaceId[]>> = {
     'stairs',
     'voidWest',
   ],
-  guestSanitair: ['guestBathCubicle', 'guestRoom', 'guestShowerCubicle', 'kitchen'],
+  guestSanitair: ['guestBathCubicle', 'guestRoom', 'kitchen'],
   kitchen: [
     'balconySlabB',
     'corridor',
+    'guestBathCubicle',
     'guestRoom',
     'guestSanitair',
-    'guestShowerCubicle',
     'laundry',
     'voidWest',
   ],
@@ -165,17 +165,9 @@ const EXPECTED_NEIGHBOURS: Readonly<Record<SpaceId, readonly SpaceId[]>> = {
   utilityRoom: ['bedroomFemaleKids', 'corridor', 'mainSanitair', 'mainShowerCubicle', 'voidEast'],
   ccBalcony: ['controlCenter', 'guestRoom', 'voidWest'],
   balconySlabB: ['kitchen', 'laundry', 'voidEast', 'voidWest'],
-  voidWest: [
-    'balconySlabB',
-    'ccBalcony',
-    'guestBathCubicle',
-    'guestRoom',
-    'guestShowerCubicle',
-    'kitchen',
-  ],
+  voidWest: ['balconySlabB', 'ccBalcony', 'guestBathCubicle', 'guestRoom', 'kitchen'],
   voidEast: ['balconySlabB', 'laundry', 'mainBathCubicle', 'mainShowerCubicle', 'utilityRoom'],
-  guestBathCubicle: ['guestRoom', 'guestSanitair', 'guestShowerCubicle', 'voidWest'],
-  guestShowerCubicle: ['guestBathCubicle', 'guestSanitair', 'kitchen', 'voidWest'],
+  guestBathCubicle: ['guestRoom', 'guestSanitair', 'kitchen', 'voidWest'],
   mainBathCubicle: ['laundry', 'mainSanitair', 'mainShowerCubicle', 'voidEast'],
   mainShowerCubicle: ['mainBathCubicle', 'mainSanitair', 'utilityRoom', 'voidEast'],
 };
@@ -223,21 +215,27 @@ interface SkippedJoin {
 /**
  * Every join the cross-section check is expected to skip; any other skip fails.
  *
- * Ten now rather than two, and all for the one reason the check was given the
+ * Eight now rather than two, and all for the one reason the check was given the
  * rule for: the redrawn floor has far more rooms whose faces are not aligned, so
  * many more centre lines graze a wall that runs parallel to them. The clearest
- * are the guest suite's — a line along x through the bathroom depth runs inside
- * the cubicle partitions, so the guest room and the kitchen appear to meet
- * across three different walls.
+ * are the guest suite's — a line along x at any depth of the wet rooms runs
+ * inside the partition that separates them or the one below the guest room's
+ * north strip, so the guest room and the kitchen appear to meet across three
+ * different walls.
+ *
+ * Two entries went with the guest shower (owner, 2026-09-19). The cubicle pair
+ * `guestBathCubicle → guestShowerCubicle` at z 8.03 is gone with the second
+ * cubicle. And `guestSanitair → voidWest` at x 8.75 — the centre line of the
+ * corridor's south rect — is gone because the bath now spans the whole 8.05–9.85
+ * bay: the line CROSSES it instead of grazing the old shower's west face at
+ * x 8.85, so the sanitair and the void are no longer consecutive on it.
  */
 const EXPECTED_SKIPPED_JOINS: readonly SkippedJoin[] = [
   { before: 'balconyA', after: 'guestRoom', axis: 'x', at: 7.2 },
   { before: 'corridor', after: 'utilityRoom', axis: 'x', at: 5.75 },
-  { before: 'guestBathCubicle', after: 'guestShowerCubicle', axis: 'x', at: 8.03 },
   { before: 'guestRoom', after: 'kitchen', axis: 'x', at: 6.93 },
   { before: 'guestRoom', after: 'kitchen', axis: 'x', at: 7.2 },
   { before: 'guestRoom', after: 'kitchen', axis: 'x', at: 7.82 },
-  { before: 'guestSanitair', after: 'voidWest', axis: 'z', at: 8.75 },
   { before: 'laundry', after: 'utilityRoom', axis: 'x', at: 7.45 },
   { before: 'mainBathCubicle', after: 'mainShowerCubicle', axis: 'x', at: 7.48 },
   { before: 'mainSanitair', after: 'mainBathCubicle', axis: 'z', at: 17.83 },

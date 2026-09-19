@@ -3,7 +3,8 @@
  *
  * Part 2 models the floor module by module — the plan (ADR-005), the ports
  * (ADR-006), the windows, the walls, the slabs, the railings, the stairs and the
- * television panel. Each of those is a pure function of the plan and the vertical
+ * television panel — and, since Part 4, the fixtures standing in the rooms
+ * (`fixtures.ts`). Each of those is a pure function of the plan and the vertical
  * sizes, and each is independent of the others except for one ordering: the wall
  * generator needs the holes before it can leave them out, so the ports and the
  * windows must be resolved first and handed to it.
@@ -33,6 +34,8 @@
  * React, no three, nothing mutated.
  */
 
+import { getFixtures } from './fixtures.ts';
+import type { BuiltFixture } from './fixtures.ts';
 import { FLOOR_PLAN } from './floorPlan/index.ts';
 import type { FloorPlan } from './floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from './heights.ts';
@@ -83,6 +86,25 @@ export interface BuiltFloor {
   /** The television panel of the lounge (`tvPanel.ts`, brief §4.1). */
   readonly tvPanel: PlanBox;
   /**
+   * The fixtures standing in the rooms, each with the boxes it is drawn as
+   * (`fixtures.ts`, brief §7).
+   *
+   * A fitting on the built floor is not a new idea here: {@link BuiltFloor.tvPanel}
+   * is precisely a fitting, and it has been on this interface since Part 2. The
+   * alternative was tried and is what this replaces — a second layout folded in at
+   * the UI, where `ui/floorLayout.ts` kept three sanitary heights of its own and
+   * its docblock apologised for them in the same breath, promising to hand them to
+   * the domain. A height derived beside the renderer is a building dimension
+   * nobody can find: it is invisible to the volume checks, to the tests of this
+   * file, and to anything else that asks what the floor is made of.
+   *
+   * Fixtures are deliberately NOT collision blockers: they are absent from
+   * `getWalkField`, which sweeps `slabs`, `walls` and `railings` only. "Go to
+   * room" routes to a room's centre, and a bed at a room's centre would wedge the
+   * route follower against a blocker it had been told to walk into.
+   */
+  readonly fixtures: readonly BuiltFixture[];
+  /**
    * Every hole fed to the wall generator: the port openings in schedule order,
    * then the window openings in window order. Doors run from the finished floor
    * to `heights.door`; each window carries its own sill and head, because they
@@ -103,7 +125,9 @@ export interface BuiltFloor {
  * The schedule is validated against the plan before anything is derived from it,
  * then the windows, then the openings, then the walls that those openings hole;
  * the slabs, the railings, the stairs and the television panel depend on the plan
- * and the heights alone and are read straight from their modules.
+ * and the heights alone and are read straight from their modules. The fixtures
+ * take the plan alone: a basin rim is a fitting's own size, not a floor height
+ * (`heights.ts`, `fixtures.ts`), so no injected set of heights moves one.
  *
  * @param plan - The floor plan to build; defaults to `FLOOR_PLAN`. Not mutated.
  * @param ports - The port schedule of that plan; defaults to `PORT_SCHEDULE`.
@@ -116,7 +140,9 @@ export interface BuiltFloor {
  *   a port that does not sit in exactly one wall contact with a wall to cut,
  *   `getWallPieces` for a wall junction of unknown height, `getSlabs` for heights
  *   that leave no slab thickness, `getStairsLayout` for a stairs bay that cannot
- *   hold the flights, `getTvPanel` for a corridor that cannot host the panel.
+ *   hold the flights, `getTvPanel` for a corridor that cannot host the panel,
+ *   `getFixtures` for a fixture standing in a space the plan does not hold, of a
+ *   kind with no profile, with no footprint, or tall enough to reach the storey.
  */
 export function getBuiltFloor(
   plan: FloorPlan = FLOOR_PLAN,
@@ -136,6 +162,7 @@ export function getBuiltFloor(
     windows,
     stairs: getStairsLayout(plan, heights),
     tvPanel: getTvPanel(plan, heights),
+    fixtures: getFixtures(plan),
     openings,
   });
 }

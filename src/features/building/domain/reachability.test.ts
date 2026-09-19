@@ -92,7 +92,7 @@ const GUEST_ROOM_TO_KITCHEN_DOOR: Port = Object.freeze({
  */
 const SHORTENED_STAIRS_MAX_X = 5.55;
 
-const EXPECTED_REACHABLE_COUNT = 20;
+const EXPECTED_REACHABLE_COUNT = 19;
 const LAUNDRY_PORT_COUNT = 2;
 const STAIRS_PORT_COUNT = 1;
 const ONLY_THE_STAIRS = 1;
@@ -102,7 +102,7 @@ const VOID_IDS: readonly SpaceId[] = ['voidWest', 'voidEast'];
 
 /**
  * Every space an explorer can walk to on this floor, written out by hand: all
- * 22 spaces of the plan except the two voids.
+ * 21 spaces of the plan except the two voids.
  *
  * The stairs hand the walker to the guest room's north strip, the strip reaches
  * the side-A balcony and the control center, the balcony reaches the master
@@ -128,7 +128,6 @@ const EXPECTED_REACHABLE_IDS: readonly SpaceId[] = [
   'ccBalcony',
   'balconySlabB',
   'guestBathCubicle',
-  'guestShowerCubicle',
   'mainBathCubicle',
   'mainShowerCubicle',
 ];
@@ -215,7 +214,7 @@ describe('getReachableSpaceIds', () => {
     expect(findSpaceAt(FLOOR_PLAN, STAIRS_ARRIVAL)?.id).toBe('stairs');
   });
 
-  it('reaches all twenty floor spaces from the stairs arrival point', () => {
+  it('reaches all nineteen floor spaces from the stairs arrival point', () => {
     expect(reachableFromStairs(FLOOR_PLAN)).toEqual([...EXPECTED_REACHABLE_IDS].sort());
   });
 
