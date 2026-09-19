@@ -51,3 +51,22 @@ export const FLOOR_COUNT_VALUE_ID = 'floor-count';
  * apart, and so anything labelling the panel can name it without importing the component.
  */
 export const FLOOR_COUNT_LABEL_ID = 'floor-count-label';
+
+/**
+ * DOM id of the open layer panel in the HUD: the `<fieldset>` holding one checkbox per
+ * build layer.
+ *
+ * What the switcher's trigger is `aria-controls` while the panel is open, and how a test
+ * finds the group without knowing its markup.
+ */
+export const LAYER_PANEL_ID = 'layer-panel';
+
+/**
+ * DOM id of the layer summary, the live element saying what is ticked: `Naked walls`,
+ * or `3 of 9 on`.
+ *
+ * Kept here for the reason {@link FLOOR_COUNT_VALUE_ID} is: the reading is found by id
+ * rather than by role, because this HUD allows exactly one `role="status"` and it is
+ * already spent on the view status.
+ */
+export const LAYER_SUMMARY_ID = 'layer-summary';

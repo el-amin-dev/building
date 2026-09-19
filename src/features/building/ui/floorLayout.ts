@@ -115,6 +115,7 @@ const FIXTURE_SURFACE_MATERIAL: Readonly<Record<FixtureSurface, FloorMaterialKey
   worktop: 'worktop',
   softFurnishing: 'softFurnishing',
   artwork: 'artwork',
+  serviceChamber: 'serviceChamber',
 });
 
 /**
@@ -158,6 +159,17 @@ function emptyLayout(): MutableLayout {
     worktop: [],
     softFurnishing: [],
     artwork: [],
+    // The service layers of Part 5, one bucket per run, its boxing and the chambers.
+    serviceDrainage: [],
+    serviceWaterCold: [],
+    serviceWaterHot: [],
+    serviceGas: [],
+    serviceElectricity: [],
+    serviceLowVoltage: [],
+    serviceClimateCool: [],
+    serviceClimateHeat: [],
+    serviceCover: [],
+    serviceChamber: [],
   };
 }
 

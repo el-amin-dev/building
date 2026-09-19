@@ -17,6 +17,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  FABRIC_FIXTURE_KINDS,
   FIXTURE_PROFILES,
   SERVICING_ROLES,
   assertFixtureFitsStorey,
@@ -30,7 +31,13 @@ import { FLOOR_PLAN, getSpace } from './floorPlan/index.ts';
 import type { SpaceId } from './floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from './heights.ts';
 import { makeRect, rectContainsRect } from './planGeometry.ts';
-import { FIXTURES, FIXTURE_ROLES, WINDOWS, compareFixturePosition } from './sourceOfTruth/plan.ts';
+import {
+  FIXTURES,
+  FIXTURE_ROLES,
+  SERVICE_CHAMBERS,
+  WINDOWS,
+  compareFixturePosition,
+} from './sourceOfTruth/plan.ts';
 import type {
   PlanFixture,
   PlanFixtureKind,
@@ -52,7 +59,7 @@ const EXPECTED_PROFILE_COUNT = 23;
 /** The kind `getFixtures` leaves to `tvPanel.ts`. */
 const SKIPPED_KIND: PlanFixtureKind = 'tv';
 
-/** The six surface families a part may be drawn with. */
+/** The seven surface families a part may be drawn with. */
 const SURFACES: readonly FixtureSurface[] = Object.freeze([
   'sanitaryWare',
   'appliance',
@@ -62,6 +69,10 @@ const SURFACES: readonly FixtureSurface[] = Object.freeze([
   // A hung canvas is none of the others: it is not upholstery, not joinery and not stone,
   // and it is the one surface in the building whose job is to carry a colour.
   'artwork',
+  // Nor is a sealed service compartment: it was drawn as joinery while the control center
+  // held one meter cupboard, and a plant enclosure with a water heater in it is not a
+  // wardrobe (ADR-022).
+  'serviceChamber',
 ]);
 
 /** Shape of a fixture matricule: the space's own, then its X number. */
@@ -187,6 +198,16 @@ const PASS_COUNTER_KIND: PlanFixtureKind = 'passCounter';
 const PASS_COUNTER_PART_COUNT = 5;
 
 /**
+ * The building's own plant, standing in the control center.
+ *
+ * It replaced `servicesCabinet` on 2026-09-19: one 1.40 m meter cupboard became the two
+ * sealed compartments of ADR-022, because the owner put the central water heater in a
+ * 5.50 m² room that already held the gas cock and the consumer unit. The rename is not
+ * cosmetic — a cabinet is joinery you open, and a chamber is a closed box.
+ */
+const SERVICE_CHAMBER_KIND: PlanFixtureKind = 'serviceChamber';
+
+/**
  * Every role, and whether it means a service runs to the thing.
  *
  * A total `Record<PlanFixtureRole, …>` rather than a list, which is the technique
@@ -201,7 +222,7 @@ const ROLE_IS_SERVICING: Readonly<Record<PlanFixtureRole, boolean>> = Object.fre
   fitting: true,
   // Powered, and connected on delivery.
   appliance: true,
-  // The building's own risers.
+  // The building's own risers and the sealed chambers they terminate in.
   services: true,
   // Loose, and nothing runs to it.
   furniture: false,
@@ -649,6 +670,119 @@ describe('fixtures', () => {
     });
   });
 
+  describe('the service chambers', () => {
+    const profile = FIXTURE_PROFILES[SERVICE_CHAMBER_KIND];
+    /** The height the meter cupboard the chambers replace stood to, in metres. */
+    const replacedCabinetTop = 1.8;
+
+    it('draws a chamber as ONE sealed box from the floor to its top', () => {
+      const parts = profile.build(UNIT_RECT);
+
+      // One box and one only. A plinth or a door band would say "cupboard", and the
+      // whole instruction behind ADR-022 was serious separation: what is in there is
+      // sealed away, so nothing about the drawing may invite a leaf being opened.
+      expect(parts).toHaveLength(1);
+      expect(parts[0].box.bottom).toBeCloseTo(0, PRECISION_DIGITS);
+      expect(parts[0].box.top).toBeCloseTo(profile.top, PRECISION_DIGITS);
+      expect(parts[0].box.rect).toEqual(UNIT_RECT);
+      // Its own family, not joinery: it is plant, and reading as an oak wardrobe is
+      // how it was mistaken for furniture in the first place.
+      expect(parts[0].surface).toBe('serviceChamber');
+      expect(profile.surface).toBe('serviceChamber');
+      // Nothing is plumbed INTO the room by it: the chamber is where the runs end,
+      // and a control center is not a wet room.
+      expect(profile.wet).toBe(false);
+    });
+
+    it('stands 2.20 m: a water heater with a gas bottle under it, still clear of the wall', () => {
+      expect(profile.top).toBeCloseTo(2.2, PRECISION_DIGITS);
+      // The reason for the extra 0.40, asserted rather than only written down: a
+      // 1.80 m cupboard takes the heater or the bottle standing under it, not both.
+      expect(profile.top).toBeGreaterThan(replacedCabinetTop);
+      // And it is still a fitting, not a storey: `assertFixtureFitsStorey` refuses at
+      // the 2.70 m wall, so a chamber grown to fill the room would fail the build.
+      expect(profile.top).toBeLessThan(FLOOR_HEIGHTS.wall);
+      expect(() => {
+        assertFixtureFitsStorey(SERVICE_CHAMBER_KIND, profile.top);
+      }).not.toThrow();
+    });
+
+    it('agrees with the height every run in SERVICE_CHAMBERS is routed to', () => {
+      // Two files quietly holding the same 2.20 is the agreement that stops being
+      // true without anyone noticing: `plan.ts` states a chamber's `top` so a run can
+      // terminate in it, and this module states it so the box gets drawn. A chamber
+      // drawn to one height and routed to another is a pipe ending in mid-air.
+      expect(SERVICE_CHAMBERS.length).toBeGreaterThan(0);
+      SERVICE_CHAMBERS.forEach((chamber) => {
+        expect(chamber.top, chamber.id).toBeCloseTo(profile.top, PRECISION_DIGITS);
+      });
+    });
+
+    it('builds both compartments of the real plan, in the control center', () => {
+      const chambers = BUILT.filter((fixture) => fixture.kind === SERVICE_CHAMBER_KIND);
+
+      // Two, not one: the split IS the change, so a plan that quietly went back to a
+      // single cupboard has to fail here rather than pass as "at least one chamber".
+      expect(chambers).toHaveLength(SERVICE_CHAMBERS.length);
+      chambers.forEach((chamber) => {
+        expect(chamber.spaceId).toBe('controlCenter');
+        expect(chamber.top).toBeCloseTo(profile.top, PRECISION_DIGITS);
+      });
+      // Each drawn box really is the footprint the register routes to.
+      SERVICE_CHAMBERS.forEach((declared) => {
+        const drawn = chambers.find(
+          (chamber) => Math.abs(chamber.rect.minX - declared.rect[0]) < 1e-9,
+        );
+
+        expect(drawn, declared.id).toBeDefined();
+        expect(drawn?.rect.maxX).toBeCloseTo(declared.rect[1], PRECISION_DIGITS);
+        expect(drawn?.rect.minZ).toBeCloseTo(declared.rect[2], PRECISION_DIGITS);
+        expect(drawn?.rect.maxZ).toBeCloseTo(declared.rect[3], PRECISION_DIGITS);
+      });
+    });
+  });
+
+  describe('the fabric fixtures', () => {
+    it('names the two kinds that are fixtures by declaration and building fabric in fact', () => {
+      expect([...FABRIC_FIXTURE_KINDS].sort()).toEqual(['passCounter', 'serviceChamber']);
+      // Both are real kinds with real profiles: a list of strings that named nothing
+      // would hide exactly the fixtures it is meant to protect.
+      FABRIC_FIXTURE_KINDS.forEach((kind) => {
+        expect(ALL_KINDS, kind).toContain(kind);
+        expect(FIXTURE_PROFILES[kind]).toBeDefined();
+      });
+    });
+
+    it('leaves out the loose furnishing a furniture switch is FOR', () => {
+      // The exclusion carries the meaning, so it gets its own assertions. Part 5's
+      // `furniture` checkbox hides the fixture buckets to clear a room; a bed, a
+      // wardrobe and a sofa are what clearing a room means, and none of them may
+      // creep into the list that is exempt from it.
+      ['bed', 'wardrobe', 'sofa', 'coffeeTable', 'sideboard'].forEach((kind) => {
+        expect(FABRIC_FIXTURE_KINDS.includes(kind as PlanFixtureKind), kind).toBe(false);
+      });
+      // And the list is not "everything that is built in" either: a kitchen counter is
+      // joinery screwed to a wall, and hiding it clears a kitchen rather than opening
+      // a hole in the building.
+      expect(FABRIC_FIXTURE_KINDS.includes('counter')).toBe(false);
+    });
+
+    it('is placed on the real plan, so hiding it really would open a hole', () => {
+      // The claim in the docblock is about the BUILDING, not about a list: if neither
+      // kind were placed, hiding them would change nothing and the exemption would be
+      // dead weight nobody could see was wrong.
+      FABRIC_FIXTURE_KINDS.forEach((kind) => {
+        expect(BUILT.filter((fixture) => fixture.kind === kind).length, kind).toBeGreaterThan(0);
+      });
+    });
+
+    it('cannot be edited at runtime, for the reason SERVICING_ROLES cannot', () => {
+      expect(Object.isFrozen(FABRIC_FIXTURE_KINDS)).toBe(true);
+      expect(() => (FABRIC_FIXTURE_KINDS as PlanFixtureKind[]).push('bed')).toThrow(TypeError);
+      expect(FABRIC_FIXTURE_KINDS.includes('bed')).toBe(false);
+    });
+  });
+
   describe('the real plan', () => {
     it('gives every built fixture a well-formed matricule, unique on the floor', () => {
       const matricules = BUILT.map((fixture) => fixture.matricule);
@@ -818,6 +952,23 @@ describe('fixtures', () => {
       expect(isServicedSpace(BUILT, 'controlCenter')).toBe(true);
       expect(isServicedSpace(BUILT, 'guestSanitair')).toBe(true);
       expect(isServicedSpace(BUILT, 'masterBedroom')).toBe(false);
+    });
+
+    it('keeps the control center serviced across the rename, which is its marble floor', () => {
+      // The guard on a rename that touched a floor finish. `servicesCabinet` became
+      // `serviceChamber` on 2026-09-19 (ADR-022) and the control center holds NOTHING
+      // else — no basin, no machine, no counter. So the room's whole claim to a marble
+      // floor rests on the new kind keeping the OLD role, and a rename that had landed
+      // it in `joinery` or `furniture` would have carpeted the plant room of the floor
+      // with nothing but a screenshot to say so.
+      expect(FIXTURE_ROLES[SERVICE_CHAMBER_KIND]).toBe('services');
+      expect(SERVICING_ROLES).toContain(FIXTURE_ROLES[SERVICE_CHAMBER_KIND]);
+      expect(isServicedSpace(BUILT, 'controlCenter')).toBe(true);
+      // And it really is the chambers doing it, not something else standing in there:
+      // strip them out and the room stops being serviced.
+      const withoutChambers = BUILT.filter((fixture) => fixture.kind !== SERVICE_CHAMBER_KIND);
+
+      expect(isServicedSpace(withoutChambers, 'controlCenter')).toBe(false);
     });
   });
 

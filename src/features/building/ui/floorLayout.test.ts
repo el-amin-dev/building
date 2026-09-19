@@ -519,3 +519,137 @@ describe('getCeilingLayout', () => {
     expect(() => getCeilingLayout(FLOOR_PLAN, noCeiling)).toThrow(RangeError);
   });
 });
+
+/**
+ * The spaces that have no slab at all: a `void` is a hole in the floor, and asking for its
+ * slab material throws rather than returning a key (`getSlabMaterialKey`).
+ */
+const NO_SLAB = null;
+
+/** How many spaces the plan holds, so the map below is checked against a stated number too. */
+const PINNED_SPACE_COUNT = 21;
+
+/**
+ * The floor finish of the whole flat, space by space — a negative control for Part 5.
+ *
+ * Part 5 runs water, gas, electricity, ethernet and climate across the floor, and a run
+ * crosses rooms it has no business re-flooring: a pipe in the ceiling void of a bedroom must
+ * leave that bedroom carpeted. The question "is this room serviced?" is asked of what STANDS
+ * in a room — `SERVICING_ROLES` is `fitting` · `appliance` · `services` (`isServicedSpace`,
+ * `domain/fixtures.ts`) — and it is deliberately NOT taught about runs. This map is the cheap
+ * guard on that: it pins the bucket every slab lands in today, so the wave that lets a run
+ * reach the finish fails here in one line instead of the owner finding marble in a bedroom.
+ *
+ * ADR-021 is the precedent, and it is the reason this is worth a whole map rather than a spot
+ * check. The rule was once asked negatively — "is anything in here not furniture?" — and the
+ * guest room's dry pass counter answered yes, which laid a bathroom floor under a sofa. The
+ * defect was one space wide and invisible from any aggregate; only reading the finish of
+ * every space catches the next one of that shape.
+ *
+ * Written out longhand on purpose: derived from the plan it would just restate the code it is
+ * meant to watch, and a reviewer should be able to read the floor of the flat in one screen.
+ * `null` is not "unknown" but "no slab": the two voids are holes.
+ */
+const SPACE_SLAB_MATERIAL: Readonly<Record<SpaceId, FloorMaterialKey | typeof NO_SLAB>> =
+  Object.freeze({
+    // Open to the sky: decided by kind, above the serviced question.
+    balconyA: 'slabOpenAir',
+    ccBalcony: 'slabOpenAir',
+    balconySlabB: 'slabOpenAir',
+    // Circulation: boarded whatever stands in it. The stair bay is `stairwell` in the source
+    // of truth and `circulation` in the model, so it is boarded like the corridor.
+    stairs: 'slabCirculation',
+    corridor: 'slabCirculation',
+    // Carpeted rooms: nothing in them is plumbed, powered or a riser.
+    masterBedroom: 'slabRoom',
+    livingRoom: 'slabRoom',
+    bedroomMaleKids: 'slabRoom',
+    bedroomFemaleKids: 'slabRoom',
+    guestRoom: 'slabRoom',
+    utilityRoom: 'slabRoom',
+    // Marble rooms: every one an ordinary `room`, told apart only by what stands in it.
+    controlCenter: 'slabServiced',
+    guestSanitair: 'slabServiced',
+    guestBathCubicle: 'slabServiced',
+    kitchen: 'slabServiced',
+    laundry: 'slabServiced',
+    mainSanitair: 'slabServiced',
+    mainBathCubicle: 'slabServiced',
+    mainShowerCubicle: 'slabServiced',
+    // Holes in the floor.
+    voidWest: NO_SLAB,
+    voidEast: NO_SLAB,
+  });
+
+/**
+ * Returns the spaces whose slabs a bucket holds.
+ *
+ * Read off the built floor rather than the bucket, because a bucket holds bare boxes: only a
+ * slab carries the id of the space it floors.
+ *
+ * @param key - The slab bucket to look in.
+ * @returns Each space with a slab in that bucket, once, sorted.
+ */
+function spacesFlooredIn(key: FloorMaterialKey): readonly SpaceId[] {
+  const spaceIds = BUILT_FLOOR.slabs
+    .filter((slab) => LAYOUT[key].includes(slab))
+    .map((slab) => slab.spaceId as SpaceId);
+  return [...new Set(spaceIds)].sort();
+}
+
+describe('the floor finish of every space (negative control for Part 5)', () => {
+  it.each(SPACE_IDS)('floors %s in the material pinned for it', (spaceId) => {
+    const expectedKey = SPACE_SLAB_MATERIAL[spaceId];
+    const slabs = slabsOf(spaceId);
+
+    if (expectedKey === NO_SLAB) {
+      expect(slabs).toHaveLength(NONE);
+      return;
+    }
+
+    expect(slabs.length).toBeGreaterThan(NONE);
+    for (const slab of slabs) {
+      expect(LAYOUT[expectedKey], expectedKey).toContain(slab);
+      for (const otherKey of SLAB_KEYS.filter((key) => key !== expectedKey)) {
+        expect(LAYOUT[otherKey], `${spaceId} in ${otherKey}`).not.toContain(slab);
+      }
+    }
+  });
+
+  it('pins every space of the plan, so a twenty-second space cannot slip through', () => {
+    expect(Object.keys(SPACE_SLAB_MATERIAL).sort()).toEqual([...SPACE_IDS].sort());
+    expect(FLOOR_PLAN.spaces.map((space) => space.id).sort()).toEqual([...SPACE_IDS].sort());
+    expect(SPACE_IDS).toHaveLength(PINNED_SPACE_COUNT);
+    // And no slab of the floor floors a space the map calls a hole.
+    for (const slab of BUILT_FLOOR.slabs) {
+      expect(SPACE_SLAB_MATERIAL[slab.spaceId as SpaceId], slab.spaceId).not.toBe(NO_SLAB);
+    }
+  });
+
+  it('gives every bucket exactly the spaces the map names, and no space two buckets', () => {
+    for (const key of SLAB_KEYS) {
+      const expectedSpaces = SPACE_IDS.filter((id) => SPACE_SLAB_MATERIAL[id] === key);
+
+      expect(spacesFlooredIn(key), key).toEqual([...expectedSpaces].sort());
+    }
+    // The same statement from the slab's side, and over EVERY key rather than the slab ones:
+    // a slab that also turned up in a Part 5 service bucket would be drawn twice and would
+    // take that run's material with it. One bucket each, never two.
+    for (const slab of BUILT_FLOOR.slabs) {
+      const buckets = FLOOR_MATERIAL_KEYS.filter((key) => LAYOUT[key].includes(slab));
+
+      expect(buckets, slab.spaceId).toEqual([SPACE_SLAB_MATERIAL[slab.spaceId as SpaceId]]);
+    }
+  });
+
+  it('keeps the marble on the serviced rooms and the carpet everywhere else', () => {
+    // The map and the serviced list are two readings of the same rule, so they have to agree:
+    // if a Part 5 run ever reaches the finish, one of them moves and this fails.
+    const marble = SPACE_IDS.filter((id) => SPACE_SLAB_MATERIAL[id] === 'slabServiced');
+
+    expect([...marble].sort()).toEqual([...SERVICED_SPACE_IDS].sort());
+    for (const spaceId of SPACE_IDS.filter((id) => SPACE_SLAB_MATERIAL[id] === 'slabRoom')) {
+      expect(SERVICED_SPACE_IDS, spaceId).not.toContain(spaceId);
+    }
+  });
+});

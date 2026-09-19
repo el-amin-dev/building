@@ -92,6 +92,37 @@ const FLOOR_LEVEL = 0;
  */
 const DERIVED_ELSEWHERE: PlanFixtureKind = 'tv';
 
+/**
+ * The kinds that are fixtures by declaration and building fabric in fact.
+ *
+ * Both of them are here because a wall in this model is the gap between two room
+ * rects and its thickness is one number for its whole height (`walls.ts`), or
+ * because the thing is plant rather than furnishing — and in both cases the row
+ * in `FIXTURES` is the only place the geometry could be written down, not a
+ * statement that somebody could carry it out of the room:
+ *
+ * - `passCounter` is the outer 0.70 m of the food-pass tunnel (ADR-021). The
+ *   masonry behind it is 0.30 m; the wall above the pass had to stay 0.30 m; a
+ *   1.00 m tunnel through it is therefore built out as a fixture.
+ * - `serviceChamber` is a sealed compartment of the control center (ADR-022):
+ *   the water heater, the gas cock, the consumer unit. It is the building's own
+ *   plant, standing in a room the way a riser does.
+ *
+ * Declared for the `furniture` checkbox of Part 5, which hides the fixture
+ * buckets to clear a room. Hiding either of these would not clear a room — it
+ * would open a hole in the building: the tunnel mouth would go and leave the
+ * guest room looking through a 0.30 m slot into the kitchen, and the chambers
+ * would go and leave the plant of the floor standing in open air.
+ *
+ * A frozen array, for the reason {@link SERVICING_ROLES} is one: `Object.freeze`
+ * on a `Set` seals its own properties and leaves its contents writable, so a
+ * kind could be deleted from it at runtime. Two members do not need a hash.
+ */
+export const FABRIC_FIXTURE_KINDS: readonly PlanFixtureKind[] = Object.freeze([
+  'passCounter',
+  'serviceChamber',
+] as const);
+
 /** Matricule tag of a fixture: `W`, `P` and `G` are taken by walls, ports and glazing. */
 const FIXTURE_TAG = 'X';
 
@@ -100,7 +131,7 @@ const FIXTURE_TAG = 'X';
  *
  * A family, not a colour and not a palette key: the domain says a bath is glazed
  * ware and a worktop is a worktop, and the renderer decides what that looks like
- * (`floorMaterials.ts`). Six families rather than twenty-three, because every box that
+ * (`floorMaterials.ts`). Seven families rather than twenty-three, because every box that
  * shares one is merged into a single mesh and costs one draw call between them.
  *
  * - `sanitaryWare` — glazed white ceramic: basins, baths, trays, pans;
@@ -108,10 +139,22 @@ const FIXTURE_TAG = 'X';
  * - `joinery` — carcasses, plinths, doors: the made-of-board family;
  * - `worktop` — a horizontal working slab: a counter top, a table top, a hob;
  * - `softFurnishing` — upholstery: a mattress, a seat, a back;
- * - `artwork` — a painted face hung on a wall, which is none of the above.
+ * - `artwork` — a painted face hung on a wall, which is none of the above;
+ * - `serviceChamber` — the sealed grey casing of a service compartment, which is
+ *   none of the above either. It was drawn as `joinery` while the room held one
+ *   meter cupboard, and that stopped being true when the cupboard became the two
+ *   compartments of the control center (ADR-022): a plant enclosure with a water
+ *   heater and a gas bottle in it is the building's own fabric, and reading as an
+ *   oak wardrobe is how it got mistaken for furniture in the first place.
  */
 export type FixtureSurface =
-  'sanitaryWare' | 'appliance' | 'joinery' | 'worktop' | 'softFurnishing' | 'artwork';
+  | 'sanitaryWare'
+  | 'appliance'
+  | 'joinery'
+  | 'worktop'
+  | 'softFurnishing'
+  | 'artwork'
+  | 'serviceChamber';
 
 /** One low-poly box of a fixture, in metres above the finished floor. */
 export interface FixturePart {
@@ -314,8 +357,21 @@ const STORAGE_UNIT_TOP = 1.2;
 /** Top of a wardrobe, in metres: tall, and still clear of the 2.70 m wall behind it. */
 const WARDROBE_TOP = 2.2;
 
-/** Top of a services cabinet, in metres: a meter and consumer-unit enclosure. */
-const SERVICES_CABINET_TOP = 1.8;
+/**
+ * Top of a service chamber, in metres: the sealed compartment, floor to ceiling-less top.
+ *
+ * 0.40 m taller than the 1.80 m meter cupboard it replaces, and the extra height is
+ * asked for by what is now inside it rather than by taste: the wet compartment carries
+ * the CENTRAL WATER HEATER, and a gas bottle has to stand on the floor UNDER it. A
+ * 1.80 m box takes the one or the other. It is still clear of the 2.70 m wall it backs
+ * onto, which {@link assertFixtureFitsStorey} is what holds it to.
+ *
+ * `plan.ts` states the same 2.20 on every row of `SERVICE_CHAMBERS`, because the
+ * register has to know how high the box a run terminates in reaches. The two are pinned
+ * against each other in `fixtures.test.ts`: a chamber drawn to one height and routed to
+ * another is a pipe ending in mid-air.
+ */
+const SERVICE_CHAMBER_TOP = 2.2;
 
 /** Top of an appliance plinth, in metres: the recess a machine stands back over. */
 const PLINTH_TOP = 0.1;
@@ -734,8 +790,12 @@ export const FIXTURE_PROFILES: Readonly<Record<PlanFixtureKind, FixtureProfile>>
   nightstand: oneBox(NIGHTSTAND_TOP, 'joinery', false),
   storageUnit: oneBox(STORAGE_UNIT_TOP, 'joinery', false),
   wardrobe: oneBox(WARDROBE_TOP, 'joinery', false),
-  // The building's own equipment.
-  servicesCabinet: oneBox(SERVICES_CABINET_TOP, 'joinery', false),
+  // The building's own equipment. One box from the floor to its top, and the
+  // single box is the statement: a chamber is SEALED, not a cupboard volume
+  // somebody opens a leaf on, so it has no plinth, no door band and no set-back
+  // lid. What is inside it — heater, bottle, consumer unit — is never drawn,
+  // because the whole point of the compartment is that it is closed (ADR-022).
+  serviceChamber: oneBox(SERVICE_CHAMBER_TOP, 'serviceChamber', false),
 } satisfies Readonly<Record<PlanFixtureKind, FixtureProfile>>);
 
 /**
@@ -920,7 +980,7 @@ export const SERVICING_ROLES: readonly PlanFixtureRole[] = Object.freeze([
  * The broader sibling of {@link isWetSpace}, and it exists because a floor
  * finish answers a broader question than a wet room does. A kitchen is not a wet
  * room on this floor — it has no basin, only a counter, a cooker and a fridge —
- * and a control center is not either, holding one services cabinet. Neither
+ * and a control center is not either, holding two sealed service chambers. Neither
  * should be carpeted, and neither is distinguishable by space kind: all three of
  * them are ordinary `room` spaces, exactly as the bathrooms are.
  *

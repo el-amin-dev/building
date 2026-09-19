@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { useViewStore } from '../features/building/application/viewStore.ts';
 import { CameraModeToggle } from '../features/building/ui/CameraModeToggle.tsx';
 import { FloorCountStepper } from '../features/building/ui/FloorCountStepper.tsx';
+import { LayerSwitcher } from '../features/building/ui/LayerSwitcher.tsx';
 import { Minimap } from '../features/building/ui/Minimap.tsx';
 import { NavigationHint } from '../features/building/ui/NavigationHint.tsx';
 import { OrbitPad } from '../features/building/ui/OrbitPad.tsx';
@@ -62,11 +63,12 @@ const DebugPanel = lazy(() =>
  * Root component: a full-screen 3D scene with a HUD overlay on top.
  *
  * The HUD is one top-left stack — status, toggles and the floor stepper, the room menu, the
- * navigation hint, the room readout, the minimap, then the pad of the current view — and the
- * DOM order is the Tab order: the view region comes first (inside `BuildingScene`, before
- * this overlay), then the view toggle, the camera toggle, the stepper's "Remove a floor" and
- * "Add a floor", "Go to room", and the pad buttons. The readout, the stepper's own reading
- * and the minimap are not tab stops; they are read, not operated.
+ * room panel and the layer switcher, the navigation hint, the room readout, the minimap, then
+ * the pad of the current view — and the DOM order is the Tab order: the view region comes
+ * first (inside `BuildingScene`, before this overlay), then the view toggle, the camera
+ * toggle, the stepper's "Remove a floor" and "Add a floor", "Go to room", "About this room",
+ * "Layers", and the pad buttons. The readout, the stepper's own reading and the minimap are
+ * not tab stops; they are read, not operated.
  *
  * **Every panel sits inside the one overlay div, and that div carries `data-hud-overlay`.**
  * That attribute is a **test contract**, not decoration: the end-to-end screenshot helper
@@ -84,9 +86,12 @@ const DebugPanel = lazy(() =>
  * Each panel decides for itself whether the current view wants it, so they are all mounted
  * unconditionally: the readout is `sr-only` and out of flow while there is nothing to announce,
  * the menu, hint, minimap and remote control render nothing outside the interior, and the orbit
- * pad renders nothing outside the exterior. The floor stepper is the one panel with no such
- * branch at all: how tall the building is, is as much a fact of the exterior it is seen from as
- * of the interior it is walked in.
+ * pad renders nothing outside the exterior. The floor stepper and the layer switcher are the
+ * two panels with no such branch at all: how tall the building is and how it is layered are as
+ * much facts of the exterior it is seen from as of the interior it is walked in. The switcher
+ * joins the row the room menu and the room panel share, where the exterior leaves it the only
+ * panel and the interior has the width for a third trigger a single word wide; its nine
+ * checkboxes never enter that flow, because the panel they live in is `absolute` and `z-20`.
  *
  * On a narrow viewport the stack would eat the top half of the screen and leave the 3D view a
  * strip, which defeats the pad it hosts: the pad is the only way to move for someone without a
@@ -149,6 +154,7 @@ export function App() {
           <div className="flex flex-wrap items-start gap-2">
             <RoomMenu />
             <RoomInfoPanel />
+            <LayerSwitcher />
           </div>
           <NavigationHint />
           <RoomReadout />

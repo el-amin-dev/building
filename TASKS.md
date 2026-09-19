@@ -6,7 +6,7 @@
 > `docs/house-design-brief.md` records the original requirements. Where it disagrees with the plan, **the plan wins** — it carries the owner's later decisions.
 > Parts run in order — each part is one work session and starts only when the previous part is fully `[x]`.
 
-**Next: Part 4 — Furnished release: fixtures, hardening, v1.0.0.** Parts 0 through 3.5 are fully `[x]` and merged: the floor is derived from one source of truth, walkable with real collision, routable room to room, operable by keyboard and by on-screen pads, and stacked 1…10 storeys with a walkable stair. The gate on `e36826b` was green — `verify:plan` (12 checks) · `typecheck` · `lint` · `format:check` · `test` (2726 across 79 files) · `build` · `test:e2e` (22 across 7 files).
+**Next: Part 5 — Building services: the floor in layers, from naked walls to the finished look.** Parts 0 through 4 are fully `[x]` and merged, and **v1.0.0 is tagged** on `fe1f968`: the floor is derived from one source of truth, walkable with real collision, routable room to room, operable by keyboard and by on-screen pads, stacked 1…10 storeys with a walkable stair, furnished with 42 fixtures and finished in one decorative scheme. The gate on `fe1f968` was green — `verify:plan` (12 checks) · `typecheck` · `lint` · `format:check` · `test` (3133 across 89 files) · `build` · `size` (4 budgets) · `test:e2e` (23 passed, 1 skipped, 8 files).
 
 ## How to run a part
 
@@ -204,8 +204,8 @@ A task below keeps its `[x]` when the thing it built still stands and only its d
 - [x] The interior screenshot baseline masked **70 %** of its own frame (measured: 645 120 magenta pixels of 1280 × 720). Fixed by hiding the HUD for the duration of a capture rather than painting over it, keyed on the same attribute the locator uses so the two cannot drift. Both baselines now compare **every pixel**, and a second guard trips if the HUD's own box grows. The hide is `opacity`, never `visibility`: the latter blurs whatever holds focus, and a capture may not change the page it photographs (**ADR-019**)
 - [x] The 1 % ratio is replaced by an absolute **200 pixels**, measured rather than chosen: both baselines were regenerated and compared 20 times at a threshold of zero, and all 20 passed, so the noise floor here is nothing. 200 is a stated cushion for a future driver change — 46× tighter than the 9 216 the percentage allowed (**ADR-019**)
 - [x] **ADR-018** (self-hosted: a release is a directory, going live is a rename, and the workflow is inert until a host exists) + `.github/workflows/deploy.yml` + a runbook `## Deploy` section. And `tests/e2e/tour.spec.ts`: one test, twenty steps, paced by a stall watchdog — it found the guest-room wedge on its first run
-- [x] README rewritten with controls, the sources of truth and three screenshots taken from the running app; `CHANGELOG.md` seeded from the real history. **`v1.0.0` is not yet tagged** — it is the last action of the part, after the review gate and the Chrome sweep
-- [ ] DoD gate → release published
+- [x] README rewritten with controls, the sources of truth and three screenshots taken from the running app; `CHANGELOG.md` seeded from the real history. **`v1.0.0` is tagged** — annotated on `fe1f968` and pushed 2026-09-19, after the review gate and the Chrome sweep
+- [x] DoD gate → release published — annotated tag `v1.0.0` on `fe1f968`, pushed 2026-09-19
 
 ## Part 5 — Building services: the floor in layers, from naked walls to the finished look
 
@@ -255,16 +255,30 @@ A task below keeps its `[x]` when the thing it built still stands and only its d
 
 > Why the layer switcher is checkboxes and not a dropdown, recorded because it was the owner's own instruction and is easy to "improve" away in review: layers are things you **combine**. Water over naked walls, then water and gas together, then everything but the texture, is how the floor is read. A dropdown allows exactly one answer and would have to be widened into a multi-select the first time anyone used it, which is a checkbox list with a smaller hit target.
 
-> Open questions for Part 5 (owner decision needed; they block building the part, not anything shipped)
+> **Part 5's eight open questions were ANSWERED by the owner on 2026-09-19** (`.claude/claude.questions.md` Batch 4). They are recorded here in place of the questions, and become **ADR-022**. Where an answer went further than the question, the extra is recorded too, because that is the part that cannot be re-derived.
 >
-> - **Are the layers additive or exclusive?** Additive is assumed above — tick water and gas and see both. Exclusive (one layer at a time, radio behaviour) is a different control and a different default, and the checkbox shape the owner asked for implies additive, but it has not been said.
-> - **Does `texture` off also hide the furniture?** "Naked walls" is unambiguous about the finish and silent about the 42 fixtures. A bedroom with a bed in it and no carpet is a decorating view; a bedroom with neither is a construction view. Both are defensible and they are not the same product.
-> - **Are the runs drawn at their real diameters or schematically?** A 16 mm cable and a 200 mm duct are an order of magnitude apart: at true scale the electrics are nearly invisible and at schematic scale the ducts lie about the space they need. A third answer — true scale, with a minimum drawn thickness stated as a drawing convention — needs the owner to accept that the drawing is not the building at that one point.
-> - **Does the control-center split change the room's rects?** If the compartments are two rooms with a partition between them, R08 becomes two spaces, the floor goes to 22 again, the wall footprint grows by the partition and **every floor total moves** — 163.92 / 9.36 / 8.00 / 43.72 closing on 225.00. If they are two volumes inside one room, the totals hold and the isolation is a fixture-level fact. Both are buildable; only one of them is free.
-> - **Is drainage its own layer, or part of water?** The owner said "water pipes". Supply and drainage are one service to a viewer and two to a plumber, and drainage is the only layer that cannot be routed freely, because it needs fall.
-> - **Is gas its own checkbox?** The owner named gas only in the isolation constraint, not in the list of layers, but the constraint is meaningless unless gas is modelled. It is treated as its own layer above; if he wants it folded into one "wet and gas" layer to match the compartment, that is the compartment's name and not the layer's.
-> - **Does the layer state belong in the URL?** In it, a naked-walls view is a link the owner can send. Out of it, the URL keeps meaning one thing and there is no state to keep in sync with the store. Nothing else in this app is in the URL today, so putting the layers there is a new rule about the whole app and not a detail of this part.
-> - **Where does a run go when it leaves the top and the bottom of the stack?** Floor 0 is undesigned and the roof is not modelled. The honest options are to stop the runs at the ends and say so in the model, the way both half-flights at the ends of the stack are blocked but still drawn, or to leave floor 0 blocking Part 5 — which it should not.
+> 1. **Additive, not exclusive.** Nothing ticked is naked walls; ticking adds. A selected run draws **on the wall face**, not buried in it — which is also the only thing ADR-021 permits, since a wall is one thickness for its whole height. Each run carries **its cover**, the boxing built over it.
+> 2. **Nine checkboxes, in the order a building is built:** `drainage` · `water` · `gas` · `electricity` · `lowVoltage` · `climate` · `covers` · `furniture` · `finishing`. The owner asked for a box per build level — so the 42 fixtures get their own (`furniture`) rather than riding on the finish, and `finishing` is last. All nine ticked reproduces v1.0.0 pixel for pixel.
+> 3. **Real bores, sized the way a plumber advises** — not schematic, and not raw nominal either: pipes narrow in service, the effect is worse on hot water, and the allowance for it is stated in `SERVICE_SPEC` beside the number it moves.
+> 4. **The control center holds sealed enclosures inside one room.** R08's rects do not move, the floor stays 21 spaces and every total holds. It now also holds a **central water heater**, so the full combination — heater, gas, electricity, water — stands in one 5.50 m² room: it is divided into **two sealed chambers, fully isolated from each other** (wet + gas + heater · electrical + low voltage), and **each is ventilated to outside** through its own duct to `ccBalcony`. The `servicesCabinet` fixture is the one box those two replace, which is what it was declared as one box for.
+> 5. **Drainage is its own layer** — it is the only run that cannot be routed freely, because it needs fall, and separating it keeps `water` readable now that water carries both cold and hot.
+> 6. **Gas is its own layer**, and it reaches only two places: the heater in the control center, and the kitchen.
+> 7. **The ends of the stack are capped, and the model says so.** A run stops at the bottom slab of floor 1 and the top slab of floor N, each end carrying a declared reason (`pending floor 0 design` / `pending roof plant`), exactly the way both half-flights at the ends of the stair stack are blocked but still drawn. Floor 0 does not block this part.
+> 8. **The layer state stays out of the URL.** Nothing else in this app is in the URL, and putting the layers there is a new rule about the whole app rather than a detail of this part. Revisit it if a naked-walls view ever has to be sent as a link.
+>
+> **The programme, in the owner's own words, and the thing `SERVICE_RUNS` encodes:**
+>
+> - **electricity everywhere**, in two circuit families — **2.5 mm² for power and plugs, 1.5 mm² for lighting** — and installed **for extension**: spare capacity is declared rather than implied, so smart-home kit and extra outlets are a later addition and not a re-route.
+> - **ethernet everywhere**, with **an outlet in every room** so a mesh node or a router can be added to any of them. It is **held clear of the electricity runs**, because power interferes with the signal — a **separation distance that is a verifier check, not a comment**.
+> - **gas** to the heater and the kitchen only.
+> - **cold water** to the water side only: both sanitairs, both bath and shower cubicles, the laundry, the kitchen and the control center.
+> - **hot water throughout, from the heater in the control center.**
+> - **climate is heating and cooling.** The central cooling reaches **the guest room, the corridor, the bedrooms and the living room, and nowhere else**. Heating is wall heaters on their own flow-and-return circuit.
+>
+> Two rules follow from the above that the brief does not contain, and they go in ADR-022 rather than being left implicit:
+>
+> - **`water` is the domestic supply — cold and hot, to fittings. `climate` is the comfort circuit — the cooling runs, and the wall heaters with their flow and return.** A radiator is not a tap, and the owner's own checkbox list reads "climate — heating / cooling".
+> - **`isServicedSpace` is still not taught about runs.** A pipe crossing a bedroom does not make that room serviced, and teaching it otherwise would silently lay marble in a bedroom — ADR-021 fixed exactly this class of defect once. A test pinning every space's floor finish before and after this part is the cheap guard.
 
 ## Open questions (owner decision needed, blocking nothing yet)
 

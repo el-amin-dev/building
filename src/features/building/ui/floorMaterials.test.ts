@@ -26,6 +26,19 @@ const EXPECTED_KEYS: readonly FloorMaterialKey[] = [
   'worktop',
   'softFurnishing',
   'artwork',
+  // Part 5 laid the services in. These ten are the palette's one group that is read by
+  // hue rather than by texture, so they stay flat and stay listed here: adding an
+  // eleventh service has to be as deliberate as adding a fifth furniture family was.
+  'serviceDrainage',
+  'serviceWaterCold',
+  'serviceWaterHot',
+  'serviceGas',
+  'serviceElectricity',
+  'serviceLowVoltage',
+  'serviceClimateCool',
+  'serviceClimateHeat',
+  'serviceCover',
+  'serviceChamber',
 ];
 /**
  * The three slab keys a space KIND can choose, one per walkable kind.
@@ -36,6 +49,24 @@ const EXPECTED_KEYS: readonly FloorMaterialKey[] = [
  * return it and `floorLayout.ts` picks it per space, from what stands in the room.
  */
 const SLAB_KEYS: readonly FloorMaterialKey[] = ['slabRoom', 'slabCirculation', 'slabOpenAir'];
+/**
+ * The ten service layers, which are read by hue rather than by texture.
+ *
+ * They carry no `map` and no entry in `FAMILY_TEXTURE` (`FloorModel.tsx`) by design: a
+ * services view answers "which service is this pipe", and only colour answers it.
+ */
+const SERVICE_KEYS: readonly FloorMaterialKey[] = [
+  'serviceDrainage',
+  'serviceWaterCold',
+  'serviceWaterHot',
+  'serviceGas',
+  'serviceElectricity',
+  'serviceLowVoltage',
+  'serviceClimateCool',
+  'serviceClimateHeat',
+  'serviceCover',
+  'serviceChamber',
+];
 /** The slab of a serviced room, chosen per space rather than per kind. */
 const SERVICED_SLAB_KEY: FloorMaterialKey = 'slabServiced';
 /** The only key allowed to emit light: the ceiling panel that lights a room. */
@@ -127,6 +158,20 @@ describe('MATERIAL_PALETTE', () => {
     );
 
     expect(new Set(finishes).size).toBe(EXPECTED_KEYS.length);
+  });
+
+  /**
+   * The service layers, which are the one group in the palette the scheme does not reach.
+   *
+   * Everything else may share a hue on purpose — oak is oak wherever it stands. A services
+   * view inverts that: it exists so gas can be told from water at a glance, so here a shared
+   * hue is a bug and not a scheme. Pinned because the surrounding tests say the opposite
+   * about every other family, and the next reader will otherwise assume the same licence.
+   */
+  it('gives every service layer a hue of its own', () => {
+    const colors = SERVICE_KEYS.map((key) => MATERIAL_PALETTE[key].color);
+
+    expect(new Set(colors).size).toBe(SERVICE_KEYS.length);
   });
 
   it('tells a serviced room underfoot from every other slab', () => {
