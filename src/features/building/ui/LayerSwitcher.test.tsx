@@ -225,7 +225,14 @@ describe('LayerSwitcher', () => {
     expect(getPanel()).toHaveClass('absolute');
     expect(getPanel()).toHaveClass('top-full');
     expect(getPanel()).toHaveClass('left-0');
-    expect(getPanel()).toHaveClass('z-20');
+    // z-30, not the z-20 every other HUD overlay uses, and it was measured rather
+    // than chosen. The hold-to-act pads are z-20 AND come later in the DOM, so at
+    // equal z they paint over anything opening downward from the rows above: with
+    // the panel at z-20, `document.elementFromPoint` at the first checkbox
+    // returned an orbit-pad button, and `Drainage` could not be clicked at all.
+    // Unit tests cannot see this — jsdom has no layout — and axe does not either.
+    // A disclosure panel is above a pad; a pad is above the canvas.
+    expect(getPanel()).toHaveClass('z-30');
   });
 
   it('stays mounted in both views, because the layering is a fact of both', async () => {

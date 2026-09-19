@@ -72,7 +72,7 @@ const TRIGGER_CLASS_NAME =
  * viewport these tests cover, exactly as it keeps the twentieth room inside it.
  */
 const PANEL_CLASS_NAME =
-  'absolute top-full left-0 z-20 mt-1 max-h-64 w-64 overflow-y-auto rounded-lg bg-slate-900 p-2 text-sm text-white shadow-lg';
+  'absolute top-full left-0 z-30 mt-1 max-h-64 w-64 overflow-y-auto rounded-lg bg-slate-900 p-2 text-sm text-white shadow-lg';
 
 /**
  * One layer's row: the whole row is the label, so the words are as clickable as the box.
