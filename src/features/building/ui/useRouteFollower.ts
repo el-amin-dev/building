@@ -34,7 +34,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useRoomWalkStore } from '../application/roomWalkStore.ts';
 import type { EyePose, MovementIntent } from '../domain/eyeNavigation.ts';
 import { FLOOR_PLAN } from '../domain/floorPlan/index.ts';
-import type { SpaceId } from '../domain/floorPlan/index.ts';
+import type { FloorSpaceRef } from '../domain/floorSpace.ts';
 import { PORT_SCHEDULE } from '../domain/ports/index.ts';
 import { findSpaceRoute } from '../domain/reachability.ts';
 import { getRouteWaypoints } from '../domain/roomRoute.ts';
@@ -78,16 +78,28 @@ const UNREACHABLE_PLAN: RoutePlan = Object.freeze({ kind: 'unreachable' });
 /**
  * Plans the walk from a pose to a room, on the real floor and its real port schedule.
  *
+ * Routing is single-floor, and stays that way here: `findSpaceRoute` crosses the one typical
+ * plan through its doorways, and nothing in it knows the stair as a way between storeys. A
+ * target on another floor is therefore refused outright rather than walked to on this one —
+ * "the kitchen" two storeys up is not the kitchen underfoot, and quietly substituting it
+ * would take the viewer to a room they did not pick. Reported as unreachable, which is the
+ * honest answer and a status the store already carries. Walking the stair under command is a
+ * feature of its own: it needs the stair as an edge of the space graph and a 180-degree turn
+ * on a 1.00 m landing, neither of which this follower has.
+ *
  * Total: every way this can fail comes back as a {@link RoutePlan} rather than as a throw,
  * because the caller is a frame callback.
  *
  * @param pose - Where the body stands now.
- * @param target - The room asked for.
+ * @param target - The room asked for, storey and all.
  * @returns A follower to step, or the outcome to report instead.
  */
-function planRoute(pose: EyePose, target: SpaceId): RoutePlan {
+function planRoute(pose: EyePose, target: FloorSpaceRef): RoutePlan {
+  if (target.floor !== pose.floor) {
+    return UNREACHABLE_PLAN;
+  }
   try {
-    const route = findSpaceRoute(FLOOR_PLAN, PORT_SCHEDULE, pose, target);
+    const route = findSpaceRoute(FLOOR_PLAN, PORT_SCHEDULE, pose, target.spaceId);
     if (route.length === UNREACHABLE_ROUTE_LENGTH) {
       return UNREACHABLE_PLAN;
     }

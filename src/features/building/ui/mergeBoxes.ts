@@ -19,7 +19,11 @@ const HALF = 0.5;
 
 /** Props of a three.js box mesh: where its centre sits and how big it is, in metres. */
 export interface BoxProps {
-  /** Centre of the box in scene coordinates: `[x, y, z]`, in metres. */
+  /**
+   * Centre of the box in storey-local coordinates: `[x, y, z]`, in metres, with y measured
+   * from the finished floor of the storey it is drawn at (see
+   * {@link createMergedBoxGeometry}).
+   */
   readonly position: readonly [number, number, number];
   /** Sizes of the box along x, y and z, in metres: the `BoxGeometry` arguments. */
   readonly args: readonly [number, number, number];
@@ -82,8 +86,15 @@ export function toBoxProps(box: PlanBox): BoxProps {
  *
  * One `BoxGeometry` is built per box and translated to the box's centre, then all of
  * them are merged with `mergeGeometries`; the intermediate geometries are disposed
- * straight after the merge, so only the returned geometry holds buffers. The result
- * is expressed in scene coordinates: the mesh drawing it stays at the origin.
+ * straight after the merge, so only the returned geometry holds buffers.
+ *
+ * The result is expressed in **storey-local** coordinates: plan x and z in scene
+ * coordinates, and y measured from the finished floor of the storey the geometry is drawn
+ * at, not from the scene origin. That is what lets one baked geometry be drawn at every
+ * storey of a stack, by one mesh each (`MergedBoxesMesh.tsx`). Floor 1's finished floor is
+ * y = 0, so for a one-storey building the storey-local coordinates are the scene
+ * coordinates — which is why nothing below, and nothing in `domain/`, changed to stack the
+ * building.
  *
  * An empty list yields an empty geometry with no `position` attribute rather than an
  * error; the caller renders nothing for it (`MergedBoxesMesh.tsx` returns no mesh).

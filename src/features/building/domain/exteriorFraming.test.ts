@@ -1,5 +1,6 @@
 import { Box3, Frustum, Matrix4, PerspectiveCamera, Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
+import { CAMERA_FAR } from '../ui/BuildingScene.tsx';
 import { getExteriorFraming } from './exteriorFraming.ts';
 import type { ExteriorFraming } from './exteriorFraming.ts';
 import { PLOT_RECT } from './floorPlan/index.ts';
@@ -8,6 +9,7 @@ import type { FloorHeights } from './heights.ts';
 import { makeRect } from './planGeometry.ts';
 import type { PlanRect } from './planGeometry.ts';
 import { getSlabThickness } from './slabs.ts';
+import { getBuildingTop } from './storeys.ts';
 
 const PRECISION_DIGITS = 9;
 const HALF = 0.5;
@@ -18,20 +20,27 @@ const RADIANS_PER_DEGREE = Math.PI / DEGREES_PER_HALF_TURN;
 const FOV_DEGREES = 50;
 /** A field of view wider than {@link FOV_DEGREES}, in degrees. */
 const WIDE_FOV_DEGREES = 80;
-/** Near and far planes of the app's camera, in metres (see `BuildingScene`). */
+/** Near plane of the app's camera, in metres; the far plane is `BuildingScene`'s own. */
 const CAMERA_NEAR = 0.1;
-const CAMERA_FAR = 500;
 
 const WIDESCREEN_ASPECT = 16 / 9;
 const CLASSIC_ASPECT = 4 / 3;
 /** A portrait viewport, narrower than it is tall: 400 × 800 CSS pixels. */
 const PHONE_ASPECT = 400 / 800;
 
+/** The single designed floor on its own: the count the app opens on. */
+const SINGLE_STOREY = 1;
+/** A full stack: the most storeys the owner's stepper can reach, and the tallest case here. */
+const TALL_STOREY = 10;
+/** Top of the built fabric of a {@link TALL_STOREY} stack, in metres: 9 × 3.00 + 2.70. */
+const TALL_TOP_METRES = 29.7;
+
 /** The framing factors of the module, restated so a change of tuning fails a test. */
 const EXPECTED_ELEVATION_DEGREES = 40;
 const EXPECTED_AZIMUTH_DEGREES = 25;
 const EXPECTED_START_MARGIN = 1.1;
 const EXPECTED_MIN_DISTANCE_FACTOR = 0.25;
+const EXPECTED_FOOTPRINT_CLEARANCE_FACTOR = 1.1;
 const EXPECTED_MAX_DISTANCE_FACTOR = 2;
 const EXPECTED_FOG_FAR_FACTOR = 2;
 const EXPECTED_GROUND_SIZE_FACTOR = 2;
@@ -41,6 +50,14 @@ const EXPECTED_GROUND_SIZE_FACTOR = 2;
  * the radius of the bounding sphere, which the fog range is still offset by.
  */
 const EXPECTED_RADIUS_METRES = 12.4211513154;
+/**
+ * How far the footprint of the real plot reaches from the orbit target's vertical axis, in
+ * metres: `hypot(22.50 / 2, 10.00 / 2)`, the radius of the circle through its corners.
+ *
+ * The closest orbit distance must stay outside it at every storey count and every canvas
+ * shape, or a sustained zoom parks the camera between the walls.
+ */
+const FOOTPRINT_RADIUS_METRES = 12.3110722522;
 /** Fit distance of the real floor at {@link FOV_DEGREES} and {@link WIDESCREEN_ASPECT}, in metres. */
 const EXPECTED_FIT_DISTANCE_METRES = 21.5638792112;
 /**
@@ -111,7 +128,71 @@ const OFF_GRID_HEIGHTS: FloorHeights = { ...FLOOR_HEIGHTS, floorToFloor: 3.0, wa
 /** How much deeper a slab is made in order to observe that the underside is framed, in metres. */
 const DEEPER_SLAB_METRES = 0.01;
 
-const FRAMING = getExteriorFraming(PLOT_RECT, FLOOR_HEIGHTS, FOV_DEGREES, WIDESCREEN_ASPECT);
+const FRAMING = getExteriorFraming(
+  PLOT_RECT,
+  FLOOR_HEIGHTS,
+  FOV_DEGREES,
+  WIDESCREEN_ASPECT,
+  SINGLE_STOREY,
+);
+
+/**
+ * The framing of the single designed floor at {@link FOV_DEGREES} and
+ * {@link WIDESCREEN_ASPECT}, transcribed from the build in which the storey count did not
+ * exist yet.
+ *
+ * This is the regression pin of the whole stacking change: the app opens on one storey, and
+ * teaching the framing to fit a stack must leave that opening frame identical to the
+ * pixel — not close to it. Compared with strict equality, so a target that is now derived
+ * through `getBuildingTop` rather than from `heights.wall` has to come out at the very same
+ * double, and any factor quietly re-tuned for tall buildings fails here first.
+ *
+ * One number has deliberately moved since: `minDistance` was `5.390969802805326`, a quarter
+ * of the fit distance, which is 6.92 m *inside* a footprint reaching 12.31 m from the orbit
+ * axis. It is now `12.3110722522 × 1.1 = 13.542179477469645`, the footprint clearance
+ * (`FOOTPRINT_CLEARANCE_FACTOR`), which at one storey on a widescreen canvas is the larger
+ * of the two floors. Nothing else about the opening frame changed: the camera still starts
+ * at the same position, and only a zoom held to its very end can reach this limit.
+ */
+const ONE_STOREY_FRAMING: ExteriorFraming = {
+  target: { x: 11.25, y: 1.35, z: 5 },
+  position: {
+    x: 3.5706970380687366,
+    y: 16.59709381112522,
+    z: 21.468318346551147,
+  },
+  fitDistance: 21.563879211221305,
+  minDistance: 13.542179477469645,
+  maxDistance: 43.12775842244261,
+  fogNear: 55.54890973784007,
+  fogFar: 111.09781947568014,
+  groundSize: 222.19563895136028,
+};
+
+/** Aspect ratios the storey matrix is swept over: from a tall slot to a wide banner. */
+const MATRIX_ASPECTS = [0.25, 0.5, 1, 1.78, 3] as const;
+
+/**
+ * The lengths the framing publishes, every one of which must grow with the building.
+ *
+ * `target` and `position` are deliberately left out: the target's `y` rises with the stack
+ * and is asserted on its own, while the start position swings around the building as it
+ * gets taller — its `x` goes from 3.57 m to −2.86 m — so it is not a quantity that has a
+ * direction to be monotonic in.
+ */
+const PUBLISHED_LENGTHS = [
+  'fitDistance',
+  'minDistance',
+  'maxDistance',
+  'fogNear',
+  'fogFar',
+  'groundSize',
+] as const;
+
+/** A storey count below the one storey that is always built. */
+const NO_STOREYS = 0;
+/** A storey count that is not a whole storey. */
+const PART_STOREY = 1.5;
 
 /** A plot with a positive width and depth, used as the base of the rejection cases. */
 const VALID_PLOT = PLOT_RECT;
@@ -155,19 +236,22 @@ function scaleHeights(heights: FloorHeights, factor: number): FloorHeights {
 }
 
 /**
- * Builds the box the floor occupies: the plot on the plan, the slab bottom to the wall top
- * vertically. Derived here independently of the module under test.
+ * Builds the box the building occupies: the plot on the plan, the underside of storey 1's
+ * slab to the top of the topmost storey's walls. Derived here independently of the module
+ * under test.
  *
  * @param plot - Outer boundary of the floor.
- * @param heights - Vertical sizes of the floor.
- * @returns The floor box in scene coordinates.
+ * @param heights - Vertical sizes of the typical floor.
+ * @param storeyCount - How many storeys are stacked; one by default.
+ * @returns The building box in scene coordinates.
  */
-function floorBox(plot: PlanRect, heights: FloorHeights): Box3 {
+function floorBox(plot: PlanRect, heights: FloorHeights, storeyCount = SINGLE_STOREY): Box3 {
   // The underside comes from `slabs.ts`, the one place that level is computed, rather than
-  // from subtracting the two heights again, which yields -0.2999999999999998.
+  // from subtracting the two heights again, which yields -0.2999999999999998; the top comes
+  // from `storeys.ts`, the one place the height of a stack is computed.
   return new Box3(
     new Vector3(plot.minX, -getSlabThickness(heights), plot.minZ),
-    new Vector3(plot.maxX, heights.wall, plot.maxZ),
+    new Vector3(plot.maxX, getBuildingTop(heights, storeyCount), plot.maxZ),
   );
 }
 
@@ -283,7 +367,9 @@ function frameFill(
  *
  * Repeats the arithmetic of the module in the same order, so the result can be compared
  * with `toBe`: a framing built on a different underside fails rather than rounding into
- * place within nine digits.
+ * place within nine digits. The top and the orbit target come from `getBuildingTop` at one
+ * storey, as the module's own do, so what varies between the cases below is the underside
+ * alone.
  *
  * @param plot - Outer boundary of the floor.
  * @param heights - Vertical sizes of the floor.
@@ -291,9 +377,10 @@ function frameFill(
  * @returns The fit distance, in metres.
  */
 function fitDistanceFor(plot: PlanRect, heights: FloorHeights, underside: number): number {
+  const top = getBuildingTop(heights, SINGLE_STOREY);
   const target = new Vector3(
     (plot.minX + plot.maxX) * HALF,
-    heights.wall * HALF,
+    top * HALF,
     (plot.minZ + plot.maxZ) * HALF,
   );
   const elevation = EXPECTED_ELEVATION_DEGREES * RADIANS_PER_DEGREE;
@@ -313,7 +400,7 @@ function fitDistanceFor(plot: PlanRect, heights: FloorHeights, underside: number
   const tanHalfHorizontal = tanHalfVertical * WIDESCREEN_ASPECT;
   const box = new Box3(
     new Vector3(plot.minX, underside, plot.minZ),
-    new Vector3(plot.maxX, heights.wall, plot.maxZ),
+    new Vector3(plot.maxX, top, plot.maxZ),
   );
 
   let fitDistance = 0;
@@ -347,6 +434,10 @@ function sphereFitDistance(aspect: number): number {
 
 describe('exteriorFraming', () => {
   describe('getExteriorFraming for the real floor', () => {
+    it('frames one storey exactly as it did before the building could be stacked', () => {
+      expect(FRAMING).toStrictEqual(ONE_STOREY_FRAMING);
+    });
+
     it('targets the centre of the plot at half the wall height', () => {
       expect(FRAMING.target.x).toBeCloseTo(
         (PLOT_RECT.minX + PLOT_RECT.maxX) * HALF,
@@ -411,8 +502,16 @@ describe('exteriorFraming', () => {
 
     it('brackets the fit distance with the zoom limits', () => {
       expect(FRAMING.minDistance).toBeCloseTo(
-        FRAMING.fitDistance * EXPECTED_MIN_DISTANCE_FACTOR,
+        Math.max(
+          FRAMING.fitDistance * EXPECTED_MIN_DISTANCE_FACTOR,
+          FOOTPRINT_RADIUS_METRES * EXPECTED_FOOTPRINT_CLEARANCE_FACTOR,
+        ),
         PRECISION_DIGITS,
+      );
+      // On this plot, at one storey, it is the footprint that floors the zoom: a quarter of
+      // the fit distance would put the camera 6.92 m inside the walls.
+      expect(FRAMING.minDistance).toBeGreaterThan(
+        FRAMING.fitDistance * EXPECTED_MIN_DISTANCE_FACTOR,
       );
       expect(FRAMING.maxDistance).toBeCloseTo(
         FRAMING.fitDistance * EXPECTED_MAX_DISTANCE_FACTOR,
@@ -428,6 +527,21 @@ describe('exteriorFraming', () => {
         Math.sin(EXPECTED_ELEVATION_DEGREES * RADIANS_PER_DEGREE) * FRAMING.minDistance;
 
       expect(height).toBeGreaterThan(FLOOR_HEIGHTS.wall);
+    });
+
+    it('keeps the closest orbit distance outside the footprint of the plot', () => {
+      expect(FOOTPRINT_RADIUS_METRES).toBeCloseTo(
+        Math.hypot(
+          (PLOT_RECT.maxX - PLOT_RECT.minX) * HALF,
+          (PLOT_RECT.maxZ - PLOT_RECT.minZ) * HALF,
+        ),
+        PRECISION_DIGITS,
+      );
+      expect(FRAMING.minDistance).toBeGreaterThan(FOOTPRINT_RADIUS_METRES);
+      expect(FRAMING.minDistance).toBeCloseTo(
+        FOOTPRINT_RADIUS_METRES * EXPECTED_FOOTPRINT_CLEARANCE_FACTOR,
+        PRECISION_DIGITS,
+      );
     });
 
     it('starts the fog past the floor at the furthest allowed zoom', () => {
@@ -470,7 +584,13 @@ describe('exteriorFraming', () => {
       ['classic', CLASSIC_ASPECT],
       ['portrait phone', PHONE_ASPECT],
     ] as const)('shows every corner of the floor on a %s viewport', (_label, aspect) => {
-      const framing = getExteriorFraming(PLOT_RECT, FLOOR_HEIGHTS, FOV_DEGREES, aspect);
+      const framing = getExteriorFraming(
+        PLOT_RECT,
+        FLOOR_HEIGHTS,
+        FOV_DEGREES,
+        aspect,
+        SINGLE_STOREY,
+      );
       const frustum = frustumOf(cameraAt(framing, aspect, FOV_DEGREES, startDistance(framing)));
       const corners = cornersOf(floorBox(PLOT_RECT, FLOOR_HEIGHTS));
 
@@ -487,7 +607,13 @@ describe('exteriorFraming', () => {
     ] as const)(
       'fills the tighter axis of a %s frame with the floor',
       (_label, aspect, minimumFill) => {
-        const framing = getExteriorFraming(PLOT_RECT, FLOOR_HEIGHTS, FOV_DEGREES, aspect);
+        const framing = getExteriorFraming(
+          PLOT_RECT,
+          FLOOR_HEIGHTS,
+          FOV_DEGREES,
+          aspect,
+          SINGLE_STOREY,
+        );
         const fill = frameFill(framing, aspect, FOV_DEGREES);
 
         expect(Math.max(fill.x, fill.y)).toBeGreaterThanOrEqual(minimumFill);
@@ -497,7 +623,13 @@ describe('exteriorFraming', () => {
     );
 
     it('pulls the camera further back on a portrait viewport than on a widescreen one', () => {
-      const portrait = getExteriorFraming(PLOT_RECT, FLOOR_HEIGHTS, FOV_DEGREES, PHONE_ASPECT);
+      const portrait = getExteriorFraming(
+        PLOT_RECT,
+        FLOOR_HEIGHTS,
+        FOV_DEGREES,
+        PHONE_ASPECT,
+        SINGLE_STOREY,
+      );
 
       expect(portrait.fitDistance).toBeGreaterThan(FRAMING.fitDistance);
     });
@@ -508,6 +640,7 @@ describe('exteriorFraming', () => {
         FLOOR_HEIGHTS,
         WIDE_FOV_DEGREES,
         WIDESCREEN_ASPECT,
+        SINGLE_STOREY,
       );
 
       expect(wide.fitDistance).toBeLessThan(FRAMING.fitDistance);
@@ -519,6 +652,7 @@ describe('exteriorFraming', () => {
         scaleHeights(FLOOR_HEIGHTS, SCALE),
         FOV_DEGREES,
         WIDESCREEN_ASPECT,
+        SINGLE_STOREY,
       );
 
       expect(doubled.fitDistance).toBeCloseTo(FRAMING.fitDistance * SCALE, PRECISION_DIGITS);
@@ -542,7 +676,13 @@ describe('exteriorFraming', () => {
       ['injected heights', SYNTHETIC_HEIGHTS],
       ['off-grid heights', OFF_GRID_HEIGHTS],
     ] as const)('frames the box the slab ends at, with %s', (_label, heights) => {
-      const framing = getExteriorFraming(PLOT_RECT, heights, FOV_DEGREES, WIDESCREEN_ASPECT);
+      const framing = getExteriorFraming(
+        PLOT_RECT,
+        heights,
+        FOV_DEGREES,
+        WIDESCREEN_ASPECT,
+        SINGLE_STOREY,
+      );
 
       // Exact equality, not toBeCloseTo: the framing must fit a box whose underside is the
       // level `slabs.ts` owns, so the camera and the building agree bit for bit.
@@ -557,6 +697,7 @@ describe('exteriorFraming', () => {
         OFF_GRID_HEIGHTS,
         FOV_DEGREES,
         WIDESCREEN_ASPECT,
+        SINGLE_STOREY,
       );
       const snapped = -getSlabThickness(OFF_GRID_HEIGHTS);
       const unsnapped = -(OFF_GRID_HEIGHTS.floorToFloor - OFF_GRID_HEIGHTS.wall);
@@ -576,7 +717,109 @@ describe('exteriorFraming', () => {
     });
   });
 
+  describe('getExteriorFraming for a stack of storeys', () => {
+    const tall = getExteriorFraming(
+      PLOT_RECT,
+      FLOOR_HEIGHTS,
+      FOV_DEGREES,
+      WIDESCREEN_ASPECT,
+      TALL_STOREY,
+    );
+
+    it('pivots at half the height of the whole stack, not half a wall', () => {
+      // Exact equality: 29.70 / 2 is representable, so there is nothing to round here, and
+      // the one-storey case must still land on the 1.35 the regression pin holds.
+      expect(getBuildingTop(FLOOR_HEIGHTS, TALL_STOREY)).toBe(TALL_TOP_METRES);
+      expect(tall.target.y).toBe(TALL_TOP_METRES * HALF);
+      expect(tall.target.x).toBe(FRAMING.target.x);
+      expect(tall.target.z).toBe(FRAMING.target.z);
+    });
+
+    it('fits the box that ends at the top of the topmost storey', () => {
+      const box = floorBox(PLOT_RECT, FLOOR_HEIGHTS, TALL_STOREY);
+      const corners = cornersOf(box);
+      const atFit = frustumOf(
+        cameraAt(tall, WIDESCREEN_ASPECT, FOV_DEGREES, tall.fitDistance * JUST_BEYOND_FIT),
+      );
+      const tooClose = frustumOf(
+        cameraAt(tall, WIDESCREEN_ASPECT, FOV_DEGREES, tall.fitDistance * JUST_INSIDE_FIT),
+      );
+
+      expect(box.max.y).toBe(TALL_TOP_METRES);
+      // The underside is storey 1's slab whatever is stacked above it.
+      expect(box.min.y).toBe(-getSlabThickness(FLOOR_HEIGHTS));
+      expect(corners).toHaveLength(BOX_CORNER_COUNT);
+      for (const corner of corners) {
+        expect(atFit.containsPoint(corner)).toBe(true);
+      }
+      expect(corners.some((corner) => !tooClose.containsPoint(corner))).toBe(true);
+    });
+
+    it('pulls the camera back for the taller building', () => {
+      expect(tall.fitDistance).toBeGreaterThan(FRAMING.fitDistance);
+    });
+  });
+
+  describe('getExteriorFraming over every storey count and canvas shape', () => {
+    it.each(MATRIX_ASPECTS)(
+      'brackets and grows the framing at every count on an aspect of %s',
+      (aspect) => {
+        let previous: ExteriorFraming | undefined;
+
+        for (let storeys = SINGLE_STOREY; storeys <= TALL_STOREY; storeys += 1) {
+          const framing = getExteriorFraming(
+            PLOT_RECT,
+            FLOOR_HEIGHTS,
+            FOV_DEGREES,
+            aspect,
+            storeys,
+          );
+
+          expect(framing.minDistance, `minDistance at ${String(storeys)} storeys`).toBeGreaterThan(
+            0,
+          );
+          // Whatever the count and whatever the canvas, the closest zoom stays outside the
+          // circle through the corners of the plot: a camera nearer the orbit axis than
+          // that is between the walls of whichever storey it is level with.
+          expect(
+            framing.minDistance,
+            `minDistance at ${String(storeys)} storeys clears the footprint`,
+          ).toBeGreaterThan(FOOTPRINT_RADIUS_METRES);
+          expect(framing.minDistance).toBeLessThan(framing.fitDistance);
+          expect(framing.fitDistance).toBeLessThan(framing.maxDistance);
+          // The fog must stay inside the camera's far plane, or the ground plane is clipped
+          // away before it has finished fading and the horizon shows as a hard edge.
+          expect(framing.fogFar, `fogFar at ${String(storeys)} storeys`).toBeLessThan(CAMERA_FAR);
+
+          if (previous !== undefined) {
+            for (const key of PUBLISHED_LENGTHS) {
+              expect(framing[key], `${key} at ${String(storeys)} storeys`).toBeGreaterThanOrEqual(
+                previous[key],
+              );
+            }
+            expect(framing.target.y).toBeGreaterThanOrEqual(previous.target.y);
+          }
+          previous = framing;
+        }
+      },
+    );
+  });
+
   describe('getExteriorFraming rejections', () => {
+    it.each([
+      ['a storey count of zero', NO_STOREYS],
+      ['a fractional storey count', PART_STOREY],
+      ['a non-finite storey count', NOT_A_NUMBER],
+      ['an infinite storey count', INFINITE],
+      ['a negative storey count', -TALL_STOREY],
+    ] as const)('rejects %s', (_label, storeyCount) => {
+      const framing = () =>
+        getExteriorFraming(VALID_PLOT, FLOOR_HEIGHTS, FOV_DEGREES, WIDESCREEN_ASPECT, storeyCount);
+
+      expect(framing).toThrow(RangeError);
+      expect(framing).toThrow('storeyCount');
+    });
+
     it.each([
       [
         'an inverted plot on x',
@@ -673,8 +916,12 @@ describe('exteriorFraming', () => {
       ['a non-finite aspect', VALID_PLOT, FLOOR_HEIGHTS, FOV_DEGREES, NOT_A_NUMBER, 'aspect'],
       ['an infinite aspect', VALID_PLOT, FLOOR_HEIGHTS, FOV_DEGREES, INFINITE, 'aspect'],
     ] as const)('rejects %s', (_label, plot, heights, fovDegrees, aspect, named) => {
-      expect(() => getExteriorFraming(plot, heights, fovDegrees, aspect)).toThrow(RangeError);
-      expect(() => getExteriorFraming(plot, heights, fovDegrees, aspect)).toThrow(named);
+      expect(() => getExteriorFraming(plot, heights, fovDegrees, aspect, SINGLE_STOREY)).toThrow(
+        RangeError,
+      );
+      expect(() => getExteriorFraming(plot, heights, fovDegrees, aspect, SINGLE_STOREY)).toThrow(
+        named,
+      );
     });
   });
 });

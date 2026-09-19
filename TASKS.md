@@ -1,6 +1,6 @@
 # Tasks
 
-> Roadmap to finish the 3D simulation of the typical apartment floor (22.50 × 10.00 m, floor 1 shown at level 0).
+> Roadmap to finish the 3D simulation of the typical apartment floor (22.50 × 10.00 m, floor 1 at level 0, stacked 1…10 storeys at the 3.00 m floor-to-floor pitch since Part 3.5).
 > **Source of truth:** `src/features/building/domain/sourceOfTruth/plan.ts` — the single copy of the geometry. `pnpm verify:plan` checks it (12 checks: rectangles on the centimetre grid and inside the interior, areas closing on the plot, both dimension chains, jambs, matricule uniqueness, reachability and what a port may open onto, stair fit, per-contact wall thickness, fixture and door-swing clearance, the isolation register, the walls built below storey height, and that no stretch reads as insulated while being built thin). CI runs it between `format:check` and the unit tests, and it is the first command of every DoD gate (ADR-010).
 > `docs/source-of-truth-n-floor.drawio.html` is **generated** from the plan by `node scripts/source-of-truth/build.mjs` — Page-2 the plan at 60 px = 1 m, Registers the room/wall/port/window/fixture tables. The owner marks intent on the drawing by hand; that intent is measured, agreed, encoded in the plan, and the drawing is rebuilt from it, so the two cannot drift.
 > `docs/house-design-brief.md` records the original requirements. Where it disagrees with the plan, **the plan wins** — it carries the owner's later decisions.
@@ -156,6 +156,32 @@ A task below keeps its `[x]` when the thing it built still stands and only its d
 - [x] ADR superseding ADR-002 (**ADR-013**, which also records the one-walk-field collision model, the automatic walk and its along-track arrival fix, the remembered orbit angle, the view flight and the exact scope of `prefers-reduced-motion`, the two ADR-008 promises this part breaks, and the accepted costs); RUNBOOK "Controls" updated
 - [ ] DoD gate → PR merged
 
+## Part 3.5 — Stacked floors: the typical floor 1…N, with walkable stairs
+
+- goal: show the typical floor stacked N times and let the stairs carry a person between storeys
+- depends-on: Part 3
+- exit: a `[-] 01 [+]` stepper builds 1…10 storeys, each the floor already built; walking a flight arrives exactly one storey up and descending returns exactly; **at one storey the rendered scene is unchanged**, which is the regression gate for the whole rendering change
+
+> Why this is a part and not a parameter: `EyePose` is `{x, z, yaw, pitch}` — there is no height in the movement model at all, and eye level is a constant re-applied at four render sites. Continuous climbing puts elevation into the pose and every consumer of it. `SpaceId` also stops naming a room once two storeys exist, and the exterior framing fits a box exactly one storey tall. What is already ready: `PlanBox` is level-agnostic, every derivation takes `heights`, and the stair is already modelled as running THROUGH the storey (`lowestLevel` −1.50, `highestLevel` +1.50) with a `surfaces` list built for a footprint that is floor at more than one level — so floor n's arriving flight already continues floor n−1's departing flight through the shared half-landing with no coordinate change (ADR-010).
+
+- [x] `domain/storeys.ts` — bounds (1…10, default 1), `getStoreyLevel`/`getStoreyLevels`/`getStoreyAt`, `getBuildingTop`, the `01` formatter and the floor labels + tests
+- [x] `application/floorCountStore.ts` — the count, with the house rule that a no-op update returns the previous state + tests
+- [x] `domain/stairwell.ts` — a flight as a height function over its footprint (`getRampRise`, `getStairFooting`, `isNearStairwell`), plan-free and unit-tested against synthetic surfaces
+- [x] `domain/stairs.ts` — a `placement` parameter replacing the module level constant (shipped as `THIS_STOREY_PLACEMENT`, a `StairsPlacement` rather than a bare number); publish each flight's `lowEndSide`; `getStairwell` finally consuming `surfaces`, which had no production consumer since it was written, and `getStairwellEnds` capping it at the two ends of the stack — a storey's well reaches a full storey each way (four ramps, five landings), because from the half-landing the climb continues onto the next storey's arriving flight
+- [x] `domain/eyeNavigation.ts` — the pose gains `floor` and `rise`: a float height alone makes the storey index flicker at exactly the boundary, so the discrete index is stored and `rise` is assigned from the surface every frame, never integrated
+- [x] Collision: two fields for the whole stack, shared by identity — today's, plus one with the stair bay released as floor. **No offsetting**: `isFloorBox` compares against a module constant, so offset solids would make the floor set empty and the sweep would call the whole plot a fall
+- [x] `domain/floorSpace.ts` + `getSpaceLabel(space, floor)` — `F1-R11/KIT · Kitchen` from one storey up, matching the convention the wall matricules already use; one spelling everywhere
+- [x] `ui/FloorCountStepper.tsx` — `[-] 01 [+]` in both views, bounds by `aria-disabled` so stepping to a limit never drops focus, value announced politely + tests
+- [x] Rendering: one baked geometry drawn once per storey (not N copies in memory), so it now holds **storey-local** coordinates and a stepper press mounts meshes against buffers already resident; **no separate ceiling below the top storey**, since a ceiling is the underside of the slab above and drawing both z-fights
+- [x] `domain/exteriorFraming.ts` — a storey count, with the orbit target at half the building height; `CAMERA_FAR` 500 → 800 (`ui/BuildingScene.tsx`), the old plane being short by a quarter of a metre: measured, the worst fog distance over the count × aspect matrix is 500.26 m
+- [x] HUD readers name the floor: readout, room menu (the rooms of the floor you are on — 20, never 220) and minimap
+- [x] Count-change rules: adding storeys never moves the viewer; reducing below the viewer's storey puts them on the new top storey keeping their plan position, heading and pitch — or back at the stair arrival when they were caught mid-flight, where there is no plan position to keep — and the room readout announces the new storey once
+- [x] e2e: the stepper in both views, a walk up and back down, and the one-storey baseline still passing
+- [x] ADR superseding ADR-006's "shows floor 1 only, placed at level 0" (**ADR-014**, which also records the storey in the pose, the two shared collision fields, the flight as a height function, the one-geometry-per-storey rendering, the suppressed ceiling, the owner's decisions of 2026-09-13 and the correction to ADR-013's arrival-landing camera); RUNBOOK "Controls" updated
+- [ ] DoD gate → PR merged
+
+> Owner decisions (2026-09-13): walk the flight rising continuously, never a step-on-and-arrive; max 10; the stepper lives in both views and keeps your position; no separate ceiling below the top storey (overhead reads as the slab's screed); both half-flights at the ends of the stack are blocked, though still drawn; the stair surface is the straight line between landings, accepting up to one riser of deviation from the drawn treads rather than a visible hop onto the first tread; and every room label carries its floor from one storey up.
+
 ## Part 4 — Furnished release: fixtures, hardening, v1.0.0
 
 - goal: every room holds the owner's equipment; the app is fast and resilient; a versioned release ships
@@ -174,6 +200,7 @@ A task below keeps its `[x]` when the thing it built still stands and only its d
 - [ ] Lazy-load the 3D scene chunk, instance/merge static geometry, bundle-size budget in CI
 - [ ] WebGL-unsupported fallback and a canvas error boundary with structured logging
 - [ ] Add eslint-plugin-jsx-a11y if it supports ESLint 10, otherwise record the deferral
+- [ ] The interior screenshot baseline masks most of its own frame. `getHudOverlay` matches a full-height overlay, and the interior HUD has grown to the point where the committed baseline is magenta above roughly y 520 of 720 — about **72 %** of the capture. It could not have caught the olive slab soffit Part 3.5 fixed, and still cannot catch anything in the upper frame. Either mask the panels rather than the overlay box, or assert the mask's own size so it fails when it grows
 - [ ] Re-instrument the geometry screenshot baselines: a 1 % diff-pixel ratio does not answer "did the geometry move" — 1 % of a 1280 × 720 frame is over 9,000 pixels, room for an entire corner of the building to change unnoticed, which is how a whole floor rebuild sat unseen behind the exterior baseline until Part 3's wider HUD mask used up the headroom (ADR-013). Either tighten the ratio toward the measured noise floor (0 px by Playwright's own metric when a baseline matches its own commit) or assert something that does not average over the frame
 - [ ] ADR self-hosted target + deploy workflow; e2e full tour of every room
 - [ ] README (controls, sources of truth, screenshots), `CHANGELOG.md`, tag `v1.0.0`
@@ -190,5 +217,5 @@ A task below keeps its `[x]` when the thing it built still stands and only its d
 - A demountable aluminium / sandwich panel with a wide door will separate the stair landing from the corridor in the real building — removable in about five minutes. The owner asked that it **not be drawn**: it exists, but not in the geometry, so `stairs ↔ corridor` stays a zero-thickness join and that zero is deliberate (see the note on it in `JOIN_OVERRIDES`). Modelling it as masonry was tried and reverted: 0.15 m of wall is 0.15 m the floor does not have, since the stair needs its full 1.00 m landing to turn a 180°, so the corridor would have had to pay all of it and the master bedroom's door would have dropped 0.90 → 0.75 m
 
 - Control center split into two isolated compartments (gas/water · electricity) — brief §7.4
-- Floor 0 and stacking floors 2…N — the typical floor is floor 1, shown at level 0
+- Floor 0 (the ground floor) — still undesigned. The typical floor is floor 1; stacking floors 2…N is delivered by Part 3.5 (issue #13, ADR-014), so the building is 1…10 identical storeys and floor 0 is still the missing one
 - The guest bathroom is built to the minimum that works (open part 0.55 deep, every leaf sliding). If it proves too tight in the 3D walk-through, the levers are: drop its bath, or take depth from the guest room

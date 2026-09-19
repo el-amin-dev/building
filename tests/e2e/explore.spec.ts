@@ -73,12 +73,12 @@ import {
 const ROOM_READOUT_SELECTOR = '#current-room';
 
 /** What the readout says in each room of the route. */
-const STAIRWELL_LINE = 'Room: R06/STR · Stairwell';
-const CORRIDOR_LINE = 'Room: R07/COR · Corridor';
-const GUEST_ROOM_LINE = 'Room: R09/GST · Guest room';
-const KITCHEN_LINE = 'Room: R11/KIT · Kitchen';
+const STAIRWELL_LINE = 'Room: F1-R06/STR · Stairwell';
+const CORRIDOR_LINE = 'Room: F1-R07/COR · Corridor';
+const GUEST_ROOM_LINE = 'Room: F1-R09/GST · Guest room';
+const KITCHEN_LINE = 'Room: F1-R11/KIT · Kitchen';
 /** What it says instead while an automatic walk is on its way there. */
-const WALKING_TO_KITCHEN_LINE = 'Walking to R11/KIT · Kitchen';
+const WALKING_TO_KITCHEN_LINE = 'Walking to F1-R11/KIT · Kitchen';
 /** How every walk announcement opens, whichever room it names. */
 const WALKING_PREFIX = 'Walking to';
 

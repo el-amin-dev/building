@@ -50,7 +50,7 @@ const KITCHEN_ITEM_NAME = 'R11/KIT · Kitchen';
 /** The room readout, whose first text proves the interior HUD has finished rendering. */
 const ROOM_READOUT_SELECTOR = '#current-room';
 /** What the readout says at the start pose: the stair arrival landing. */
-const STAIRWELL_LINE = 'Room: R06/STR · Stairwell';
+const STAIRWELL_LINE = 'Room: F1-R06/STR · Stairwell';
 
 /** A narrow phone viewport: a different set of HUD elements renders at this width. */
 const PHONE_VIEWPORT = Object.freeze({ width: 400, height: 800 });

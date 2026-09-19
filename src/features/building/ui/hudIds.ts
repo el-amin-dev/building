@@ -35,3 +35,19 @@ export const ROOM_READOUT_ID = 'current-room';
  * outside both of them.
  */
 export const ROOM_LIST_ID = 'room-list';
+
+/**
+ * DOM id of the storey count reading in the HUD stepper: the live element showing `01`…`10`.
+ *
+ * Both stepper buttons are `aria-describedby` this element, so the count is read out with
+ * the button's own name before the first press, not only after one.
+ */
+export const FLOOR_COUNT_VALUE_ID = 'floor-count';
+
+/**
+ * DOM id of the stepper's caption, the word naming what the two buttons step.
+ *
+ * Kept next to the value id so the caption and the reading it belongs to cannot drift
+ * apart, and so anything labelling the panel can name it without importing the component.
+ */
+export const FLOOR_COUNT_LABEL_ID = 'floor-count-label';

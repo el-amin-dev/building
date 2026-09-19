@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { getEyeLevel } from './eyeNavigation.ts';
 import type { EyePose } from './eyeNavigation.ts';
+import { FLOOR_HEIGHTS } from './heights.ts';
 import { PERSON_SPEC } from './person.ts';
+import { getStoreyLevel } from './storeys.ts';
 import {
   easeInOutCubic,
   getEyeCameraPose,
@@ -20,6 +23,13 @@ const LEVEL_PITCH = 0;
 const QUARTER_TURN = Math.PI / 2;
 /** How far ahead the first-person endpoint looks, in metres. */
 const LOOK_AHEAD_METRES = 1;
+/** The storey every interior visit begins on: the one the whole file used before the stack. */
+const GROUND_FLOOR = 1;
+/** A storey well up the stack, to separate the storey datum from the eye height. */
+const UPPER_FLOOR = 3;
+/** Standing on a storey's own finished floor. */
+const ON_THE_FLOOR = 0;
+const PRECISION_DIGITS = 9;
 
 /** An exterior-looking endpoint: far out from the building, looking at its centre. */
 const FROM: CameraPose = Object.freeze({
@@ -140,8 +150,15 @@ describe('getTransitionPose', () => {
 });
 
 describe('getEyeCameraPose', () => {
-  /** Looking toward +x, the heading a person arrives at the stairs with. */
-  const POSE: EyePose = Object.freeze({ x: 5.1, z: 5, yaw: -QUARTER_TURN, pitch: LEVEL_PITCH });
+  /** Looking toward +x, the heading a person arrives at the stairs with, on the ground storey. */
+  const POSE: EyePose = Object.freeze({
+    x: 5.1,
+    z: 5,
+    yaw: -QUARTER_TURN,
+    pitch: LEVEL_PITCH,
+    floor: GROUND_FLOOR,
+    rise: ON_THE_FLOOR,
+  });
 
   it('puts the camera at eye height over the plan position', () => {
     const { position } = getEyeCameraPose(POSE);
@@ -149,6 +166,15 @@ describe('getEyeCameraPose', () => {
     expect(position.x).toBeCloseTo(POSE.x);
     expect(position.y).toBeCloseTo(PERSON_SPEC.eyeHeight);
     expect(position.z).toBeCloseTo(POSE.z);
+  });
+
+  it('is exactly the eye height on the ground storey, to the last bit', () => {
+    // The storey datum is a summand, not a scale: on storey 1 at rise 0 it is a true zero,
+    // so the endpoint of the ground-storey flight is the number it always was.
+    const { position, target } = getEyeCameraPose(POSE);
+
+    expect(position.y).toBe(PERSON_SPEC.eyeHeight);
+    expect(target.y).toBe(PERSON_SPEC.eyeHeight);
   });
 
   it('looks one metre along the plan forward vector, at eye height', () => {
@@ -177,8 +203,60 @@ describe('getEyeCameraPose', () => {
   it('mutates nothing and is pure', () => {
     const pose = getEyeCameraPose(POSE);
 
-    expect(POSE).toEqual({ x: 5.1, z: 5, yaw: -QUARTER_TURN, pitch: LEVEL_PITCH });
+    expect(POSE).toEqual({
+      x: 5.1,
+      z: 5,
+      yaw: -QUARTER_TURN,
+      pitch: LEVEL_PITCH,
+      floor: GROUND_FLOOR,
+      rise: ON_THE_FLOOR,
+    });
     expect(pose).toEqual(getEyeCameraPose(POSE));
     expect(pose).not.toBe(getEyeCameraPose(POSE));
+  });
+
+  describe('up the stack', () => {
+    const upstairs: EyePose = Object.freeze({ ...POSE, floor: UPPER_FLOOR });
+    /** The eye on the third storey: 6.00 m of stack plus the 1.68 m eye height. */
+    const UPPER_EYE_LEVEL = 7.68;
+
+    it('lands on the eye height of the storey entered, not of the ground one', () => {
+      const { position } = getEyeCameraPose(upstairs);
+
+      expect(position.y).toBeCloseTo(UPPER_EYE_LEVEL);
+      expect(position.y).toBeCloseTo(getEyeLevel(upstairs));
+      expect(position.y).toBeCloseTo(
+        getStoreyLevel(UPPER_FLOOR) + PERSON_SPEC.eyeHeight,
+        PRECISION_DIGITS,
+      );
+    });
+
+    it('stays level up there: the position and the target are at the same height', () => {
+      const { position, target } = getEyeCameraPose(upstairs);
+
+      expect(position.y).toBe(target.y);
+    });
+
+    it('is the ground storey lifted by the storey level, and nothing else', () => {
+      const up = getEyeCameraPose(upstairs);
+      const down = getEyeCameraPose(POSE);
+      const lift = getStoreyLevel(UPPER_FLOOR);
+
+      expect(up.position.x).toBe(down.position.x);
+      expect(up.position.z).toBe(down.position.z);
+      expect(up.position.y - down.position.y).toBeCloseTo(lift, PRECISION_DIGITS);
+      expect(lift).toBeCloseTo(
+        (UPPER_FLOOR - GROUND_FLOOR) * FLOOR_HEIGHTS.floorToFloor,
+        PRECISION_DIGITS,
+      );
+    });
+
+    it('carries a rise above the finished floor, for a viewer caught on the stairs', () => {
+      const HALF_A_STOREY = FLOOR_HEIGHTS.floorToFloor / 2;
+      const { position, target } = getEyeCameraPose({ ...upstairs, rise: HALF_A_STOREY });
+
+      expect(position.y).toBeCloseTo(UPPER_EYE_LEVEL + HALF_A_STOREY, PRECISION_DIGITS);
+      expect(target.y).toBe(position.y);
+    });
   });
 });

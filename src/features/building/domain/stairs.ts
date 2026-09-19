@@ -66,6 +66,18 @@
  * read it: `collision.ts` sweeps the plot for itself and the shaft comes out as
  * fall cells, because no slab is poured there (ADR-013).
  *
+ * Two readings of the same stair live here, and they must not be confused:
+ *
+ * - {@link getStairsLayout} says what is BUILT on this storey — the rectangles,
+ *   the step boxes and the hole through the floor — with the storey's own level
+ *   handed in as a {@link StairsPlacement}, so a stack of storeys is one
+ *   function called once per storey;
+ * - {@link getStairwell} says what can be WALKED from this storey, which is more
+ *   than one storey's worth: the climb continues onto the next storey's flights,
+ *   and those are this storey's own flights lifted by a `floorToFloor`, because
+ *   the stair repeats. It is a reading, not a second model: no surface it
+ *   reports is anywhere the layout does not already put stair.
+ *
  * Pure geometry: plan coordinates in metres with the conventions of
  * `floorPlan/types.ts`, vertical levels in metres relative to this finished
  * floor, and yaw in radians with the conventions of `thirdPersonCamera.ts`
@@ -73,6 +85,7 @@
  */
 
 import {
+  FLOOR_PLAN,
   getJoinThickness,
   getNeighbours,
   getSpace,
@@ -93,6 +106,8 @@ import {
 } from './planGeometry.ts';
 import type { PlanRect, RectSide } from './planGeometry.ts';
 import { STAIRS } from './sourceOfTruth/plan.ts';
+import { STAIR_REACH_RISERS } from './stairwell.ts';
+import type { PlanAxis, StairLanding, StairRamp, Stairwell } from './stairwell.ts';
 
 /** The space of the plan the stairs fill (brief §4.2). */
 const STAIRS_SPACE_ID: SpaceId = 'stairs';
@@ -130,11 +145,11 @@ const LANDINGS_PER_STOREY = 2;
 /** Factor that turns the sum of two opposite faces into their midpoint. */
 const MIDPOINT_FACTOR = 0.5;
 
-/** Level of the finished floor of this storey, in metres: the arrival landing. */
-const THIS_STOREY_LEVEL = 0;
-
 /** Risers a flight spends on its landing: the last riser of a flight lands on the next landing. */
 const RISERS_LANDED = 1;
+
+/** The lowest floor of a stack, the one nothing stands under: floors are counted from 1. */
+const LOWEST_FLOOR = 1;
 
 /** The four faces of a rectangle, in a stable order. Frozen. */
 const ALL_SIDES: readonly RectSide[] = Object.freeze(['minX', 'maxX', 'minZ', 'maxZ']);
@@ -175,6 +190,27 @@ export const STAIRS_SPEC: {
   going: STAIRS.going,
   flightWidth: STAIRS.flightWidth,
 });
+
+/**
+ * Where one storey of the stair sits in the stack.
+ *
+ * The stair is the same stair on every storey, drawn once; what changes from
+ * one storey to the next is the level its arrival landing is at. Handing that
+ * level in rather than assuming zero is what lets a stack of storeys be built
+ * from one layout function, each storey's stair meeting the next.
+ */
+export interface StairsPlacement {
+  /** Level of the finished floor this storey's stair arrives at, in metres. */
+  readonly level: number;
+}
+
+/**
+ * This storey at level 0: the whole floor measured from its own finished floor.
+ *
+ * The default, and what the module said privately before a stack existed to
+ * place a storey in. Every level a layout reports is relative to this.
+ */
+export const THIS_STOREY_PLACEMENT: StairsPlacement = Object.freeze({ level: 0 });
 
 /**
  * Where a person arrives on the floor and which way they face: on the stairs
@@ -223,6 +259,18 @@ export interface StairPiece {
   readonly atThisLevel: boolean;
   /** Every walking surface the footprint carries, lowest first. */
   readonly surfaces: readonly StairSurface[];
+  /**
+   * For a flight, the face of its footprint its low end lies on; `undefined` on
+   * a landing, which has no low end.
+   *
+   * Nothing in {@link StairPiece.surfaces} says which end of the rectangle is
+   * low — that is exactly what makes a flight a height function rather than a
+   * rectangle at two levels — so a walker reading the stair as a surface needs
+   * this to know which way it climbs. The face is the one the flight is handed
+   * a walker across: the arrival landing for the flight climbed out of this
+   * storey, the turn below for the flight arriving at it.
+   */
+  readonly lowEndSide: RectSide | undefined;
 }
 
 /** The complete geometry of the stairs of one floor, in metres. */
@@ -248,6 +296,17 @@ export interface StairsLayout {
   readonly steps: readonly PlanBox[];
   /** Height of one riser: `heights.floorToFloor / riserCount`, in metres, not rounded. */
   readonly riser: number;
+  /**
+   * Level of the finished floor this stair arrives at, in metres: the placement
+   * it was built with. Every other level of the layout is measured from it.
+   */
+  readonly level: number;
+  /**
+   * Rise of one flight, in metres: half a storey, the distance from this floor
+   * to either turn landing. `halfStorey * 2` is `heights.floorToFloor`, which is
+   * what makes one storey's stair meet the next without a step of its own.
+   */
+  readonly halfStorey: number;
   /**
    * Lowest walking surface of the stair, in metres: half a storey below this
    * floor. Negative, because the stair passes through this floor rather than
@@ -642,30 +701,40 @@ function buildTreads(
  *
  * Every plan coordinate comes from `STAIRS`, checked against the `stairs` space
  * of the plan; every vertical level comes from `heights.floorToFloor` divided
- * into `STAIRS_SPEC.riserCount` risers. The arrival landing is at level 0, the
- * flight climbed out of it reaches exactly half a storey above, and the flight
- * arriving at it starts exactly half a storey below.
+ * into `STAIRS_SPEC.riserCount` risers, measured from `placement.level`. The
+ * arrival landing is at that level, the flight climbed out of it reaches
+ * exactly half a storey above, and the flight arriving at it starts exactly
+ * half a storey below. The plan geometry does not depend on the placement at
+ * all: the same stair is drawn on every storey of the stack, higher up.
  *
- * @param plan - The floor plan to read. Not mutated.
+ * @param plan - The floor plan to read; defaults to `FLOOR_PLAN`. Not mutated.
  * @param heights - Vertical sizes of the floor; defaults to `FLOOR_HEIGHTS`.
+ * @param placement - Where this storey sits in the stack; defaults to
+ *   {@link THIS_STOREY_PLACEMENT}, the floor measured from itself.
  * @returns A deeply frozen {@link StairsLayout}.
  * @throws RangeError naming the offending value when the plan and the spec
  *   disagree about the bay, when the pieces are not a stair tiling it (see
  *   `validatePieces` and `validateFlightPair`), when the stair is not the two
  *   flights and two landings of a repeating half-turn, when no landing is floor
  *   at this storey, when no flight is declared after that landing for a walker
- *   to climb out of it, when both flights do not meet it, or when
- *   `heights.floorToFloor` is not a finite positive number.
+ *   to climb out of it, when both flights do not meet it, when
+ *   `heights.floorToFloor` is not a finite positive number, or when
+ *   `placement.level` is not finite.
  */
 export function getStairsLayout(
-  plan: FloorPlan,
+  plan: FloorPlan = FLOOR_PLAN,
   heights: FloorHeights = FLOOR_HEIGHTS,
+  placement: StairsPlacement = THIS_STOREY_PLACEMENT,
 ): StairsLayout {
   const { floorToFloor } = heights;
+  const { level } = placement;
   if (!Number.isFinite(floorToFloor) || floorToFloor <= 0) {
     throw new RangeError(
       `floorToFloor must be a finite positive number, got ${String(floorToFloor)}`,
     );
+  }
+  if (!Number.isFinite(level)) {
+    throw new RangeError(`placement level must be a finite number, got ${String(level)}`);
   }
   if (SPEC_FLIGHTS.length !== FLIGHTS_PER_STOREY || SPEC_LANDINGS.length !== LANDINGS_PER_STOREY) {
     throw new RangeError(
@@ -736,21 +805,21 @@ export function getStairsLayout(
   const riser = floorToFloor / STAIRS_SPEC.riserCount;
   const halfStorey = risersPerFlight * riser;
   const treadsPerFlight = risersPerFlight - RISERS_LANDED;
-  const turnAbove = THIS_STOREY_LEVEL + halfStorey;
-  const turnBelow = THIS_STOREY_LEVEL - halfStorey;
+  const turnAbove = level + halfStorey;
+  const turnBelow = level - halfStorey;
 
   const steps: readonly PlanBox[] = Object.freeze([
     // The turn below, then the flight rising out of it to this floor.
     makeBox(turnLanding.rect, turnBelow - riser, turnBelow),
     ...buildTreads(inFlight, inFromTurn, turnBelow, riser, treadsPerFlight),
     // Then the flight climbed out of this floor, and the turn it reaches.
-    ...buildTreads(upFlight, upFromLanding, THIS_STOREY_LEVEL, riser, treadsPerFlight),
+    ...buildTreads(upFlight, upFromLanding, level, riser, treadsPerFlight),
     makeBox(turnLanding.rect, turnAbove - riser, turnAbove),
   ]);
 
   const surfacesOf = (piece: SpecPiece): readonly StairSurface[] => {
     if (piece.name === arrivalLanding.name) {
-      return [{ lowLevel: THIS_STOREY_LEVEL, highLevel: THIS_STOREY_LEVEL }];
+      return [{ lowLevel: level, highLevel: level }];
     }
     if (piece.name === turnLanding.name) {
       // Occupied twice over: the stair repeats, so every half-landing level exists.
@@ -760,8 +829,18 @@ export function getStairsLayout(
       ];
     }
     return piece.name === upFlight.name
-      ? [{ lowLevel: THIS_STOREY_LEVEL, highLevel: turnAbove }]
-      : [{ lowLevel: turnBelow, highLevel: THIS_STOREY_LEVEL }];
+      ? [{ lowLevel: level, highLevel: turnAbove }]
+      : [{ lowLevel: turnBelow, highLevel: level }];
+  };
+
+  // The low end of each flight, which the surfaces cannot say: the flight
+  // climbed out of this storey starts on the arrival landing, the flight
+  // arriving at it starts on the turn below.
+  const lowEndSideOf = (piece: SpecPiece): RectSide | undefined => {
+    if (piece.name === upFlight.name) {
+      return upFromLanding;
+    }
+    return piece.name === inFlight.name ? inFromTurn : undefined;
   };
 
   const pieces: readonly StairPiece[] = Object.freeze(
@@ -772,6 +851,7 @@ export function getStairsLayout(
         isFlight: FLIGHT_NAME_PATTERN.test(piece.name),
         atThisLevel: piece.name === arrivalLanding.name,
         surfaces: Object.freeze(surfacesOf(piece).map((surface) => Object.freeze(surface))),
+        lowEndSide: lowEndSideOf(piece),
       }),
     ),
   );
@@ -785,6 +865,8 @@ export function getStairsLayout(
     ),
     steps,
     riser,
+    level,
+    halfStorey,
     lowestLevel: turnBelow,
     highestLevel: turnAbove,
     arrival: Object.freeze({
@@ -792,5 +874,197 @@ export function getStairsLayout(
       z: toPlanLength((arrivalLanding.rect.minZ + arrivalLanding.rect.maxZ) * MIDPOINT_FACTOR),
       yaw: YAW_FACING_OUT[arrivalLanding.openSide],
     }),
+  });
+}
+
+/** Which neighbouring storeys a stairwell's flights continue into. */
+export interface StairwellEnds {
+  /** Whether there is a storey above for the flight climbed out of this one to reach. */
+  readonly hasAbove: boolean;
+  /** Whether there is a storey below for the flight arriving here to come up from. */
+  readonly hasBelow: boolean;
+}
+
+/**
+ * Tells which ends of the stack a storey's stairwell continues into.
+ *
+ * The owner's decision, and the only place the stack's ends are stated: the
+ * stair is DRAWN through every storey, top and bottom included — it is one
+ * repeated bay and cutting its geometry short would leave a hole in the
+ * building — but it is not WALKED past the ends. A walker on the top floor
+ * finds nothing above the arrival landing to climb to, and one on the ground
+ * floor finds nothing below it.
+ *
+ * @param floor - Which storey the walker is on, counted from
+ *   {@link LOWEST_FLOOR} at the bottom.
+ * @param floorCount - How many storeys the stack has.
+ * @returns A frozen {@link StairwellEnds}.
+ */
+export function getStairwellEnds(floor: number, floorCount: number): StairwellEnds {
+  return Object.freeze({ hasAbove: floor < floorCount, hasBelow: floor > LOWEST_FLOOR });
+}
+
+/**
+ * Tells whether a surface is level: a landing rather than a flight.
+ *
+ * The classification the whole stairwell is built on, and it reads the geometry
+ * rather than the names: a flight is a piece whose surface stands at different
+ * levels at its two ends, whatever the spec calls it.
+ *
+ * @param surface - The surface to classify.
+ * @returns `true` when both ends are at the same level.
+ */
+function isLevelSurface(surface: StairSurface): boolean {
+  return Math.abs(surface.highLevel - surface.lowLevel) <= LENGTH_TOLERANCE;
+}
+
+/**
+ * Tells whether two levels are the same level.
+ *
+ * @param level - One level, in metres.
+ * @param other - The other, in metres.
+ * @returns `true` when they agree within {@link LENGTH_TOLERANCE}.
+ */
+function atLevel(level: number, other: number): boolean {
+  return Math.abs(level - other) <= LENGTH_TOLERANCE;
+}
+
+/**
+ * Reads one flight as a ramp: a height function over its footprint.
+ *
+ * @param rect - Footprint of the flight.
+ * @param lowEndSide - The face its low end lies on.
+ * @param surface - The walking surface it carries.
+ * @returns A frozen {@link StairRamp} running from `lowEndSide` to the face
+ *   opposite it.
+ */
+function toRamp(rect: PlanRect, lowEndSide: RectSide, surface: StairSurface): StairRamp {
+  const runAxis: PlanAxis = axisOfFace(lowEndSide) === 'x' ? 'z' : 'x';
+  return Object.freeze({
+    rect,
+    runAxis,
+    lowAt: faceCoordinate(rect, lowEndSide),
+    highAt: faceCoordinate(rect, OPPOSITE_SIDE[lowEndSide]),
+    lowLevel: surface.lowLevel,
+    highLevel: surface.highLevel,
+  });
+}
+
+/**
+ * Moves a ramp up or down without moving it in plan.
+ *
+ * @param ramp - The ramp to repeat.
+ * @param by - How far to move it, in metres; negative moves it down.
+ * @returns A frozen copy at the new levels.
+ */
+function liftRamp(ramp: StairRamp, by: number): StairRamp {
+  return Object.freeze({ ...ramp, lowLevel: ramp.lowLevel + by, highLevel: ramp.highLevel + by });
+}
+
+/**
+ * Moves a landing up or down without moving it in plan.
+ *
+ * @param landing - The landing to repeat.
+ * @param by - How far to move it, in metres; negative moves it down.
+ * @returns A frozen copy at the new level.
+ */
+function liftLanding(landing: StairLanding, by: number): StairLanding {
+  return Object.freeze({ ...landing, level: landing.level + by });
+}
+
+/**
+ * Reads a storey's stairs as the walkable surfaces of a stairwell.
+ *
+ * The layout says what is built on this storey; a walker needs what can be
+ * stood on, and that is more than one storey's worth. From the turn landing
+ * half a storey up, the climb continues onto the ARRIVING flight of the storey
+ * above — a flight this storey's layout does not contain and never will, since
+ * it belongs to the next storey. What makes that flight knowable without
+ * building the storey above is the repeat: the stair is the same stair every
+ * storey, so the flight above is this storey's own flight lifted by one
+ * `floorToFloor`, and the flight below is the same one dropped by it. A middle
+ * storey therefore offers FOUR flights and FIVE landings, tiling a full storey
+ * either side of this floor without a gap.
+ *
+ * Which flight is which is read off the surfaces, never off a name: the flight
+ * whose low end is at this storey's level is the one climbed out of it, and the
+ * flight whose high end is at that level is the one arriving at it. Lifting the
+ * first down a storey gives the run into the storey below; lifting the second
+ * up a storey gives the run out of this one into the storey above.
+ *
+ * ADR-010 is untouched: nothing here re-models the stair as arriving at this
+ * floor, and nothing paves the bay. This is a reading of the same geometry.
+ *
+ * @param layout - The stairs of this storey, from {@link getStairsLayout}.
+ * @param heights - Vertical sizes of the floor; its `floorToFloor` is the
+ *   repeat, and must be the one the layout was built with.
+ * @param ends - Which neighbouring storeys the flights continue into. An end of
+ *   the stack is blocked: the surfaces beyond it are left out, so a walker
+ *   simply finds no floor to step onto.
+ * @returns A deeply frozen {@link Stairwell}, its ramps and landings lowest
+ *   first.
+ * @throws RangeError when `heights.floorToFloor` is not a finite positive
+ *   number, or when it is not the storey height the layout was built on.
+ */
+export function getStairwell(
+  layout: StairsLayout,
+  heights: FloorHeights,
+  ends: StairwellEnds,
+): Stairwell {
+  const { floorToFloor } = heights;
+  if (!Number.isFinite(floorToFloor) || floorToFloor <= 0) {
+    throw new RangeError(
+      `floorToFloor must be a finite positive number, got ${String(floorToFloor)}`,
+    );
+  }
+  if (Math.abs(layout.halfStorey * FLIGHTS_PER_STOREY - floorToFloor) > LENGTH_TOLERANCE) {
+    throw new RangeError(
+      `the layout rises ${String(layout.halfStorey * FLIGHTS_PER_STOREY)} m per storey but the heights say ${String(floorToFloor)} m: the stair would not meet itself between storeys`,
+    );
+  }
+
+  const surfacesOf = <T>(
+    read: (piece: StairPiece, surface: StairSurface) => readonly T[],
+  ): readonly T[] =>
+    layout.pieces.flatMap((piece) => piece.surfaces.flatMap((surface) => read(piece, surface)));
+
+  const flights = surfacesOf<StairRamp>((piece, surface) =>
+    piece.lowEndSide === undefined || isLevelSurface(surface)
+      ? []
+      : [toRamp(piece.rect, piece.lowEndSide, surface)],
+  );
+  const landings = surfacesOf<StairLanding>((piece, surface) =>
+    isLevelSurface(surface) ? [Object.freeze({ rect: piece.rect, level: surface.lowLevel })] : [],
+  );
+
+  // Out of this storey and into it: the two halves of the storey's own climb.
+  const climbing = flights.filter((ramp) => atLevel(ramp.lowLevel, layout.level));
+  const arriving = flights.filter((ramp) => atLevel(ramp.highLevel, layout.level));
+  const here = landings.filter((landing) => atLevel(landing.level, layout.level));
+  const turnsBelow = landings.filter((landing) => landing.level < layout.level - LENGTH_TOLERANCE);
+  const turnsAbove = landings.filter((landing) => landing.level > layout.level + LENGTH_TOLERANCE);
+
+  const below: readonly StairRamp[] = ends.hasBelow
+    ? [...climbing.map((ramp) => liftRamp(ramp, -floorToFloor)), ...arriving]
+    : [];
+  const above: readonly StairRamp[] = ends.hasAbove
+    ? [...climbing, ...arriving.map((ramp) => liftRamp(ramp, floorToFloor))]
+    : [];
+
+  return Object.freeze({
+    bay: layout.bay,
+    ramps: Object.freeze([...below, ...above].toSorted((a, b) => a.lowLevel - b.lowLevel)),
+    landings: Object.freeze(
+      [
+        ...(ends.hasBelow
+          ? [...here.map((landing) => liftLanding(landing, -floorToFloor)), ...turnsBelow]
+          : []),
+        ...here,
+        ...(ends.hasAbove
+          ? [...turnsAbove, ...here.map((landing) => liftLanding(landing, floorToFloor))]
+          : []),
+      ].toSorted((a, b) => a.level - b.level),
+    ),
+    reach: STAIR_REACH_RISERS * layout.riser,
   });
 }

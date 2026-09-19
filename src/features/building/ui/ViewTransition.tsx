@@ -2,7 +2,8 @@ import { useFrame } from '@react-three/fiber';
 import { useRef } from 'react';
 import { Vector3 } from 'three';
 import type { Camera } from 'three';
-import { getRememberedOrbitPose } from '../application/exteriorOrbitStore.ts';
+import { getPlacementOrbitPose } from '../application/exteriorOrbitStore.ts';
+import { useFloorCountStore } from '../application/floorCountStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
 import type { CameraTransition } from '../application/viewStore.ts';
 import type { ExteriorFraming, Vector3Like } from '../domain/exteriorFraming.ts';
@@ -12,7 +13,9 @@ import {
   getOrbitPose,
   getOrbitPosition,
 } from '../domain/orbitNavigation.ts';
+import { MIN_FLOOR_COUNT } from '../domain/storeys.ts';
 import { getThirdPersonCamera } from '../domain/thirdPersonCamera.ts';
+import type { CameraField } from '../domain/thirdPersonCamera.ts';
 import type { InteriorCameraMode } from '../domain/viewMode.ts';
 import {
   getEyeCameraPose,
@@ -20,7 +23,7 @@ import {
   VIEW_TRANSITION_SECONDS,
 } from '../domain/viewTransition.ts';
 import type { CameraPose } from '../domain/viewTransition.ts';
-import { CAMERA_FIELD, INTERIOR_START_POSE } from './floorInstance.ts';
+import { getCameraFields, INTERIOR_START_POSE } from './floorInstance.ts';
 import { useExteriorFraming } from './useExteriorFraming.ts';
 
 /** A transition that is actually travelling: the phase with `'none'` taken out. */
@@ -42,6 +45,10 @@ interface CameraTween {
 
 /** The travel parameter at the end of the tween. */
 const TWEEN_END = 1;
+/** Index of the lowest storey in a per-storey list: floor `MIN_FLOOR_COUNT` is the first entry. */
+const FIRST_STOREY_INDEX = 0;
+/** How far back from the end of a list its last entry sits. */
+const LAST_INDEX_OFFSET = 1;
 /** No time elapsed yet: the first frame of a travel applies the start pose unchanged. */
 const NO_TIME_ELAPSED = 0;
 /**
@@ -76,26 +83,36 @@ const MIN_LOOK_AHEAD_METRES = 1;
  * same expression.** Concretely:
  *
  * - `toExterior` ends at
- *   `getOrbitPosition(framing.target, clampOrbitPose(getRememberedOrbitPose() ??
- *   getOrbitPose(framing.target, framing.position), getOrbitLimits(framing)))`,
+ *   `getOrbitPosition(framing.target, clampOrbitPose(getPlacementOrbitPose(
+ *   getOrbitPose(framing.target, framing.position), floorCount), getOrbitLimits(framing)))`,
  *   looking at `framing.target`: the remembered orbit pose when the viewer has
- *   framed the exterior before and the framing default otherwise, clamped into
- *   the limits of the live framing. That is the exterior controls' own placement
- *   expression, character for character, so their placement is a no-op after the
- *   travel instead of a snap — including after a resize, which can leave a
- *   remembered distance outside the new limits;
+ *   framed the exterior before and the framing default otherwise — with the
+ *   distance refitted when the storey count has changed since that pose was
+ *   framed — clamped into the limits of the live framing. The placement rule
+ *   itself lives in `getPlacementOrbitPose`, so this is the exterior controls'
+ *   own placement by *calling the same function* rather than by restating an
+ *   expression; their placement is then a no-op after the travel instead of a
+ *   snap — including after a resize, which can leave a remembered distance
+ *   outside the new limits, and after storeys were added or removed from the
+ *   interior, which the controls were unmounted for;
  * - `toInterior` ends at `getEyeCameraPose(INTERIOR_START_POSE)` in first person or
- *   at `getThirdPersonCamera(INTERIOR_START_POSE, CAMERA_FIELD)` in third person,
- *   both derived from the *shared* start pose (`floorInstance.ts`), which is the
- *   same object the interior explorer starts from — not an equal copy of it.
+ *   at `getThirdPersonCamera(INTERIOR_START_POSE, …)` in third person, both derived
+ *   from the *shared* start pose (`floorInstance.ts`), which is the same object the
+ *   interior explorer starts from — not an equal copy of it. The camera field is the
+ *   one of the start pose's own storey, read out of `getCameraFields(floorCount)`
+ *   exactly as the interior explorer reads it.
  *
  * Anything that breaks that symmetry shows up as a jump at the moment the controls
  * take over, which is precisely what this component exists to remove.
  *
- * The store is read with the non-reactive `getState()` inside the frame callback,
+ * The view store is read with the non-reactive `getState()` inside the frame callback,
  * following `EyeCameraControls`: subscribing to a phase that is consulted sixty
- * times a second would re-render the scene for the camera's own movement. The
- * framing comes from `useExteriorFraming()`, which must be called inside the
+ * times a second would re-render the scene for the camera's own movement. The storey
+ * count IS subscribed to, because it is not a per-frame value: it changes a handful of
+ * times ever, from outside the frame loop, and both endpoints have to follow it — the
+ * interior one for the camera field of the storey entered, the exterior one because a
+ * remembered distance framed for another stack has to be refitted.
+ * The framing comes from `useExteriorFraming()`, which must be called inside the
  * `<Canvas>` — this component is.
  *
  * The `data-camera-transition` attribute the e2e gate reads is deliberately NOT
@@ -106,6 +123,7 @@ const MIN_LOOK_AHEAD_METRES = 1;
  */
 export function ViewTransition() {
   const framing = useExteriorFraming();
+  const floorCount = useFloorCountStore((state) => state.floorCount);
   const tweenRef = useRef<CameraTween | null>(null);
 
   useFrame((state, delta) => {
@@ -116,7 +134,12 @@ export function ViewTransition() {
     }
 
     const { camera } = state;
-    const tween = getTween(tweenRef, cameraTransition, camera, interiorCameraMode, framing, delta);
+    const tween = getTween(tweenRef, cameraTransition, camera, {
+      cameraMode: interiorCameraMode,
+      floorCount,
+      framing,
+      delta,
+    });
     const progress = Math.min(TWEEN_END, tween.elapsed / VIEW_TRANSITION_SECONDS);
     const { position, target } = getTransitionPose(tween.from, tween.to, progress);
 
@@ -132,6 +155,18 @@ export function ViewTransition() {
   return null;
 }
 
+/** What this frame knows, beyond the travel itself: everything the endpoints are derived from. */
+interface FrameContext {
+  /** Interior camera mode, which picks the interior endpoint. */
+  readonly cameraMode: InteriorCameraMode;
+  /** How many storeys the stack shows, which picks the interior camera field. */
+  readonly floorCount: number;
+  /** The exterior framing at the live canvas size. */
+  readonly framing: ExteriorFraming;
+  /** Seconds since the previous frame. */
+  readonly delta: number;
+}
+
 /**
  * The travel of this frame: the one in progress, advanced, or a fresh one.
  *
@@ -143,28 +178,27 @@ export function ViewTransition() {
  * @param tweenRef - Where the travel is kept between frames; replaced on a new one.
  * @param phase - The phase the store reports this frame.
  * @param camera - The default camera, read for the start pose.
- * @param cameraMode - Interior camera mode, which picks the interior endpoint.
- * @param framing - The exterior framing at the live canvas size.
- * @param delta - Seconds since the previous frame.
+ * @param context - What the endpoints are derived from this frame.
  * @returns The travel to apply this frame.
  */
 function getTween(
   tweenRef: { current: CameraTween | null },
   phase: RunningTransition,
   camera: Camera,
-  cameraMode: InteriorCameraMode,
-  framing: ExteriorFraming,
-  delta: number,
+  context: FrameContext,
 ): CameraTween {
   const running = tweenRef.current;
   if (running !== null && running.phase === phase) {
     if (!running.hasEnded) {
-      running.elapsed += delta;
+      running.elapsed += context.delta;
     }
     return running;
   }
 
-  const to = phase === 'toInterior' ? getInteriorEndPose(cameraMode) : getExteriorEndPose(framing);
+  const to =
+    phase === 'toInterior'
+      ? getInteriorEndPose(context.cameraMode, context.floorCount)
+      : getExteriorEndPose(context.framing, context.floorCount);
   const started: CameraTween = {
     phase,
     from: readCameraPose(camera, to.target),
@@ -214,35 +248,61 @@ function readCameraPose(camera: Camera, endTarget: Vector3Like): CameraPose {
  * The interior endpoint: the camera as the interior controls will place it.
  *
  * @param cameraMode - Whether the interior camera looks through the eyes or follows.
+ * @param floorCount - How many storeys the stack shows, for the camera field.
  * @returns The first-person eye pose, or the follow camera behind the person.
  */
-function getInteriorEndPose(cameraMode: InteriorCameraMode): CameraPose {
+function getInteriorEndPose(cameraMode: InteriorCameraMode, floorCount: number): CameraPose {
   if (cameraMode === 'thirdPerson') {
-    return getThirdPersonCamera(INTERIOR_START_POSE, CAMERA_FIELD);
+    return getThirdPersonCamera(INTERIOR_START_POSE, getStartCameraField(floorCount));
   }
   return getEyeCameraPose(INTERIOR_START_POSE);
 }
 
 /**
- * The exterior endpoint: the remembered orbit pose when there is one, else the
- * framing default, brought inside the limits of the live framing. This expression
- * is the hand-off contract (see {@link ViewTransition}) and must stay identical to
- * the exterior controls'.
+ * The camera field of the storey the interior visit starts on.
+ *
+ * Every visit begins on the start pose's own storey (`INTERIOR_START_POSE`, floor 1),
+ * so its field is the first of the stack's. The index is clamped rather than trusted:
+ * a stack always has at least {@link MIN_FLOOR_COUNT} storeys, but reading past the end
+ * of the array would hand `getThirdPersonCamera` an `undefined` field at exactly the
+ * moment the viewer steps inside.
+ *
+ * @param floorCount - How many storeys the stack shows.
+ * @returns The camera field the interior explorer will follow the person with.
+ */
+function getStartCameraField(floorCount: number): CameraField {
+  const fields = getCameraFields(floorCount);
+  const index = Math.min(
+    Math.max(INTERIOR_START_POSE.floor - MIN_FLOOR_COUNT, FIRST_STOREY_INDEX),
+    fields.length - LAST_INDEX_OFFSET,
+  );
+  return fields[index];
+}
+
+/**
+ * The exterior endpoint: the placement rule of the exterior controls, applied to
+ * the live framing and brought inside its limits. This is the hand-off contract
+ * (see {@link ViewTransition}); `getPlacementOrbitPose` is the shared rule, so the
+ * two sides cannot drift apart.
  *
  * The clamp is the reason the whole expression is written out rather than
  * shortcut to `framing.position` when nothing is remembered: a pose remembered at
  * one canvas size can be illegal at another — resize the window while inside and
  * `maxDistance` shrinks — and the mounting controls place the camera at the
  * *clamped* pose. Landing at the unclamped one would be a visible snap at the
- * very moment the controls take over.
+ * very moment the controls take over. The storey count is passed for the same
+ * reason: the viewer can add storeys from the interior, and the endpoint has to
+ * refit the distance exactly as the controls will.
  *
  * @param framing - The exterior framing at the live canvas size.
+ * @param floorCount - How many storeys the stack shows, which decides whether the
+ *   remembered distance still frames the building it was chosen for.
  * @returns The camera pose the exterior view will be framed at.
  */
-function getExteriorEndPose(framing: ExteriorFraming): CameraPose {
+function getExteriorEndPose(framing: ExteriorFraming, floorCount: number): CameraPose {
   const framingPose = getOrbitPose(framing.target, framing.position);
-  const remembered = getRememberedOrbitPose();
-  const pose = clampOrbitPose(remembered ?? framingPose, getOrbitLimits(framing));
+  const placement = getPlacementOrbitPose(framingPose, floorCount);
+  const pose = clampOrbitPose(placement, getOrbitLimits(framing));
 
   return { position: getOrbitPosition(framing.target, pose), target: framing.target };
 }

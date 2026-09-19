@@ -1,13 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EyePose } from '../domain/eyeNavigation.ts';
+import { makeFloorSpaceRef } from '../domain/floorSpace.ts';
+import type { FloorSpaceRef } from '../domain/floorSpace.ts';
 import { ROOM_SAMPLE_DISTANCE_METRES, useExplorerPoseStore } from './explorerPoseStore.ts';
 
-/** Yaw and pitch are irrelevant to the room lookup; every test pose looks level ahead. */
-const LEVEL_POSE = { yaw: 0, pitch: 0 };
+/**
+ * Yaw and pitch are irrelevant to the room lookup; every test pose looks level ahead.
+ *
+ * So is the height: the store asks which space a plan point falls in, and the typical floor
+ * is the same plan at every storey. Every test pose therefore stands flat on the ground
+ * storey — floor 1, the lowest the plan numbers, with no rise above its finished floor.
+ */
+const LEVEL_POSE = { yaw: 0, pitch: 0, floor: 1, rise: 0 };
+
+/** The lowest storey the plan numbers, which every pose here stands on unless it says otherwise. */
+const GROUND_FLOOR = 1;
+
+/** The storey above it: the same plan, one floor-to-floor height up. */
+const FIRST_FLOOR = 2;
 
 /** Builds a pose standing at a plan point. */
 function poseAt(x: number, z: number): EyePose {
   return { x, z, ...LEVEL_POSE };
+}
+
+/** The same standing place, one storey up: same x and z, a different floor. */
+function oneStoreyUp(pose: EyePose): EyePose {
+  return { ...pose, floor: pose.floor + 1 };
 }
 
 /** x of the zero-gap join between the stairwell (to x 5.60) and the corridor (from x 5.60). */
@@ -42,8 +61,17 @@ const DEEPER_IN_KITCHEN = poseAt(11.1, 7.45 + LONG_STEP_METRES);
 /** Inside `voidWest` (z 8.90–9.70), which has no floor. */
 const IN_VOID_WEST = poseAt(11.1, 9.3);
 
+function currentSpace(): FloorSpaceRef | undefined {
+  return useExplorerPoseStore.getState().currentSpace;
+}
+
+function currentFloor(): number | undefined {
+  return useExplorerPoseStore.getState().currentFloor;
+}
+
+/** The room the store reports, without its storey: what the old readout used to show. */
 function currentSpaceId(): string | undefined {
-  return useExplorerPoseStore.getState().currentSpaceId;
+  return currentSpace()?.spaceId;
 }
 
 function reportPose(pose: EyePose): void {
@@ -63,15 +91,49 @@ describe('useExplorerPoseStore', () => {
     expect(LONG_STEP_METRES).toBeGreaterThan(ROOM_SAMPLE_DISTANCE_METRES);
   });
 
-  it('knows neither a room nor a pose at first', () => {
-    expect(currentSpaceId()).toBeUndefined();
+  it('knows neither a room, a storey nor a pose at first', () => {
+    expect(currentSpace()).toBeUndefined();
+    expect(currentFloor()).toBeUndefined();
     expect(useExplorerPoseStore.getState().getLatestPose()).toBeUndefined();
   });
 
-  it('resolves the room on the very first report', () => {
+  it('resolves the room on the very first report, storey and all', () => {
     reportPose(IN_KITCHEN);
 
-    expect(currentSpaceId()).toBe('kitchen');
+    expect(currentSpace()).toEqual(makeFloorSpaceRef(GROUND_FLOOR, 'kitchen'));
+    expect(currentFloor()).toBe(GROUND_FLOOR);
+  });
+
+  it('reports the storey even where no room resolves', () => {
+    // Inside a wall with nothing to fall back on: the room is unknown, the storey is not.
+    reportPose(IN_BEDROOM_WALL);
+
+    expect(currentSpace()).toBeUndefined();
+    expect(currentFloor()).toBe(GROUND_FLOOR);
+  });
+
+  it('names the same room on two storeys as two different rooms', () => {
+    reportPose(IN_KITCHEN);
+    const ground = currentSpace();
+
+    reportPose(oneStoreyUp(IN_KITCHEN));
+
+    expect(ground).toEqual(makeFloorSpaceRef(GROUND_FLOOR, 'kitchen'));
+    expect(currentSpace()).toEqual(makeFloorSpaceRef(FIRST_FLOOR, 'kitchen'));
+  });
+
+  it('re-resolves on a change of storey, however little the walker moved on the plan', () => {
+    // The stair lands the walker above where they left, so x and z alone cannot see this.
+    reportPose(IN_KITCHEN);
+    const listener = vi.fn();
+    const unsubscribe = useExplorerPoseStore.subscribe(listener);
+
+    reportPose(oneStoreyUp(IN_KITCHEN));
+
+    expect(currentSpace()).toEqual(makeFloorSpaceRef(FIRST_FLOOR, 'kitchen'));
+    expect(currentFloor()).toBe(FIRST_FLOOR);
+    expect(listener).toHaveBeenCalledOnce();
+    unsubscribe();
   });
 
   it('does not look the room up again below the sample distance, even across a boundary', () => {
@@ -121,6 +183,20 @@ describe('useExplorerPoseStore', () => {
     unsubscribe();
   });
 
+  it('notifies nobody when the same room on the same storey resolves again', () => {
+    reportPose(IN_KITCHEN);
+    const listener = vi.fn();
+    const unsubscribe = useExplorerPoseStore.subscribe(listener);
+
+    // Past the sample distance, so the room is looked up again — and found to be the same.
+    reportPose(DEEPER_IN_KITCHEN);
+    reportPose(IN_KITCHEN);
+
+    expect(currentSpace()).toEqual(makeFloorSpaceRef(GROUND_FLOOR, 'kitchen'));
+    expect(listener).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+
   it('keeps the room while the body straddles a wall', () => {
     reportPose(IN_MASTER_BEDROOM);
 
@@ -150,12 +226,13 @@ describe('useExplorerPoseStore', () => {
     expect(getLatestPose()).toBe(IN_CORRIDOR);
   });
 
-  it('forgets the pose and the room when the interior view is left', () => {
-    reportPose(IN_KITCHEN);
+  it('forgets the pose, the room and the storey when the interior view is left', () => {
+    reportPose(oneStoreyUp(IN_KITCHEN));
 
     useExplorerPoseStore.getState().clearPose();
 
-    expect(currentSpaceId()).toBeUndefined();
+    expect(currentSpace()).toBeUndefined();
+    expect(currentFloor()).toBeUndefined();
     expect(useExplorerPoseStore.getState().getLatestPose()).toBeUndefined();
   });
 

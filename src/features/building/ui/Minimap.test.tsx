@@ -2,18 +2,45 @@ import { Profiler } from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useExplorerPoseStore } from '../application/explorerPoseStore.ts';
+import { useFloorCountStore } from '../application/floorCountStore.ts';
 import { useRoomWalkStore } from '../application/roomWalkStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
 import type { EyePose } from '../domain/eyeNavigation.ts';
 import { FLOOR_PLAN } from '../domain/floorPlan/index.ts';
 import type { SpaceId } from '../domain/floorPlan/index.ts';
+import { makeFloorSpaceRef } from '../domain/floorSpace.ts';
 import { getSlabs } from '../domain/slabs.ts';
+import { MIN_FLOOR_COUNT } from '../domain/storeys.ts';
 import { INTERIOR_REGION_ID } from './hudIds.ts';
 import { Minimap } from './Minimap.tsx';
 import { MINIMAP_SAMPLE_INTERVAL_MS, getMinimapShapes } from './minimapShapes.ts';
 
+/**
+ * The storey the explorer is on in most tests.
+ *
+ * Not the ground floor: `F1-` and `Floor 1 of …` are what a minimap that ignored the storey
+ * would print anyway, so every assertion below would pass on a component that read nothing.
+ */
+const CURRENT_FLOOR = 3;
+
+/** How many storeys the stack has in most tests, so `Floor 3 of 7` has both numbers real. */
+const FLOOR_COUNT = 7;
+
+/** A second storey, to show the highlight and the name follow the viewer up the stairs. */
+const OTHER_FLOOR = 5;
+
 /** A point inside the kitchen's east rect (x 12.20–14.10, z 5.80–8.60). */
-const IN_KITCHEN: EyePose = Object.freeze({ x: 13, z: 7, yaw: -Math.PI / 2, pitch: 0 });
+const IN_KITCHEN: EyePose = Object.freeze({
+  x: 13,
+  z: 7,
+  yaw: -Math.PI / 2,
+  pitch: 0,
+  floor: CURRENT_FLOOR,
+  rise: 0,
+});
+
+/** The same spot one storey up: the same drawing, a different place. */
+const IN_KITCHEN_UPSTAIRS: EyePose = Object.freeze({ ...IN_KITCHEN, floor: OTHER_FLOOR });
 
 /** The same room, half a metre on: a pose change with no room change. */
 const FURTHER_IN_KITCHEN: EyePose = Object.freeze({ ...IN_KITCHEN, x: 13.5 });
@@ -22,16 +49,34 @@ const FURTHER_IN_KITCHEN: EyePose = Object.freeze({ ...IN_KITCHEN, x: 13.5 });
 const TURNED_IN_KITCHEN: EyePose = Object.freeze({ ...IN_KITCHEN, yaw: Math.PI / 2 });
 
 /** A point inside the corridor's first rect (x 5.60–20.20, z 4.00–5.50). */
-const IN_CORRIDOR: EyePose = Object.freeze({ x: 10, z: 4.5, yaw: 0, pitch: 0 });
+const IN_CORRIDOR: EyePose = Object.freeze({
+  x: 10,
+  z: 4.5,
+  yaw: 0,
+  pitch: 0,
+  floor: CURRENT_FLOOR,
+  rise: 0,
+});
 
 /** What the label says once the explorer stands in the kitchen facing +x. */
-const KITCHEN_SUMMARY = 'Floor minimap. You are in R11/KIT · Kitchen, facing toward side D.';
+const KITCHEN_SUMMARY =
+  'Floor 3 of 7 minimap. You are in F3-R11/KIT · Kitchen, facing toward side D.';
 
 /** What it says after the about-face, which points the eye the other way along x. */
-const TURNED_KITCHEN_SUMMARY = 'Floor minimap. You are in R11/KIT · Kitchen, facing toward side A.';
+const TURNED_KITCHEN_SUMMARY =
+  'Floor 3 of 7 minimap. You are in F3-R11/KIT · Kitchen, facing toward side A.';
 
-/** What it says in the interior view before the first room resolves. */
-const UNKNOWN_SUMMARY = 'Floor minimap. Your position on the floor is not known yet.';
+/**
+ * What it says in the interior view before the first room resolves.
+ *
+ * The storey is named even here: the pose store knows which floor the viewer is on before
+ * any room resolves, and the drawing has to say which storey it is of either way. The ground
+ * floor is the fallback, because no pose has placed the viewer yet.
+ */
+const UNKNOWN_SUMMARY = 'Floor 1 of 7 minimap. Your position on the floor is not known yet.';
+
+/** The visible chip above the drawing, saying the same storey the name opens with. */
+const FLOOR_CHIP_TEXT = 'Floor 3 of 7';
 
 /** The highlight the room the explorer is in wears. */
 const CURRENT_ROOM_CLASS = 'fill-amber-400';
@@ -149,6 +194,8 @@ describe('Minimap', () => {
     useViewStore.setState(useViewStore.getInitialState(), true);
     useRoomWalkStore.setState(useRoomWalkStore.getInitialState(), true);
     useExplorerPoseStore.setState(useExplorerPoseStore.getInitialState(), true);
+    useFloorCountStore.setState(useFloorCountStore.getInitialState(), true);
+    useFloorCountStore.getState().setFloorCount(FLOOR_COUNT);
     useExplorerPoseStore.getState().clearPose();
   });
 
@@ -209,7 +256,7 @@ describe('Minimap', () => {
     standAt(IN_KITCHEN);
 
     expect(screen.getByRole('img')).toHaveAccessibleName(
-      'Floor minimap. You are in R11/KIT · Kitchen.',
+      'Floor 3 of 7 minimap. You are in F3-R11/KIT · Kitchen.',
     );
   });
 
@@ -232,7 +279,7 @@ describe('Minimap', () => {
     runFrame(AFTER_INTERVAL_MS);
 
     expect(screen.getByRole('img')).toHaveAccessibleName(
-      'Floor minimap. You are in R07/COR · Corridor, facing toward side C.',
+      'Floor 3 of 7 minimap. You are in F3-R07/COR · Corridor, facing toward side C.',
     );
   });
 
@@ -307,20 +354,24 @@ describe('Minimap', () => {
   it('walks the explorer to a room they click', () => {
     render(<Minimap />);
     enterInterior();
+    standAt(IN_KITCHEN);
 
     fireEvent.click(roomRect('kitchen'));
 
-    expect(useRoomWalkStore.getState().target).toBe('kitchen');
+    expect(useRoomWalkStore.getState().target).toEqual(makeFloorSpaceRef(CURRENT_FLOOR, 'kitchen'));
     expect(useRoomWalkStore.getState().status).toBe('walking');
   });
 
   it('asks for the room that was clicked, not the first one', () => {
     render(<Minimap />);
     enterInterior();
+    standAt(IN_KITCHEN);
 
     fireEvent.click(roomRect('utilityRoom'));
 
-    expect(useRoomWalkStore.getState().target).toBe('utilityRoom');
+    expect(useRoomWalkStore.getState().target).toEqual(
+      makeFloorSpaceRef(CURRENT_FLOOR, 'utilityRoom'),
+    );
   });
 
   it('hands focus back to the view after a pick, so Escape still stops the walk', () => {
@@ -507,5 +558,153 @@ describe('Minimap', () => {
 
     expect(marker()).toHaveAttribute('transform', 'translate(13 7) rotate(90)');
     expect(marker()).toHaveAttribute('visibility', 'visible');
+  });
+
+  it('shows the storey above the drawing, which is the same on every floor', () => {
+    render(<Minimap />);
+    enterInterior();
+
+    standAt(IN_KITCHEN);
+
+    // The chip is the visible half of what the name opens with; the rectangles below it are
+    // identical on all seven storeys, so only these words say which one is underfoot.
+    expect(screen.getByText(FLOOR_CHIP_TEXT)).toBeInTheDocument();
+    expect(screen.getByRole('img').getAttribute('aria-label')).toContain(FLOOR_CHIP_TEXT);
+  });
+
+  it('keeps the chip out of the accessible tree, so the storey is not read twice', () => {
+    render(<Minimap />);
+    enterInterior();
+    standAt(IN_KITCHEN);
+
+    expect(screen.getByText(FLOOR_CHIP_TEXT)).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('follows the viewer up the stairs, in the chip and in the name', () => {
+    render(<Minimap />);
+    enterInterior();
+    standAt(IN_KITCHEN);
+    runFrame(FIRST_FRAME_MS);
+
+    standAt(IN_KITCHEN_UPSTAIRS);
+    runFrame(AFTER_INTERVAL_MS);
+
+    expect(
+      screen.getByText(`Floor ${String(OTHER_FLOOR)} of ${String(FLOOR_COUNT)}`),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('img')).toHaveAccessibleName(
+      `Floor ${String(OTHER_FLOOR)} of ${String(FLOOR_COUNT)} minimap. You are in F${String(OTHER_FLOOR)}-R11/KIT · Kitchen, facing toward side D.`,
+    );
+  });
+
+  it('names the storey even before the position is known', () => {
+    render(<Minimap />);
+
+    enterInterior();
+
+    // The floor is stated in both halves of the unresolved case: the drawing is of a storey
+    // whether or not a pose has placed anyone on it.
+    expect(screen.getByRole('img')).toHaveAccessibleName(UNKNOWN_SUMMARY);
+    expect(
+      screen.getByText(`Floor ${String(MIN_FLOOR_COUNT)} of ${String(FLOOR_COUNT)}`),
+    ).toBeInTheDocument();
+  });
+
+  it('says the storey of a one-storey building too', () => {
+    act(() => {
+      useFloorCountStore.getState().setFloorCount(MIN_FLOOR_COUNT);
+    });
+    render(<Minimap />);
+    enterInterior();
+
+    expect(screen.getByRole('img')).toHaveAccessibleName(
+      'Floor 1 of 1 minimap. Your position on the floor is not known yet.',
+    );
+  });
+
+  it('highlights nothing when the room resolved is on another storey', () => {
+    render(<Minimap />);
+    enterInterior();
+
+    // Both halves of the identity have to match. The plan is one plan, so `kitchen` is a
+    // room on every storey: matching the space id alone would light this drawing's kitchen
+    // while the viewer stood in another one's.
+    act(() => {
+      useExplorerPoseStore.setState({
+        currentSpace: makeFloorSpaceRef(OTHER_FLOOR, 'kitchen'),
+        currentFloor: CURRENT_FLOOR,
+      });
+    });
+
+    expect(roomRect('kitchen')).not.toHaveClass(CURRENT_ROOM_CLASS);
+  });
+
+  it('highlights the room when the storey matches as well as the space', () => {
+    render(<Minimap />);
+    enterInterior();
+
+    act(() => {
+      useExplorerPoseStore.setState({
+        currentSpace: makeFloorSpaceRef(CURRENT_FLOOR, 'kitchen'),
+        currentFloor: CURRENT_FLOOR,
+      });
+    });
+
+    for (const rect of roomRects('kitchen')) {
+      expect(rect).toHaveClass(CURRENT_ROOM_CLASS);
+    }
+  });
+
+  it('stamps the storey drawn onto the walk a click asks for', () => {
+    render(<Minimap />);
+    enterInterior();
+    standAt(IN_KITCHEN_UPSTAIRS);
+
+    fireEvent.click(roomRect('utilityRoom'));
+
+    expect(useRoomWalkStore.getState().target).toEqual(
+      makeFloorSpaceRef(OTHER_FLOOR, 'utilityRoom'),
+    );
+  });
+
+  it('walks to the ground floor before a pose has said which storey it is on', () => {
+    render(<Minimap />);
+    enterInterior();
+
+    fireEvent.click(roomRect('kitchen'));
+
+    expect(useRoomWalkStore.getState().target).toEqual(
+      makeFloorSpaceRef(MIN_FLOOR_COUNT, 'kitchen'),
+    );
+  });
+
+  it('keeps the heading live now that the storey is in the name too', () => {
+    render(<Minimap />);
+    enterInterior();
+    standAt(IN_KITCHEN);
+    runFrame(FIRST_FRAME_MS);
+    expect(screen.getByRole('img')).toHaveAccessibleName(KITCHEN_SUMMARY);
+
+    // The storey is added to the same string the heading bucket rewrites, so it must not
+    // have turned the heading back into a value frozen at the last room change.
+    standAt(TURNED_IN_KITCHEN);
+    runFrame(AFTER_INTERVAL_MS);
+
+    expect(screen.getByRole('img')).toHaveAccessibleName(TURNED_KITCHEN_SUMMARY);
+  });
+
+  it('draws one storey of rectangles however tall the stack is', () => {
+    render(<Minimap />);
+    enterInterior();
+    const atSevenStoreys = document.querySelectorAll('rect').length;
+
+    act(() => {
+      useFloorCountStore.getState().setFloorCount(MIN_FLOOR_COUNT);
+    });
+
+    // Every storey repeats the typical floor, so stacking copies of these rectangles would
+    // cost ten times the panel height and show nothing new.
+    expect(document.querySelectorAll('rect')).toHaveLength(atSevenStoreys);
+    expect(atSevenStoreys).toBe(getSlabs(FLOOR_PLAN).length);
   });
 });

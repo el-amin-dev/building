@@ -18,6 +18,14 @@
  * elsewhere, as emissive ceiling panels in the floor material palette: an emissive
  * material costs no light slot and no shader recompilation.
  *
+ * The same rule holds against the storey stepper, and is the reason nothing here reads
+ * the storey count. The height of the building reaches this module only through the
+ * {@link ExteriorFraming} it is handed: the fog range is the framing's own `fogNear` and
+ * `fogFar`, and the sun is placed at {@link getSunDistance}, a factor of that same
+ * `fogFar`. Both already grow with the stack, so a ten-storey building is lit and fogged
+ * correctly with no storey-dependent value — and, crucially, with the same three lights,
+ * so pressing the stepper never recompiles a shader.
+ *
  * No shadow maps in Part 2 (owner answer, 2026-09-11): shadows would need a light with
  * a shadow camera framing the whole floor, and their cost and quality are revisited in
  * Part 4. Without them the interior would read flat and dark, which is why the interior
@@ -85,11 +93,53 @@ export const SUN_DISTANCE_FACTOR = 0.5;
 const SKY_COLOR = '#bfdbfe';
 
 /**
- * Colour of the lower half of the hemisphere fill: the light bouncing up off the ground.
- * A muted sage, desaturated from the green ground plane, because bounced light is both
- * dimmer and less saturated than the surface it comes from.
+ * Colour of the lower half of the hemisphere fill: the light bouncing up off everything
+ * below the horizon, and the **only** light a downward-facing face receives.
+ *
+ * That last part is why this constant is not a green. A directional light never touches a
+ * face whose normal points away from it, and there are no shadow maps and no point lights,
+ * so the light reaching a soffit — the underside of a slab, of a lintel, of a stair flight —
+ * is this colour times the hemisphere intensity, plus the small white ambient term and
+ * nothing else. Whatever hue is written here is painted onto every one of those faces
+ * undiluted.
+ *
+ * Below the top storey the ceiling of a room *is* the slab of the storey above
+ * (`ui/FloorModel.tsx`), so that soffit is the largest overhead surface in the building and
+ * the most visible one in every interior view but the last. Lit by the muted sage this
+ * constant used to hold, it measured `#7c7656` looking straight up in the circulation of a
+ * three-storey stack — a dirty khaki at hue 51°, where the very same concrete seen underfoot
+ * measures `#c0b9a9` at hue 42°. Nine degrees of green is the difference between a slab
+ * soffit and olive paint.
+ *
+ * A pale warm concrete grey instead, near-neutral and light. It is still a bounce colour and
+ * still dimmer and less saturated than what it bounces off; what changed is *which* surface
+ * it is taken to bounce off. A hemisphere fill is one global approximation with no notion of
+ * being indoors, and the faces that actually depend on it are inside the building, where the
+ * light arriving at a soffit came off the screed underfoot (`ui/floorMaterials.ts`), not off
+ * the lawn. The sage was never the lawn either: the ground plane is a deep `#166534`
+ * (`ui/BuildingScene.tsx`), whose real bounce would be far darker and far greener than the
+ * sage ever was — the constant was simply green because the ground is.
+ *
+ * Measured with the same reading that found the defect, looking straight up in a stack of
+ * three: the soffit goes `#7c7656` → `#8e8066`, hue 51° → 39° against the screed's 42°, and
+ * 0.65 → 0.74 of the screed's value, so it reads as that concrete in shadow rather than as a
+ * colour of its own. The screed underfoot does not move by a single bit — `#c0b9a9` before
+ * and after — because a face whose normal points straight up takes none of the ground half at
+ * all, which is what makes this constant the surgical lever for the defect: it moves a face
+ * only as far as that face tips below the horizontal. The top storey's ceiling, the one
+ * overhead surface that is real ceiling white, comes with it, `#a3a99c` → `#b3b2ad`: it was
+ * green for exactly the same reason.
+ *
+ * What is left over is the material's own chroma, not the light's: at a soffit's luminance
+ * the same concrete is simply more saturated than it is underfoot, where the sun and the
+ * tone mapping wash it out. Chasing the screed's saturation from here would mean lighting the
+ * soffit almost as brightly as the floor, which is no longer a surface in shadow.
+ *
+ * It stays one colour for both views, and a constant: the `Sky` folder of the debug panel
+ * seeds a colour picker from it, and ADR-009 allows a control to be seeded only from a value
+ * that does not change for the life of the page.
  */
-const GROUND_BOUNCE_COLOR = '#a3b18a';
+const GROUND_BOUNCE_COLOR = '#cdc6b8';
 
 /** Colour of the sun: white with a trace of warmth, so lit faces read as daylight. */
 const SUN_COLOR = '#fff6e5';
@@ -206,7 +256,11 @@ export function getSunPosition(
  * Exported so that the debug panel can rebuild the sun's position from its own angles at
  * the very distance {@link getLightingSpec} used, instead of restating the factor.
  *
- * @param framing - The exterior framing of the floor.
+ * Derived from the framing's `fogFar`, so it scales with the building: a ten-storey stack
+ * pushes the sun proportionally further out and it stays outside the fabric, exactly as it
+ * does over the single floor. Nothing here has to know how many storeys there are.
+ *
+ * @param framing - The exterior framing of the building.
  * @returns The distance from the origin to the sun, in metres.
  */
 export function getSunDistance(framing: ExteriorFraming): number {
@@ -219,11 +273,13 @@ export function getSunDistance(framing: ExteriorFraming): number {
  * Both views carry the same three lights, the same colours and the same sun direction;
  * the interior raises the hemisphere and ambient intensities, because a roofed interior
  * with no shadow maps and no point lights would otherwise read flat and dark. Fog comes
- * from the framing, which already derives a range that never touches the building.
+ * from the framing, which already derives a range that never touches the building at any
+ * storey count.
  *
  * @param view - Which view the scene is lit for.
- * @param framing - The exterior framing of the floor, for the fog range and the scale at
- *   which the sun is placed.
+ * @param framing - The exterior framing of the building, for the fog range and the scale
+ *   at which the sun is placed; it carries the height of the stack, so nothing here reads
+ *   the storey count.
  * @returns A frozen spec, with a frozen sun position.
  * @throws RangeError when `view` is neither `'exterior'` nor `'interior'`, or when the
  *   framing's `fogFar` is not a finite positive number.

@@ -1,14 +1,32 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, MouseEvent } from 'react';
+import { useExplorerPoseStore } from '../application/explorerPoseStore.ts';
 import { useRoomWalkStore } from '../application/roomWalkStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
 import { getSpaceLabel } from '../domain/floorPlan/index.ts';
 import type { SpaceId } from '../domain/floorPlan/index.ts';
+import { makeFloorSpaceRef } from '../domain/floorSpace.ts';
+import { MIN_FLOOR_COUNT } from '../domain/storeys.ts';
 import { INTERIOR_REGION_ID, ROOM_LIST_ID } from './hudIds.ts';
 import { ROOM_TARGETS } from './roomTargets.ts';
 
-/** Accessible name of the disclosure button that opens the room list. */
+/**
+ * Accessible name of the disclosure button that opens the room list.
+ *
+ * Says no storey, and says none on purpose: the storey is on the list it opens, and two
+ * end-to-end specs match this string verbatim.
+ */
 const TRIGGER_LABEL = 'Go to room';
+
+/**
+ * Opens the accessible name of the open list, which the storey number finishes.
+ *
+ * Written here rather than taken from `getFloorLabel`, which capitalises the word for a
+ * label that stands alone (`Floor 3`). This one is mid-sentence, where `Rooms on Floor 3`
+ * would read as a proper noun; the storey *number* is still the domain's, and the minimap's
+ * chip — the place a storey is actually named to the viewer — does use the domain's wording.
+ */
+const ROOM_LIST_LABEL_PREFIX = 'Rooms on floor';
 
 /** Accessible name of the button that abandons a walk in progress. */
 const STOP_LABEL = 'Stop walking';
@@ -18,6 +36,12 @@ const CLOSE_KEY = 'Escape';
 
 /** `MouseEvent.detail` of a click fired by the keyboard (Enter or Space); pointer clicks count up from 1. */
 const KEYBOARD_CLICK_DETAIL = 0;
+
+/** The close counter before any storey change has closed an open list: nothing to do yet. */
+const NO_FLOOR_CHANGE_CLOSES = 0;
+
+/** How much one such close raises the counter, so every close is a value of its own. */
+const FLOOR_CHANGE_CLOSE_STEP = 1;
 
 /**
  * The HUD's button look, shared by the trigger and the stop button.
@@ -84,6 +108,19 @@ const ROOM_LIST_CLASS_NAME =
  * Rendered only in the interior view, like `CameraModeToggle` and `RemoteControl`: walking to
  * a room presupposes being inside the building.
  *
+ * **The rooms of the storey the viewer is on, and no other.** Every storey is the same plan,
+ * so a list of every room of every storey would be {@link ROOM_TARGETS} repeated once per
+ * floor — 220 buttons at ten storeys, 219 of which are the same twenty rooms said again. The
+ * list therefore stays twenty rooms long whatever the stack's height, and names the storey
+ * once, on the list itself.
+ *
+ * **There is deliberately no floor switcher here.** The way to change storey is the stairs:
+ * a walk is planned on one floor's reachability graph and the route follower walks it there,
+ * so `startWalkTo` cannot cross a storey in this part. A menu offering "kitchen, floor 5"
+ * would be offering something the walk cannot do — it would start a walk on the storey the
+ * viewer is standing on and label it with another one's number, which is a lie told in the
+ * accessible name. When cross-floor walking exists, this is where it goes.
+ *
  * @returns The room menu in the interior view, otherwise `null`.
  */
 export function RoomMenu() {
@@ -91,9 +128,31 @@ export function RoomMenu() {
   const isWalking = useRoomWalkStore((state) => state.status === 'walking');
   const startWalkTo = useRoomWalkStore((state) => state.startWalkTo);
   const cancelWalk = useRoomWalkStore((state) => state.cancelWalk);
+  const currentFloor = useExplorerPoseStore((state) => state.currentFloor);
   const [isOpen, setIsOpen] = useState(false);
   const [wasInterior, setWasInterior] = useState(isInterior);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+
+  /**
+   * The storey whose rooms are listed: the one the viewer is on, or the ground floor until
+   * the first pose says otherwise. The list is never labelled with a storey it is not of.
+   */
+  const shownFloor = currentFloor ?? MIN_FLOOR_COUNT;
+  const [wasFloor, setWasFloor] = useState(shownFloor);
+
+  /**
+   * How many times a storey change has closed an open list: the effect below watches this
+   * for a change rather than for a value.
+   *
+   * A counter and not a boolean, and state and not a ref, because both of the obvious
+   * shapes are wrong here. A ref written while rendering is an ESLint error
+   * (`react-hooks/refs`), and a boolean the effect had to clear would need a `setState`
+   * inside it, which is another one (`react-hooks/set-state-in-effect`). A number that only
+   * ever goes up needs no clearing: every close is a value the effect has not seen, so a
+   * viewer who goes 3 → 5 → 3 → 5 with the list open each time gets focus back all four
+   * times — which storing the storey number would have missed on the fourth.
+   */
+  const [closedByFloorChangeCount, setClosedByFloorChangeCount] = useState(NO_FLOOR_CHANGE_CLOSES);
 
   // Leaving the interior stops rendering the list without closing it, so re-entering would
   // show it open again — over a view the viewer has just come back to, and out of step with
@@ -105,6 +164,33 @@ export function RoomMenu() {
     setWasInterior(isInterior);
     setIsOpen(false);
   }
+
+  // Climbing a storey with the list open would leave the viewer reading another storey's
+  // rooms — the same twenty names, under a heading that now says the wrong floor, offering
+  // walks that start where they are standing. Closed for the same reason leaving the
+  // interior closes it, and adjusted while rendering for the same reason: no flash of a
+  // stale list, no second commit (react.dev/learn/you-might-not-need-an-effect).
+  if (wasFloor !== shownFloor) {
+    setWasFloor(shownFloor);
+    setIsOpen(false);
+    if (isOpen) {
+      setClosedByFloorChangeCount((count) => count + FLOOR_CHANGE_CLOSE_STEP);
+    }
+  }
+
+  // Closing the list unmounts whichever room button held focus, which drops focus onto
+  // `<body>` — where the keyboard has nothing to Tab from. The effect runs after the commit
+  // that removed the list, so `document.activeElement` is the honest answer to "did that
+  // close cost anyone their focus?": `<body>` means it did, and anything else means focus is
+  // somewhere the viewer put it, where moving it would be taking it from them.
+  useEffect(() => {
+    if (closedByFloorChangeCount === NO_FLOOR_CHANGE_CLOSES) {
+      return;
+    }
+    if (document.activeElement === null || document.activeElement === document.body) {
+      triggerRef.current?.focus();
+    }
+  }, [closedByFloorChangeCount]);
 
   if (!isInterior) {
     return null;
@@ -145,11 +231,11 @@ export function RoomMenu() {
    * Focus is moved before React unmounts the list, so the picked button is no longer the
    * active element by the time it goes.
    *
-   * @param spaceId - The room the viewer picked.
+   * @param spaceId - The room the viewer picked, on the storey they are standing on.
    * @returns The click handler for that room's button.
    */
   const handlePick = (spaceId: SpaceId) => (event: MouseEvent<HTMLButtonElement>) => {
-    startWalkTo(spaceId);
+    startWalkTo(makeFloorSpaceRef(shownFloor, spaceId));
     setIsOpen(false);
     returnFocus(event);
   };
@@ -186,11 +272,15 @@ export function RoomMenu() {
         </button>
       ) : null}
       {isOpen ? (
-        <ul id={ROOM_LIST_ID} className={ROOM_LIST_CLASS_NAME}>
+        <ul
+          id={ROOM_LIST_ID}
+          aria-label={`${ROOM_LIST_LABEL_PREFIX} ${String(shownFloor)}`}
+          className={ROOM_LIST_CLASS_NAME}
+        >
           {ROOM_TARGETS.map((space) => (
             <li key={space.id}>
               <button type="button" onClick={handlePick(space.id)} className={ROOM_ITEM_CLASS_NAME}>
-                {getSpaceLabel(space)}
+                {getSpaceLabel(space, shownFloor)}
               </button>
             </li>
           ))}

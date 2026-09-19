@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { SpaceId } from '../domain/floorPlan/index.ts';
+import type { FloorSpaceRef } from '../domain/floorSpace.ts';
 
 /**
  * Where a "go to room" walk stands: `idle` when nothing was asked for, `walking` while the
@@ -24,8 +24,11 @@ const REQUEST_ID_STEP = 1;
 
 /** State and actions of the "go to room" walk. */
 export interface RoomWalkState {
-  /** The room asked for; kept while `status` reports the outcome, `undefined` when idle. */
-  readonly target: SpaceId | undefined;
+  /**
+   * The room asked for, storey and all; kept while `status` reports the outcome, `undefined`
+   * when idle. A bare id would name a room on every floor rather than the one picked.
+   */
+  readonly target: FloorSpaceRef | undefined;
   /** Where the current walk stands. */
   readonly status: RoomWalkStatus;
   /**
@@ -34,8 +37,8 @@ export interface RoomWalkState {
    */
   readonly requestId: number;
 
-  /** Asks for a walk to `spaceId`. What the "Go to room" menu and the minimap call. */
-  readonly startWalkTo: (spaceId: SpaceId) => void;
+  /** Asks for a walk to `target`. What the "Go to room" menu and the minimap call. */
+  readonly startWalkTo: (target: FloorSpaceRef) => void;
   /** Abandons the walk and returns to `idle`; a no-op update returns the previous state. */
   readonly cancelWalk: () => void;
 
@@ -77,9 +80,9 @@ export const useRoomWalkStore = create<RoomWalkState>()((set) => {
     status: 'idle',
     requestId: INITIAL_REQUEST_ID,
 
-    startWalkTo: (spaceId) =>
+    startWalkTo: (target) =>
       set((state) => ({
-        target: spaceId,
+        target,
         status: 'walking',
         requestId: state.requestId + REQUEST_ID_STEP,
       })),

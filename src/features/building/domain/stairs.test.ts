@@ -12,10 +12,18 @@ import {
   rectContainsRect,
   rectsOverlap,
 } from './planGeometry.ts';
-import type { PlanRect } from './planGeometry.ts';
+import type { PlanPoint, PlanRect, RectSide } from './planGeometry.ts';
 import { STAIRS } from './sourceOfTruth/plan.ts';
-import { getStairsLayout, STAIRS_SPEC } from './stairs.ts';
-import type { StairPiece, StairsLayout } from './stairs.ts';
+import {
+  getStairsLayout,
+  getStairwell,
+  getStairwellEnds,
+  STAIRS_SPEC,
+  THIS_STOREY_PLACEMENT,
+} from './stairs.ts';
+import type { StairPiece, StairsLayout, StairwellEnds } from './stairs.ts';
+import { getRampRise, STAIR_REACH_RISERS } from './stairwell.ts';
+import type { StairRamp } from './stairwell.ts';
 
 /**
  * What this file used to assert, and why those assertions are deleted rather
@@ -143,8 +151,38 @@ const NOT_A_NUMBER = Number.NaN;
 const INFINITE = Number.POSITIVE_INFINITY;
 const NON_POSITIVE_HEIGHT = 0;
 
+/**
+ * A storey to place the stair on, in metres: not a whole number of this
+ * storey's 1.80 m half-storeys, so a level that added the placement twice, or
+ * not at all, cannot land on the right answer by accident.
+ */
+const PLACEMENT_LEVEL = 3;
+/** Ramps a middle storey's stairwell offers: two out of this storey, two into the next. */
+const MIDDLE_RAMP_COUNT = 4;
+/** Landings it offers: this floor, a turn each side, and the floor above and below. */
+const MIDDLE_LANDING_COUNT = 5;
+/** Ramps a stairwell with one blocked end offers: one storey's worth. */
+const ONE_END_RAMP_COUNT = 2;
+/** Landings it offers: this floor, the turn on the open side, and the floor beyond it. */
+const ONE_END_LANDING_COUNT = 3;
+/** Ramps a stairwell blocked at both ends offers: none at all. */
+const BLOCKED_RAMP_COUNT = 0;
+/** Landings it offers: this floor's arrival landing, and nothing else. */
+const BLOCKED_LANDING_COUNT = 1;
+/** A stack to place a storey in, for {@link getStairwellEnds}. */
+const FLOOR_COUNT = 3;
+/** The storey between the other two. */
+const MIDDLE_FLOOR = 2;
+/** The bottom storey, which nothing stands under. */
+const GROUND_FLOOR = 1;
+/** Both ends open: the ends a middle storey has. */
+const OPEN_ENDS: StairwellEnds = Object.freeze({ hasAbove: true, hasBelow: true });
+/** The reach of the real stair, in metres: 1.5 risers of 3.00 / 18. */
+const REAL_REACH = 0.25;
+
 const LAYOUT = getStairsLayout(FLOOR_PLAN, SYNTHETIC_HEIGHTS);
 const DEFAULT_LAYOUT = getStairsLayout(FLOOR_PLAN);
+const WELL = getStairwell(LAYOUT, SYNTHETIC_HEIGHTS, OPEN_ENDS);
 
 /**
  * Builds a copy of the plan whose `stairs` space is a single given rect.
@@ -284,6 +322,82 @@ async function layoutWithPieceOrder(order: readonly string[]): Promise<StairsLay
     vi.doUnmock('./sourceOfTruth/plan.ts');
     vi.resetModules();
   }
+}
+
+/** The face opposite each face of a rectangle. */
+const FACING: Readonly<Record<RectSide, RectSide>> = Object.freeze({
+  minX: 'maxX',
+  maxX: 'minX',
+  minZ: 'maxZ',
+  maxZ: 'minZ',
+});
+
+/**
+ * Returns the coordinate one face of a rectangle lies on.
+ *
+ * @param rect - The rectangle.
+ * @param side - Which face to locate.
+ * @returns The x of a `minX`/`maxX` face, the z of a `minZ`/`maxZ` face, in metres.
+ */
+function faceOf(rect: PlanRect, side: RectSide): number {
+  switch (side) {
+    case 'minX':
+      return rect.minX;
+    case 'maxX':
+      return rect.maxX;
+    case 'minZ':
+      return rect.minZ;
+    default:
+      return rect.maxZ;
+  }
+}
+
+/**
+ * Returns the landing whose face lies against one face of a flight.
+ *
+ * @param layout - The layout to search.
+ * @param flight - The flight.
+ * @param side - The face of the flight the landing should meet.
+ * @returns The landing lying against it.
+ * @throws Error when no landing does, which fails the test loudly rather than
+ *   comparing a level against `undefined`.
+ */
+function landingAgainst(layout: StairsLayout, flight: StairPiece, side: RectSide): StairPiece {
+  const landing = layout.pieces.find(
+    (piece) =>
+      !piece.isFlight &&
+      Math.abs(faceOf(piece.rect, FACING[side]) - faceOf(flight.rect, side)) <= LENGTH_TOLERANCE,
+  );
+  if (landing === undefined) {
+    throw new Error(`no landing lies against the ${side} face of the flight "${flight.name}"`);
+  }
+  return landing;
+}
+
+/**
+ * Tells whether two rectangles are the same rectangle.
+ *
+ * @param a - One rectangle.
+ * @param b - The other.
+ * @returns `true` when all four faces agree within {@link LENGTH_TOLERANCE}.
+ */
+function sameRect(a: PlanRect, b: PlanRect): boolean {
+  return (['minX', 'maxX', 'minZ', 'maxZ'] as const).every(
+    (side) => Math.abs(faceOf(a, side) - faceOf(b, side)) <= LENGTH_TOLERANCE,
+  );
+}
+
+/**
+ * Returns the point at a given coordinate along a ramp's run, across its middle.
+ *
+ * @param ramp - The ramp.
+ * @param along - The coordinate on its run axis, in metres.
+ * @returns A point on the ramp.
+ */
+function onRun(ramp: StairRamp, along: number): PlanPoint {
+  return ramp.runAxis === 'x'
+    ? { x: along, z: (ramp.rect.minZ + ramp.rect.maxZ) * HALF }
+    : { x: (ramp.rect.minX + ramp.rect.maxX) * HALF, z: along };
 }
 
 describe('stairs', () => {
@@ -755,6 +869,267 @@ describe('stairs', () => {
 
     it('accepts the real plan and heights unchanged', () => {
       expect(() => getStairsLayout(FLOOR_PLAN)).not.toThrow();
+    });
+  });
+
+  describe('the storey the stair is placed on', () => {
+    const placed = getStairsLayout(FLOOR_PLAN, SYNTHETIC_HEIGHTS, { level: PLACEMENT_LEVEL });
+
+    it('defaults to this floor, measured from itself', () => {
+      expect(THIS_STOREY_PLACEMENT).toEqual({ level: NONE });
+      expect(Object.isFrozen(THIS_STOREY_PLACEMENT)).toBe(true);
+      expect(LAYOUT.level).toBe(NONE);
+      expect(getStairsLayout(FLOOR_PLAN, SYNTHETIC_HEIGHTS, THIS_STOREY_PLACEMENT)).toEqual(LAYOUT);
+    });
+
+    it('takes the plan when called with nothing at all', () => {
+      expect(getStairsLayout()).toEqual(DEFAULT_LAYOUT);
+    });
+
+    it('shifts every level by the placement and no plan coordinate at all', () => {
+      // The test that kills the private `THIS_STOREY_LEVEL = 0`: a module that
+      // still measured from its own constant would report this floor's levels
+      // three metres below where the storey is.
+      expect(placed.level).toBe(PLACEMENT_LEVEL);
+      expect(placed.lowestLevel).toBeCloseTo(
+        LAYOUT.lowestLevel + PLACEMENT_LEVEL,
+        PRECISION_DIGITS,
+      );
+      expect(placed.highestLevel).toBeCloseTo(
+        LAYOUT.highestLevel + PLACEMENT_LEVEL,
+        PRECISION_DIGITS,
+      );
+      placed.pieces.forEach((piece, index) => {
+        const here = LAYOUT.pieces[index];
+
+        expect(piece.rect).toEqual(here.rect);
+        piece.surfaces.forEach((surface, which) => {
+          expect(surface.lowLevel).toBeCloseTo(
+            here.surfaces[which].lowLevel + PLACEMENT_LEVEL,
+            PRECISION_DIGITS,
+          );
+          expect(surface.highLevel).toBeCloseTo(
+            here.surfaces[which].highLevel + PLACEMENT_LEVEL,
+            PRECISION_DIGITS,
+          );
+        });
+      });
+      placed.steps.forEach((step, index) => {
+        expect(step.rect).toEqual(LAYOUT.steps[index].rect);
+        expect(step.top).toBeCloseTo(LAYOUT.steps[index].top + PLACEMENT_LEVEL, PRECISION_DIGITS);
+      });
+      expect(placed.bay).toEqual(LAYOUT.bay);
+      expect(placed.landingRect).toEqual(LAYOUT.landingRect);
+      expect(placed.blockedRects).toEqual(LAYOUT.blockedRects);
+      expect(placed.arrival).toEqual(LAYOUT.arrival);
+      expect(placed.riser).toBe(LAYOUT.riser);
+    });
+
+    it('rises half a storey per flight, two flights to the storey', () => {
+      expect(LAYOUT.halfStorey * TURN_SURFACE_COUNT).toBeCloseTo(
+        SYNTHETIC_HEIGHTS.floorToFloor,
+        PRECISION_DIGITS,
+      );
+      expect(DEFAULT_LAYOUT.halfStorey * TURN_SURFACE_COUNT).toBeCloseTo(
+        FLOOR_HEIGHTS.floorToFloor,
+        PRECISION_DIGITS,
+      );
+      expect(LAYOUT.halfStorey).toBeCloseTo(SYNTHETIC_HALF_STOREY, PRECISION_DIGITS);
+    });
+
+    it.each([
+      ['the real heights', FLOOR_HEIGHTS],
+      ['the synthetic ones', SYNTHETIC_HEIGHTS],
+    ])('leaves no gap between one storey and the next, under %s', (_label, heights) => {
+      // The stack invariant: the top of one storey's stair IS the bottom of the
+      // next one's, exactly, or a walker crossing between them steps into a gap.
+      [NONE, PLACEMENT_LEVEL].forEach((level) => {
+        const below = getStairsLayout(FLOOR_PLAN, heights, { level });
+        const above = getStairsLayout(FLOOR_PLAN, heights, {
+          level: level + heights.floorToFloor,
+        });
+
+        expect(below.highestLevel).toBe(above.lowestLevel);
+      });
+    });
+
+    it('rejects a placement that is not a finite level', () => {
+      const call = (): unknown =>
+        getStairsLayout(FLOOR_PLAN, SYNTHETIC_HEIGHTS, { level: NOT_A_NUMBER });
+
+      expect(call).toThrow(RangeError);
+      expect(call).toThrow('placement level');
+    });
+  });
+
+  describe('which end of a flight is its low end', () => {
+    it('names no low end on a landing', () => {
+      LAYOUT.pieces
+        .filter((piece) => !piece.isFlight)
+        .forEach((landing) => {
+          expect(landing.lowEndSide).toBeUndefined();
+        });
+    });
+
+    it('starts each flight on the landing it is at that flight’s low level', () => {
+      // One assertion catching a mirrored flight. Nothing in `surfaces` says
+      // which END of the rectangle is low — that is what makes a flight a height
+      // function rather than a rectangle at two levels — so the only check that
+      // the published side is the right one is that the landing lying against it
+      // is at the level the flight starts from.
+      const flights = LAYOUT.pieces.filter((piece) => piece.isFlight);
+
+      expect(flights).toHaveLength(TURN_SURFACE_COUNT);
+      flights.forEach((flight) => {
+        const side = flight.lowEndSide;
+        if (side === undefined) {
+          throw new Error(`the flight "${flight.name}" names no low end`);
+        }
+        const landing = landingAgainst(LAYOUT, flight, side);
+
+        expect(faceOf(flight.rect, side)).toBeCloseTo(
+          faceOf(landing.rect, FACING[side]),
+          PRECISION_DIGITS,
+        );
+        expect(landing.surfaces.map((surface) => surface.lowLevel)).toContain(
+          flight.surfaces[0].lowLevel,
+        );
+      });
+    });
+
+    it('starts the climbing flight on this floor and the arriving one on the turn', () => {
+      expect(pieceNamed(LAYOUT, 'flightA').lowEndSide).toBe('maxX');
+      expect(pieceNamed(LAYOUT, 'flightB').lowEndSide).toBe('minX');
+    });
+  });
+
+  describe('the stairwell a walker sees', () => {
+    it('reads four flights and five landings on a middle storey', () => {
+      // Not two and three. From the turn half a storey up the climb continues
+      // onto the ARRIVING flight of the storey above, which this storey's layout
+      // does not contain and never will: it is this storey's own flight lifted
+      // by one floor-to-floor, because the stair repeats.
+      expect(WELL.ramps).toHaveLength(MIDDLE_RAMP_COUNT);
+      expect(WELL.landings).toHaveLength(MIDDLE_LANDING_COUNT);
+      expect(WELL.bay).toEqual(LAYOUT.bay);
+    });
+
+    it.each([
+      ['the top of the stack', { hasAbove: false, hasBelow: true }, ONE_END_RAMP_COUNT],
+      ['the bottom of it', { hasAbove: true, hasBelow: false }, ONE_END_RAMP_COUNT],
+    ])('stops the walk at %s', (_label, ends, ramps) => {
+      // The owner's decision: the geometry is still DRAWN through every storey,
+      // and only traversal stops. Nothing here touches `blockedRects` or the
+      // steps, which are unchanged.
+      const well = getStairwell(LAYOUT, SYNTHETIC_HEIGHTS, ends);
+
+      expect(well.ramps).toHaveLength(ramps);
+      expect(well.landings).toHaveLength(ONE_END_LANDING_COUNT);
+      expect(well.landings.map((landing) => landing.level)).toContain(LAYOUT.level);
+    });
+
+    it('offers a lone storey nothing but the floor it stands on', () => {
+      const well = getStairwell(LAYOUT, SYNTHETIC_HEIGHTS, { hasAbove: false, hasBelow: false });
+
+      expect(well.ramps).toHaveLength(BLOCKED_RAMP_COUNT);
+      expect(well.landings).toHaveLength(BLOCKED_LANDING_COUNT);
+      expect(well.landings[0].level).toBe(LAYOUT.level);
+      expect(well.landings[0].rect).toEqual(LAYOUT.landingRect);
+    });
+
+    it('tiles a storey either side of this floor, end to end', () => {
+      // The continuity invariant, which fails for every plausible off-by-one in
+      // the translation: each flight starts exactly where the one below it ends.
+      const climbed = WELL.ramps.toSorted((a, b) => a.lowLevel - b.lowLevel);
+      const storey = SYNTHETIC_HEIGHTS.floorToFloor;
+
+      expect(climbed[0].lowLevel).toBeCloseTo(LAYOUT.level - storey, PRECISION_DIGITS);
+      expect(climbed.at(-1)?.highLevel).toBeCloseTo(LAYOUT.level + storey, PRECISION_DIGITS);
+      climbed.forEach((ramp, index) => {
+        expect(ramp.highLevel - ramp.lowLevel).toBeCloseTo(LAYOUT.halfStorey, PRECISION_DIGITS);
+        if (index > NONE) {
+          expect(ramp.lowLevel).toBeCloseTo(climbed[index - 1].highLevel, PRECISION_DIGITS);
+        }
+      });
+      expect(WELL.ramps.map((ramp) => ramp.lowLevel)).toEqual(climbed.map((ramp) => ramp.lowLevel));
+    });
+
+    it('alternates the two flights, climbing one strip then the other', () => {
+      const strips = WELL.ramps.map(
+        (ramp) =>
+          LAYOUT.pieces.find((piece) => sameRect(piece.rect, ramp.rect))?.name ?? 'not in the bay',
+      );
+
+      expect(strips).toEqual(['flightA', 'flightB', 'flightA', 'flightB']);
+    });
+
+    it('lists the landings lowest first, a turn between every pair of floors', () => {
+      const levels = WELL.landings.map((landing) => landing.level);
+      const storey = SYNTHETIC_HEIGHTS.floorToFloor;
+
+      expect(levels).toEqual(levels.toSorted((a, b) => a - b));
+      levels.forEach((level, index) => {
+        expect(level).toBeCloseTo(
+          LAYOUT.level - storey + index * LAYOUT.halfStorey,
+          PRECISION_DIGITS,
+        );
+      });
+    });
+
+    it('lets a body step one riser and a half between surfaces', () => {
+      expect(WELL.reach).toBeCloseTo(STAIR_REACH_RISERS * LAYOUT.riser, PRECISION_DIGITS);
+      expect(getStairwell(DEFAULT_LAYOUT, FLOOR_HEIGHTS, OPEN_ENDS).reach).toBeCloseTo(
+        REAL_REACH,
+        PRECISION_DIGITS,
+      );
+    });
+
+    it('hands the walker from a flight to the landing at exactly its level', () => {
+      // What `lowEndSide` is published for, end to end: the rise a flight
+      // reports at its own low face is the level of the landing it starts from,
+      // to the last bit, so a body stepping off the landing does not fall.
+      const here = WELL.ramps.filter((ramp) => ramp.lowLevel === LAYOUT.level);
+
+      expect(here).toHaveLength(ONE_SURFACE);
+      WELL.ramps.forEach((ramp) => {
+        expect(getRampRise(ramp, onRun(ramp, ramp.lowAt))).toBe(ramp.lowLevel);
+        expect(getRampRise(ramp, onRun(ramp, ramp.highAt))).toBe(ramp.highLevel);
+      });
+    });
+
+    it('freezes the stairwell it returns', () => {
+      expect(Object.isFrozen(WELL)).toBe(true);
+      expect(Object.isFrozen(WELL.ramps)).toBe(true);
+      expect(Object.isFrozen(WELL.landings)).toBe(true);
+      WELL.ramps.forEach((ramp) => {
+        expect(Object.isFrozen(ramp)).toBe(true);
+      });
+      WELL.landings.forEach((landing) => {
+        expect(Object.isFrozen(landing)).toBe(true);
+      });
+    });
+
+    it.each([
+      ['a floor-to-floor of zero', NON_POSITIVE_HEIGHT, /floorToFloor/u],
+      ['a non-finite floor-to-floor', NOT_A_NUMBER, /floorToFloor/u],
+      ['heights the layout was not built on', FLOOR_HEIGHTS.floorToFloor, /would not meet itself/u],
+    ])('rejects %s', (_label, floorToFloor, message) => {
+      const call = (): unknown =>
+        getStairwell(LAYOUT, { ...SYNTHETIC_HEIGHTS, floorToFloor }, OPEN_ENDS);
+
+      expect(call).toThrow(RangeError);
+      expect(call).toThrow(message);
+    });
+  });
+
+  describe('getStairwellEnds', () => {
+    it.each([
+      ['the ground floor of a stack', GROUND_FLOOR, FLOOR_COUNT, false, true],
+      ['a middle storey', MIDDLE_FLOOR, FLOOR_COUNT, true, true],
+      ['the top storey', FLOOR_COUNT, FLOOR_COUNT, true, false],
+      ['a building of one storey', GROUND_FLOOR, GROUND_FLOOR, false, false],
+    ])('reads %s', (_label, floor, floorCount, hasBelow, hasAbove) => {
+      expect(getStairwellEnds(floor, floorCount)).toEqual({ hasAbove, hasBelow });
     });
   });
 });

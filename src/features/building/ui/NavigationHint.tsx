@@ -13,7 +13,7 @@ const NAVIGATION_HINT_TEXT =
 const NAVIGATION_HINT_SHORT_TEXT = 'Move with the pad below · or W A S D · Escape stops';
 /** Full key description read by assistive technology in place of the compact summary. */
 const NAVIGATION_HINT_DESCRIPTION =
-  'W moves forward, S moves back, A steps left, D steps right, J turns left, L turns right, I looks up, K looks down. V switches between first-person and third-person view. Keys follow their positions on a QWERTY keyboard. Every movement is also available on the on-screen remote control in the HUD, which needs no keyboard: hold one of its buttons with a pointer or a finger, or with Space or Enter while the button has focus. The "Go to room" button in the HUD lists every room of the floor and walks you to the one you pick, through the doors; that walk stops when you activate the "Stop walking" button beside it, when you press Escape while the view has focus, or as soon as you move yourself with any key or pad button. In the exterior view the left and right arrows orbit the camera around the building, the up and down arrows tilt it, and the plus and minus keys zoom in and out; the on-screen camera pad offers those same six movements. Press Tab to reach the view toggle, then the Third person toggle, then "Go to room", then the remote control buttons. After using the Third person toggle with the keyboard, press Shift+Tab twice to return to the view.';
+  'W moves forward, S moves back, A steps left, D steps right, J turns left, L turns right, I looks up, K looks down. V switches between first-person and third-person view. Keys follow their positions on a QWERTY keyboard. Every movement is also available on the on-screen remote control in the HUD, which needs no keyboard: hold one of its buttons with a pointer or a finger, or with Space or Enter while the button has focus. The "Go to room" button in the HUD lists every room of the floor and walks you to the one you pick, through the doors; that walk stops when you activate the "Stop walking" button beside it, when you press Escape while the view has focus, or as soon as you move yourself with any key or pad button. In the exterior view the left and right arrows orbit the camera around the building, the up and down arrows tilt it, and the plus and minus keys zoom in and out; the on-screen camera pad offers those same six movements. The floor control in the HUD stacks the building: "Remove a floor" and "Add a floor" step how many storeys are displayed, which the reading between those two buttons gives as 01 to 10, and the stairs are how you walk from one storey to the next. Press Tab to reach the view toggle, then the Third person toggle, then "Remove a floor", then "Add a floor", then "Go to room", then the remote control buttons. After using the Third person toggle with the keyboard, press Shift+Tab twice to return to the view.';
 
 /** HUD panel classes, worn while the visible summary is shown. */
 const PANEL_CLASS_NAME =
@@ -38,7 +38,9 @@ const HIDDEN_CLASS_NAME = 'sr-only';
  *   It spells out which key moves, turns, looks or switches the camera, notes that the
  *   keys follow their QWERTY positions, says that the remote control offers the same
  *   movements and how it is held, describes the "Go to room" route and the three ways a
- *   walk stops, names the exterior orbit, tilt and zoom keys and their camera pad, and
+ *   walk stops, names the exterior orbit, tilt and zoom keys and their camera pad,
+ *   introduces the floor stepper — what its two buttons do, what the reading between
+ *   them says, and that the stairs are the way between the storeys it stacks — and
  *   says how to reach the HUD controls with Tab and how to return to the view with
  *   Shift+Tab after using the Third person toggle (the region precedes the HUD in the Tab
  *   order). Only that toggle is covered by the Shift+Tab note: Enter on the view toggle

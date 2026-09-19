@@ -10,8 +10,10 @@
  *
  * The camera never passes through anything the body cannot pass through: it is
  * pulled in to the clearance the real collision field (`collision.ts`) leaves
- * behind the person, measured for a circle of `wallMargin` rather than of the
- * body radius, plus a vertical range between the floor and the ceiling. When
+ * behind the person — the one `getSurfaceField` picks for the body's own stance,
+ * so the camera and the walker are never bounded by different models of the
+ * stair bay — measured for a circle of `wallMargin` rather than of the body
+ * radius, plus a vertical range above the storey the body stands on. When
  * that clearance is too small to see the body (e.g. with the person's back to a
  * wall), the camera rises toward overhead instead, looking down at the head. It
  * never goes below head height (see {@link MIN_ELEVATION_RADIANS}).
@@ -23,14 +25,24 @@
  * What it must never do is pass through masonry, and it cannot: a window leaves
  * a sill block that is solid at body height, so the blocker list is unbroken
  * across a window and the camera stops at it exactly as the body does.
+ *
+ * **Inside the stair bay the plan alone is not enough.** The shaft is open on
+ * the plan — that is what lets the camera keep a real distance behind a body on
+ * a flight — but it is not open overhead: half a storey above a half-landing
+ * stands the flight the walker is about to climb one storey up, and a landing
+ * one storey up is a slab. The plan field knows nothing of either, so the camera
+ * is additionally stopped where it would rise through the stair
+ * ({@link getStairCeilingExit}).
  */
 
 import { getClearance } from './collision.ts';
-import type { PlanVector, WalkField } from './collision.ts';
-import { EYE_NAVIGATION_CONFIG } from './eyeNavigation.ts';
-import type { EyePose } from './eyeNavigation.ts';
+import type { PlanVector } from './collision.ts';
+import { EYE_NAVIGATION_CONFIG, getFootLevel, getSurfaceField } from './eyeNavigation.ts';
+import type { EyePose, WalkSurface } from './eyeNavigation.ts';
 import { PERSON_SPEC } from './person.ts';
-import type { PlanPoint } from './planGeometry.ts';
+import type { PlanPoint, PlanRect } from './planGeometry.ts';
+import { getRampRise } from './stairwell.ts';
+import type { Stairwell } from './stairwell.ts';
 
 /** A point in scene space, metres (x, z on the plan; y up). */
 export interface ScenePoint {
@@ -44,11 +56,17 @@ export interface ScenePoint {
 
 /** Where the follow camera may go: the same blockers the body is stopped by, plus a vertical range. */
 export interface CameraField {
-  /** The collision field of the storey; only its blockers are consulted. */
-  readonly walk: WalkField;
-  /** Lowest camera height, in metres. */
+  /** The storey being walked: where the body may stand, and its stairwell. */
+  readonly surface: WalkSurface;
+  /**
+   * Lowest camera height ABOVE THE BODY'S STOREY DATUM, in metres.
+   *
+   * The range is storey-RELATIVE, so one field describes the camera's band on
+   * whichever storey the body is on: {@link getThirdPersonCamera} adds
+   * `getFootLevel(pose)` to both ends of it.
+   */
   readonly minY: number;
-  /** Highest camera height, in metres. */
+  /** Highest, likewise relative. */
   readonly maxY: number;
 }
 
@@ -120,6 +138,8 @@ const VERTICAL_RAY_COSINE = 1e-12;
  * whether the frame is filled by the back of a head.
  */
 const DISTANCE_TOLERANCE_METRES = 1e-9;
+/** No storey pitch at all: a stair that repeats by this is read only where it stands. */
+const NO_REPEAT = 0;
 
 /**
  * Lowest elevation of the third-person camera, in radians: level with the head.
@@ -155,24 +175,29 @@ export interface ThirdPersonCamera {
 }
 
 /**
- * Camera field of a storey: its walk field, plus the vertical range between floor and ceiling.
+ * Camera field of a storey: its walking surface, plus the vertical range between floor and ceiling.
  *
  * The plan is NOT narrowed here, because there is nothing to narrow: the blockers already are
  * where the camera may not go, and the margin is applied per query by {@link getClearance} —
  * which is what lets the camera follow through a doorway that no single room rectangle contains.
  *
- * @param walk - The collision field of the storey (see `getWalkField`). Captured, not copied; it
- *   is already deeply frozen by `makeWalkField`.
+ * The vertical range is relative to the storey the body stands on, not to storey 1: the same
+ * field therefore serves a body on any storey of the stack, and the datum is added per
+ * placement by {@link getThirdPersonCamera}.
+ *
+ * @param surface - The walking surface of the storey (see `WalkSurface`): both its plan fields
+ *   and its stairwell. Captured, not copied; its fields are already deeply frozen by
+ *   `makeWalkField`.
  * @param ceilingHeight - Height of the ceiling above the finished floor, in metres.
  * @param config - Camera tuning; defaults to {@link THIRD_PERSON_CAMERA_CONFIG}. Only
  *   `wallMargin` is read.
  * @returns A frozen field with `minY` = `config.wallMargin` and `maxY` =
- *   `ceilingHeight − config.wallMargin`.
+ *   `ceilingHeight − config.wallMargin`, both above the body's storey datum.
  * @throws RangeError when `ceilingHeight` is not finite, or when the margin leaves no vertical
  *   range at all (`ceilingHeight` at most twice the margin).
  */
 export function createCameraField(
-  walk: WalkField,
+  surface: WalkSurface,
   ceilingHeight: number,
   config: ThirdPersonCameraConfig = THIRD_PERSON_CAMERA_CONFIG,
 ): CameraField {
@@ -183,13 +208,17 @@ export function createCameraField(
       `ceilingHeight must be finite and leave room above the ${String(config.wallMargin)} m margin, got ${String(ceilingHeight)}`,
     );
   }
-  return Object.freeze({ walk, minY, maxY });
+  return Object.freeze({ surface, minY, maxY });
 }
 
 /**
  * Follow camera behind the person.
  *
- * - target = (pose.x, clamp(config.targetHeight, minY, maxY), pose.z). The plan is taken
+ * Every height below is measured from `base` = `getFootLevel(pose)`, the level of the body's
+ * feet: the field's `minY`/`maxY` are the camera's band above the storey the body stands on, so
+ * the camera rides up the stack with the walker instead of staying on storey 1.
+ *
+ * - target = (pose.x, base + clamp(config.targetHeight, minY, maxY), pose.z). The plan is taken
  *   verbatim: the pose is legal by construction — collision put it there — so clamping it into a
  *   rectangle would fight the collision model rather than protect it;
  * - requested elevation e0: pitch maps piecewise-linearly so that pitch 0 gives
@@ -200,21 +229,33 @@ export function createCameraField(
  * - direction(e) (unit, from target toward camera) = (sin yaw · cos e, sin e, cos yaw · cos e),
  *   i.e. backward on the plan;
  * - H = the plan clearance straight behind the person, for a circle of `config.wallMargin`
- *   (see {@link getClearance}): `Infinity` when nothing is behind, `0` when the camera's own
- *   circle already overlaps a blocker;
- * - exit(e) = min(H / cos e, the travel at which the ray leaves the vertical range), the
- *   distance at which the ray meets a blocker, the floor or the ceiling. The plan term is
- *   `Infinity` for a ray that is vertical to within {@link VERTICAL_RAY_COSINE}, which covers no
- *   plan distance for any blocker to lie in;
+ *   (see {@link getClearance}), read off the field `getSurfaceField` picks for the body's own
+ *   stance: `Infinity` when nothing is behind, `0` when the camera's own circle already overlaps
+ *   a blocker. **Asking the surface rather than the plan field is what keeps the camera behind a
+ *   body on the stairs**: mid-flight the body stands inside what the plan field calls a hole, so
+ *   that field would answer `0`, send the camera overhead and hide the model — a viewer would
+ *   watch the top of a head climb the stair. The bay-released field answers with the real room
+ *   the shaft leaves;
+ * - exit(e) = min(H / cos e, the travel at which the ray leaves the vertical range
+ *   [base + minY, base + maxY], {@link getStairCeilingExit}), the distance at which the ray
+ *   meets a blocker, the floor, the ceiling plane or the stair standing over it. The plan term
+ *   is `Infinity` for a ray that is vertical to within {@link VERTICAL_RAY_COSINE}, which covers
+ *   no plan distance for any blocker to lie in;
  * - when min(followDistance, exit(e0)) ≥ t (`minBodyVisibleDistance`), e = e0. Otherwise the
- *   camera rises: with Vc = maxY − target.y, eMin = acos(min(1, H / t)) is the lowest elevation
+ *   camera rises: with Vc = base + maxY − target.y, eMin = acos(min(1, H / t)) is the lowest elevation
  *   at which the plan allows distance t and eCeil = asin(min(1, Vc / t)) the highest the ceiling
  *   allows. If max(e0, eMin) ≤ min(maxElevation, eCeil), e = max(e0, eMin), the lowest elevation
  *   at which the body is visible; otherwise e = clamp(atan2(Vc, H), e0, maxElevation), the
  *   elevation giving the largest distance;
  * - distance = max(0, min(followDistance, exit(e))); position = target + direction(e) · distance,
- *   with the height clamped into [minY, maxY] to absorb floating-point rounding, which only ever
- *   moves it by a negligible amount.
+ *   with the height clamped into [base + minY, base + maxY] to absorb floating-point rounding,
+ *   which only ever moves it by a negligible amount.
+ *
+ * Inside the open shaft the band is the band of the storey the body's feet are on, so a camera
+ * behind a body part way up a flight can sit above that storey's nominal ceiling plane. That is
+ * correct for a shaft that is open through the slab: there is no ceiling plane there to stay
+ * under. What the shaft does have is the stair itself, half a storey and a whole storey above,
+ * and {@link getStairCeilingExit} is what stops the camera rising through it.
  *
  * @param pose - The person's pose. Not mutated.
  * @param field - Where the camera may go (see {@link createCameraField}). Not mutated.
@@ -226,10 +267,14 @@ export function getThirdPersonCamera(
   field: CameraField,
   config: ThirdPersonCameraConfig = THIRD_PERSON_CAMERA_CONFIG,
 ): ThirdPersonCamera {
-  const { walk, minY, maxY } = field;
+  const { surface, minY, maxY } = field;
+  /** Level of the body's feet: the datum the field's vertical range is measured from. */
+  const base = getFootLevel(pose);
+  const floorLevel = base + minY;
+  const ceilingLevel = base + maxY;
   const target: ScenePoint = {
     x: pose.x,
-    y: clamp(config.targetHeight, minY, maxY),
+    y: base + clamp(config.targetHeight, minY, maxY),
     z: pose.z,
   };
 
@@ -239,21 +284,41 @@ export function getThirdPersonCamera(
   /** Behind the person on the plan, unit: the opposite of forward `(−sin yaw, −cos yaw)`. */
   const back: PlanVector = { x: sinYaw, z: cosYaw };
   /** Plan clearance straight behind the person, for a circle of the camera's margin. */
-  const planRoom = getClearance(planTarget, back, walk, config.wallMargin);
+  const planRoom = getClearance(
+    planTarget,
+    back,
+    getSurfaceField(surface, planTarget, config.wallMargin),
+    config.wallMargin,
+  );
 
-  /** Distance along the ray at elevation `e` before it meets a blocker, the floor or the ceiling. */
+  /** What the stair carries over this placement, on the datum its own levels are measured from. */
+  const overhead: StairCeilingQuery = {
+    well: surface.well,
+    floorToFloor: surface.floorToFloor,
+    storeyDatum: base - pose.rise,
+    origin: target,
+    back,
+    margin: config.wallMargin,
+    cap: config.followDistance,
+  };
+
+  /** Distance along the ray at elevation `e` before it meets a blocker, the floor or a ceiling. */
   const exitAt = (e: number): number => {
     const horizontal = Math.cos(e);
     const planExit =
       Math.abs(horizontal) < VERTICAL_RAY_COSINE ? Number.POSITIVE_INFINITY : planRoom / horizontal;
-    return Math.min(planExit, getAxisExit(target.y, Math.sin(e), minY, maxY));
+    return Math.min(
+      planExit,
+      getAxisExit(target.y, Math.sin(e), floorLevel, ceilingLevel),
+      getStairCeilingExit(overhead, e),
+    );
   };
 
   const requested = getRequestedElevation(pose.pitch, config);
   const threshold = config.minBodyVisibleDistance;
   let elevation = requested;
   if (Math.min(config.followDistance, exitAt(requested)) < threshold) {
-    const ceilingRoom = maxY - target.y;
+    const ceilingRoom = ceilingLevel - target.y;
     const lowestVisible = Math.acos(Math.min(1, planRoom / threshold));
     const highestUnderCeiling = Math.asin(Math.min(1, ceilingRoom / threshold));
     const raised = Math.max(requested, lowestVisible);
@@ -272,7 +337,7 @@ export function getThirdPersonCamera(
   return {
     position: {
       x: target.x + directionX * distance,
-      y: clamp(target.y + directionY * distance, minY, maxY),
+      y: clamp(target.y + directionY * distance, floorLevel, ceilingLevel),
       z: target.z + directionZ * distance,
     },
     target,
@@ -286,8 +351,8 @@ export function getThirdPersonCamera(
  *
  * The threshold is **inclusive**: at exactly `minBodyVisibleDistance` the body already covers
  * the centre of the frame, which is the distance the raise settles on whenever the plan leaves
- * it no more room — the interior start pose among them — so hiding there is what lets the
- * viewer see the room from just behind the head. A distance within rounding slack
+ * it no more room, so hiding there is what lets the viewer see the room from just behind the
+ * head rather than from inside it. A distance within rounding slack
  * (`DISTANCE_TOLERANCE_METRES`) above the threshold is hidden too, so the last bit of a raise
  * aimed at the threshold cannot show the model again.
  *
@@ -319,6 +384,279 @@ function getRequestedElevation(pitch: number, config: ThirdPersonCameraConfig): 
       ? baseElevation - ratio * (maxElevation - baseElevation)
       : baseElevation + ratio * (MIN_ELEVATION_RADIANS - baseElevation);
   return clamp(elevation, MIN_ELEVATION_RADIANS, maxElevation);
+}
+
+/**
+ * A walking surface of the stairwell read as a ceiling: where it stands, and how high.
+ *
+ * `stairwell.ts` describes a flight and a landing differently — one is a height function over
+ * its footprint, the other a level — because a walker asks them different questions. A camera
+ * underneath asks both the same one, "how high are you over this point", so they are flattened
+ * to one shape here rather than branched on at every step of the exit.
+ */
+interface StairSoffit {
+  /** Footprint of the surface, in plan coordinates. */
+  readonly rect: PlanRect;
+  /**
+   * Level of the surface over a point, in metres above the storey datum.
+   *
+   * `undefined` outside the footprint, exactly as `getRampRise` answers.
+   */
+  readonly levelAt: (point: PlanPoint) => number | undefined;
+  /** Lowest level the surface reaches anywhere on its footprint, on the same datum. */
+  readonly lowest: number;
+}
+
+/** A range of distances along the camera's ray, in metres. */
+interface RaySpan {
+  /** Where the range starts, in metres from the target. */
+  readonly from: number;
+  /** Where it ends, likewise. Never less than `from`. */
+  readonly to: number;
+}
+
+/**
+ * Reads every surface of a stairwell as a soffit.
+ *
+ * @param well - The stairwell, whose levels are rises above its storey's finished floor.
+ * @returns One {@link StairSoffit} per flight and per landing, in the stairwell's own order.
+ */
+function readSoffits(well: Stairwell): readonly StairSoffit[] {
+  return [
+    ...well.ramps.map((ramp) => ({
+      rect: ramp.rect,
+      levelAt: (point: PlanPoint): number | undefined => getRampRise(ramp, point),
+      lowest: Math.min(ramp.lowLevel, ramp.highLevel),
+    })),
+    ...well.landings.map((landing) => ({
+      rect: landing.rect,
+      levelAt: (): number => landing.level,
+      lowest: landing.level,
+    })),
+  ];
+}
+
+/**
+ * Range of ray distances over which the ray's plan point lies inside a rectangle.
+ *
+ * @param origin - Where the ray starts, in metres.
+ * @param step - Plan travel per metre of ray, i.e. the backward unit vector times cos(elevation).
+ *   A ray that is vertical to within {@link VERTICAL_RAY_COSINE} has a `step` of about zero and
+ *   so stays over one point for its whole length.
+ * @param rect - The rectangle, in plan coordinates.
+ * @param cap - Longest ray distance of interest, in metres: the range is clipped to it so that a
+ *   ray standing still on the plan still answers with a finite range.
+ * @returns The range, clipped to [0, `cap`], or `undefined` when the ray never crosses the
+ *   rectangle within it.
+ */
+function getRectSpan(
+  origin: PlanPoint,
+  step: PlanVector,
+  rect: PlanRect,
+  cap: number,
+): RaySpan | undefined {
+  const onX = getAxisSpan(origin.x, step.x, rect.minX, rect.maxX);
+  const onZ = getAxisSpan(origin.z, step.z, rect.minZ, rect.maxZ);
+  if (onX === undefined || onZ === undefined) {
+    return undefined;
+  }
+  const from = Math.max(0, onX.from, onZ.from);
+  const to = Math.min(cap, onX.to, onZ.to);
+  return to < from ? undefined : { from, to };
+}
+
+/**
+ * Range of ray distances over which one plan coordinate stays within [min, max].
+ *
+ * @param origin - The coordinate the ray starts at, in metres.
+ * @param direction - Travel on this axis per metre of ray.
+ * @param min - Lower bound of the range, in metres.
+ * @param max - Upper bound.
+ * @returns The range, unbounded on both ends for a ray that does not move on this axis and
+ *   starts inside it; `undefined` when such a ray starts outside it.
+ */
+function getAxisSpan(
+  origin: number,
+  direction: number,
+  min: number,
+  max: number,
+): RaySpan | undefined {
+  if (Math.abs(direction) < DIRECTION_EPSILON) {
+    return origin < min || origin > max
+      ? undefined
+      : { from: Number.NEGATIVE_INFINITY, to: Number.POSITIVE_INFINITY };
+  }
+  const atMin = (min - origin) / direction;
+  const atMax = (max - origin) / direction;
+  return { from: Math.min(atMin, atMax), to: Math.max(atMin, atMax) };
+}
+
+/**
+ * Distance along the ray at which it would rise through the stair standing over it.
+ *
+ * **The rule: the camera never rises through the stair.** A flight or a landing over the
+ * camera is a ceiling, and the plan cannot see it — inside the bay the plan is a released
+ * field where the whole shaft is floor, so it answers "open, back up freely" for a space that
+ * is open underfoot and solid overhead. This is the one bound that reads the stairwell's own
+ * geometry, and it bounds the vertical: the ray is stopped where it would cross a walking
+ * surface from below, less the wall margin the camera keeps from everything else.
+ *
+ * Only a crossing FROM BELOW counts. A ray already over a surface when it reaches that
+ * surface's footprint is flying over the flight rather than under it — which is exactly what
+ * the camera does behind a body on the arrival landing, looking down over the stair — and
+ * nothing there is between it and the body.
+ *
+ * Two details decide which surfaces are consulted:
+ *
+ * - **the stair repeats every storey**, so the surfaces over a body high up a flight belong to
+ *   the storey above and are not in this storey's stairwell at all. Each surface is therefore
+ *   also read at whole storey pitches above itself, as many as the ray can reach. Reading the
+ *   repeats off a WALKABLE stairwell is sound because the stair is DRAWN through every storey
+ *   whether or not a walker may climb it (`getStairwellEnds`): a top storey's stairwell carries
+ *   no surface above its own floor, but the flights standing there are still built, and they
+ *   are the repeats of the ones below;
+ * - **the footprint is shrunk by the margin**, so a surface is a ceiling only where the
+ *   camera's own circle is wholly under it. The two flights of a half-turn meet along one line,
+ *   and a camera travelling down that line is threading the open middle of the shaft rather
+ *   than passing under either flight; growing the footprint instead would close the shaft that
+ *   the pull-back from the arrival landing needs.
+ *
+ * @param query - The placement being measured (see {@link StairCeilingQuery}).
+ * @param elevation - Elevation of the ray above the horizontal, in radians.
+ * @returns The distance from the target at which the ray meets the stair overhead, in metres,
+ *   or `Infinity` when nothing of the stair stands over the ray within `query.cap`.
+ */
+function getStairCeilingExit(query: StairCeilingQuery, elevation: number): number {
+  const { well, floorToFloor, storeyDatum, origin, back, margin, cap } = query;
+  const horizontal = Math.cos(elevation);
+  const rise = Math.sin(elevation);
+  const step: PlanVector = { x: back.x * horizontal, z: back.z * horizontal };
+  /** Highest a surface can stand and still be crossed: the ray never passes `cap` or the band. */
+  const reach = origin.y + rise * cap + margin;
+
+  return readSoffits(well).reduce((nearest, soffit) => {
+    const lifts = getStoreyLifts(storeyDatum + soffit.lowest, reach, floorToFloor);
+    return lifts.reduce(
+      (closest, lift) => Math.min(closest, getSoffitExit(soffit, lift, query, step, rise)),
+      nearest,
+    );
+  }, Number.POSITIVE_INFINITY);
+}
+
+/**
+ * Whole-storey lifts at which a surface still stands low enough for the ray to reach it.
+ *
+ * @param foot - Level of the surface's lowest point, in metres: a surface whose lowest point is
+ *   already over the ray cannot be crossed anywhere on its footprint.
+ * @param reach - Highest level the ray reaches, in metres.
+ * @param pitch - Storey pitch the stair repeats by, in metres; a pitch of {@link NO_REPEAT} or
+ *   less leaves the surface to be read where it stands and nowhere else.
+ * @returns `0` first, then one lift per repeat that stays within reach; empty when the surface
+ *   already stands above the ray.
+ */
+function getStoreyLifts(foot: number, reach: number, pitch: number): readonly number[] {
+  if (foot > reach) {
+    return [];
+  }
+  if (pitch <= NO_REPEAT) {
+    return [NO_REPEAT];
+  }
+  return Array.from({ length: Math.floor((reach - foot) / pitch) + 1 }, (_, step) => step * pitch);
+}
+
+/** Everything {@link getStairCeilingExit} needs to know about one camera placement. */
+interface StairCeilingQuery {
+  /** The stairwell standing over the body, with its levels on its storey's datum. */
+  readonly well: Stairwell;
+  /** Storey pitch, in metres: how far up the stair repeats itself. */
+  readonly floorToFloor: number;
+  /** Level of the finished floor the stairwell's levels are measured from, in metres. */
+  readonly storeyDatum: number;
+  /** Where the ray starts: the point the camera looks at. */
+  readonly origin: ScenePoint;
+  /** Behind the person on the plan, unit. */
+  readonly back: PlanVector;
+  /** Distance the camera keeps from the stair, in metres. */
+  readonly margin: number;
+  /** Longest ray distance of interest, in metres: the camera is never further than this. */
+  readonly cap: number;
+}
+
+/**
+ * Distance at which the ray crosses one surface of the stair, lifted by whole storeys.
+ *
+ * Over the stretch of ray that lies under the surface's footprint, both the ray's height and
+ * the surface's level are linear in the distance travelled, so the crossing is one division
+ * rather than a search: the surface is sampled at the two ends of that stretch and interpolated
+ * between them.
+ *
+ * The margin is kept in whichever direction the ray runs out of room first. A ray that reaches
+ * the soffit's level before it reaches the footprint is not yet under the soffit but beside it,
+ * so it is stopped at the footprint's own edge — which the shrinking has already set a margin
+ * back from the real one — rather than at a level it never had to clear.
+ *
+ * @param soffit - The surface, read as a ceiling.
+ * @param lift - Whole storeys the surface is raised by, in metres.
+ * @param query - The placement being measured.
+ * @param step - Plan travel per metre of ray.
+ * @param rise - Height gained per metre of ray, i.e. sin(elevation).
+ * @returns The distance from the target, in metres, or `Infinity` when the ray stays clear of
+ *   the surface — because it misses the footprint, because it never catches up with a surface
+ *   climbing at least as fast as it does, or because it is already over the surface where it
+ *   reaches it, which is a camera flying over the flight rather than passing under it.
+ */
+function getSoffitExit(
+  soffit: StairSoffit,
+  lift: number,
+  query: StairCeilingQuery,
+  step: PlanVector,
+  rise: number,
+): number {
+  const { origin, margin, storeyDatum, cap } = query;
+  const shrunk = shrinkRect(soffit.rect, margin);
+  if (shrunk === undefined) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const span = getRectSpan(origin, step, shrunk, cap);
+  if (span === undefined) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const levelFrom = soffit.levelAt(planPointAt(origin, step, span.from));
+  const levelTo = soffit.levelAt(planPointAt(origin, step, span.to));
+  if (levelFrom === undefined || levelTo === undefined) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const run = span.to - span.from;
+  const climb = run > 0 ? (levelTo - levelFrom) / run : 0;
+  const gain = rise - climb;
+  if (gain <= 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+  if (origin.y + rise * span.from >= storeyDatum + levelFrom + lift) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const at = (storeyDatum + levelFrom + lift - margin - climb * span.from - origin.y) / gain;
+  return at <= span.to ? Math.max(at, span.from) : Number.POSITIVE_INFINITY;
+}
+
+/** Where the ray's plan point is after travelling `distance` metres. */
+function planPointAt(origin: PlanPoint, step: PlanVector, distance: number): PlanPoint {
+  return { x: origin.x + step.x * distance, z: origin.z + step.z * distance };
+}
+
+/**
+ * Shrinks a rectangle inward by the same distance on every face.
+ *
+ * @param rect - The rectangle to shrink.
+ * @param by - Distance each face moves inward, in metres.
+ * @returns The shrunken rectangle, or `undefined` when the distance leaves nothing of it.
+ */
+function shrinkRect(rect: PlanRect, by: number): PlanRect | undefined {
+  const minX = rect.minX + by;
+  const maxX = rect.maxX - by;
+  const minZ = rect.minZ + by;
+  const maxZ = rect.maxZ - by;
+  return minX > maxX || minZ > maxZ ? undefined : { minX, maxX, minZ, maxZ };
 }
 
 /**

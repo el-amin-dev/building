@@ -1,6 +1,7 @@
 import { Canvas } from '@react-three/fiber';
 import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
+import { useFloorCountStore } from '../application/floorCountStore.ts';
 import { useRoomWalkStore } from '../application/roomWalkStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
 import { FLOOR_HEIGHTS } from '../domain/heights.ts';
@@ -17,7 +18,23 @@ import { useKeyAction } from './useKeyAction.ts';
 import { ViewTransition } from './ViewTransition.tsx';
 
 const CAMERA_NEAR = 0.1;
-const CAMERA_FAR = 500;
+/**
+ * Far clipping distance of the scene camera, in metres.
+ *
+ * 800, where it was 500 while one storey was drawn. The fog of the exterior view ends at
+ * the framing's far distance, which already reaches roughly 365 m for a single storey seen
+ * through a narrow viewport, and grows with the height of the stack: at ten storeys it goes
+ * past 500, and anything the fog still expects to shade would be clipped away before it
+ * could be — the building would simply end in mid-air as the count went up.
+ *
+ * It is a written number rather than a derived one because {@link CAMERA_OPTIONS} is handed
+ * to `<Canvas>` once, at mount: three.js reads it to build the camera and nothing re-reads
+ * it when the storey count changes, so a value derived from the live count would only ever
+ * be the value at mount. 800 clears the ten-storey fog far distance with room to spare, and
+ * `useExteriorFraming`'s tests pin `fogFar < CAMERA_FAR` so the pair cannot drift apart
+ * silently. Exported for that test.
+ */
+export const CAMERA_FAR = 800;
 /**
  * Camera settings; the position and orientation are set by the active camera controls.
  *
@@ -127,6 +144,11 @@ interface SceneContentProps {
  * (through `SceneLighting`), the side of the ground plane, and — inside
  * `ExteriorCameraControls` — the orbit target, the start position and the zoom limits.
  *
+ * This is also the one place inside the canvas that subscribes to the storey count. It is
+ * read here and passed down as a prop so that `FloorModel` stays a pure function of what it
+ * is handed — a component that reads a store cannot be rendered with a count in a test, and
+ * the count is the whole subject of what it draws.
+ *
  * `ViewTransition` is mounted here for the whole life of the scene, outside the view
  * ternary, because it is the one thing that has to survive a change of view: it owns the
  * camera while the travel between the two runs, and the controls it replaces are exactly
@@ -137,6 +159,7 @@ interface SceneContentProps {
  */
 function SceneContent({ isInterior, isTravelling, regionRef }: SceneContentProps) {
   const framing = useExteriorFraming();
+  const floorCount = useFloorCountStore((state) => state.floorCount);
 
   return (
     <>
@@ -150,7 +173,7 @@ function SceneContent({ isInterior, isTravelling, regionRef }: SceneContentProps
         <meshStandardMaterial color={GROUND_COLOR} />
       </mesh>
 
-      <FloorModel showCeilings={isInterior} />
+      <FloorModel showCeilings={isInterior} floorCount={floorCount} />
 
       <ViewTransition />
 

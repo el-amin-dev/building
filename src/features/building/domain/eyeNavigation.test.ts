@@ -7,17 +7,24 @@ import {
   EYE_ACTIONS,
   EYE_KEY_BINDINGS,
   EYE_NAVIGATION_CONFIG,
+  getEyeLevel,
+  getFootLevel,
   getIntentFromActions,
   getMovementIntent,
+  getSurfaceField,
   isEyeNavigationKey,
+  placeInStack,
   stepEyePose,
   wrapAngle,
 } from './eyeNavigation.ts';
-import type { EyeAction, EyePose, EyeStep, MovementIntent } from './eyeNavigation.ts';
+import type { EyeAction, EyePose, EyeStep, MovementIntent, WalkSurface } from './eyeNavigation.ts';
+import { FLOOR_HEIGHTS } from './heights.ts';
 import { PERSON_SPEC } from './person.ts';
 import { LENGTH_TOLERANCE, makeRect } from './planGeometry.ts';
 import type { PlanRect } from './planGeometry.ts';
+import { getStairsLayout, getStairwell } from './stairs.ts';
 import type { StairsArrival } from './stairs.ts';
+import type { Stairwell } from './stairwell.ts';
 
 /** Radius of the body the navigation moves, in metres. */
 const BODY_RADIUS = EYE_NAVIGATION_CONFIG.bodyRadius;
@@ -94,8 +101,57 @@ const STEP = 0.05;
 const MANY_STEPS = 200;
 const QUARTER_TURN = Math.PI / 2;
 
+/** Storey pitch of the stack being walked, in metres. */
+const FLOOR_TO_FLOOR = FLOOR_HEIGHTS.floorToFloor;
+
+/** The storey a synthetic pose stands on unless the case says otherwise. */
+const GROUND_FLOOR = 1;
+
+/** The real stair of the typical floor, and the surfaces it offers a walker. */
+const REAL_LAYOUT = getStairsLayout();
+const REAL_WELL: Stairwell = getStairwell(REAL_LAYOUT, FLOOR_HEIGHTS, {
+  hasAbove: true,
+  hasBelow: true,
+});
+
+/** How far a body may step up or down to reach a surface, in metres: the real stair's. */
+const REACH = REAL_WELL.reach;
+
+/**
+ * A bay far from every synthetic test room, so a plain-floor case never meets a
+ * stair: the surfaces below are then the flat storey the old tests walked.
+ */
+const FAR_AWAY = 1000;
+const NO_STAIR_WELL: Stairwell = Object.freeze({
+  bay: makeRect(FAR_AWAY, FAR_AWAY + 1, FAR_AWAY, FAR_AWAY + 1),
+  ramps: [],
+  landings: [],
+  reach: REACH,
+});
+
+/**
+ * Wraps a plan field as a walking surface.
+ *
+ * @param field - The field outside the bay.
+ * @param well - The stairwell; none anywhere near, by default.
+ * @param bayField - The field inside the bay; the same one, by default.
+ * @returns The surface `stepEyePose` walks.
+ */
+function surfaceOf(
+  field: WalkField,
+  well: Stairwell = NO_STAIR_WELL,
+  bayField: WalkField = field,
+): WalkSurface {
+  return { field, bayField, well, floorToFloor: FLOOR_TO_FLOOR };
+}
+
+/** The square test room as a surface, with no stair in it. */
+const ROOM_SURFACE: WalkSurface = surfaceOf(ROOM_FIELD);
+const PARTITIONED_SURFACE: WalkSurface = surfaceOf(PARTITIONED_FIELD);
+const DOORWAY_SURFACE: WalkSurface = surfaceOf(DOORWAY_FIELD);
+
 const IDLE: MovementIntent = { move: 0, strafe: 0, turn: 0, look: 0 };
-const ORIGIN_POSE: EyePose = { x: 0, z: 0, yaw: 0, pitch: 0 };
+const ORIGIN_POSE: EyePose = { x: 0, z: 0, yaw: 0, pitch: 0, floor: GROUND_FLOOR, rise: 0 };
 
 function intent(partial: Partial<MovementIntent>): MovementIntent {
   return { ...IDLE, ...partial };
@@ -105,25 +161,25 @@ function pose(partial: Partial<EyePose> = {}): EyePose {
   return { ...ORIGIN_POSE, ...partial };
 }
 
-/** Steps the pose once in a field, defaulting to the empty square room. */
+/** Steps the pose once on a surface, defaulting to the empty square room. */
 function walk(
   from: EyePose,
   moves: Partial<MovementIntent>,
   dtSeconds: number = STEP,
-  field: WalkField = ROOM_FIELD,
+  surface: WalkSurface = ROOM_SURFACE,
 ): EyeStep {
-  return stepEyePose(from, intent(moves), dtSeconds, field);
+  return stepEyePose(from, intent(moves), dtSeconds, surface);
 }
 
 /** Walks until the body stops making progress, and returns where it ended up. */
 function walkUntilStopped(
   from: EyePose,
   moves: Partial<MovementIntent>,
-  field: WalkField,
+  surface: WalkSurface,
 ): EyePose {
   let current = from;
   for (let i = 0; i < MANY_STEPS; i += 1) {
-    current = walk(current, moves, EYE_NAVIGATION_CONFIG.maxStepSeconds, field).pose;
+    current = walk(current, moves, EYE_NAVIGATION_CONFIG.maxStepSeconds, surface).pose;
   }
   return current;
 }
@@ -131,6 +187,109 @@ function walkUntilStopped(
 function displacement(from: EyePose, to: EyePose): number {
   return Math.hypot(to.x - from.x, to.z - from.z);
 }
+
+/**
+ * The real stair as a surface: inside the bay every footprint of the stair is
+ * floor and nothing blocks the plan, outside it the whole bay is the hole the
+ * stair hangs in. Only blockers are consulted, so the outside field needs no
+ * floor rectangles of its own.
+ */
+const STAIR_SURFACE: WalkSurface = surfaceOf(
+  makeWalkField([], [REAL_LAYOUT.bay]),
+  REAL_WELL,
+  makeWalkField([REAL_LAYOUT.bay], []),
+);
+
+/** Where a person lands on the ground storey of the real stair. */
+const STAIR_START: EyePose = createArrivalPose(REAL_LAYOUT.arrival, GROUND_FLOOR);
+
+/** The flight climbed out of a storey: the ramp whose low end is that storey's own floor. */
+const [FLIGHT_UP] = REAL_WELL.ramps.filter((ramp) => Math.abs(ramp.lowLevel) <= LENGTH_TOLERANCE);
+
+/** One frame of a scripted walk, in seconds: the longest step the navigation simulates. */
+const FRAME_SECONDS = EYE_NAVIGATION_CONFIG.maxStepSeconds;
+
+/** Frames a stance is held for to prove it is a stance and not a wobble. */
+const IDLE_FRAMES = 100;
+
+/** The four headings the scripted walks use; forward is `(−sin yaw, −cos yaw)`. */
+const TOWARD_MINUS_Z = 0;
+const TOWARD_PLUS_Z = Math.PI;
+const TOWARD_MINUS_X = QUARTER_TURN;
+const TOWARD_PLUS_X = -QUARTER_TURN;
+
+/** One leg of a scripted walk: a heading, and how many frames to hold it. */
+interface Leg {
+  /** The heading walked, in radians. */
+  readonly yaw: number;
+  /** How many frames of `move: +1` to walk on it. */
+  readonly frames: number;
+}
+
+/** What a scripted walk did: where it ended up, and every step it took getting there. */
+interface Walked {
+  /** The pose the walk ended at. */
+  readonly pose: EyePose;
+  /** Every step of the walk, in order. */
+  readonly steps: readonly EyeStep[];
+}
+
+/**
+ * Walks a scripted route: each leg faces a heading and holds `move: +1`.
+ *
+ * The heading is set on the pose rather than steered with the turn intent, so
+ * the route is exactly reproducible and every assertion is about the climb
+ * rather than about how well the turn was timed.
+ *
+ * @param from - Where the walk starts.
+ * @param legs - The legs to walk, in order.
+ * @param surface - The surface walked.
+ * @returns The final pose and every step taken.
+ */
+function walkLegs(from: EyePose, legs: readonly Leg[], surface: WalkSurface): Walked {
+  const steps: EyeStep[] = [];
+  let current = from;
+  for (const leg of legs) {
+    current = { ...current, yaw: leg.yaw };
+    for (let frame = 0; frame < leg.frames; frame += 1) {
+      const step = stepEyePose(current, intent({ move: 1 }), FRAME_SECONDS, surface);
+      steps.push(step);
+      current = step.pose;
+    }
+  }
+  return { pose: current, steps };
+}
+
+/** Holds a pose still for a while and returns where it ends up. */
+function standStill(at: EyePose, surface: WalkSurface): EyePose {
+  let current = at;
+  for (let frame = 0; frame < IDLE_FRAMES; frame += 1) {
+    current = stepEyePose(current, IDLE, FRAME_SECONDS, surface).pose;
+  }
+  return current;
+}
+
+/**
+ * Up one storey of the real stair: off the arrival landing onto flight A, west
+ * up flight A, south across the half-landing, then east up flight B and onto the
+ * landing of the storey above. The half-turn is why it takes four legs.
+ */
+const CLIMB: readonly Leg[] = [
+  { yaw: TOWARD_MINUS_Z, frames: 4 },
+  { yaw: TOWARD_MINUS_X, frames: 20 },
+  { yaw: TOWARD_PLUS_Z, frames: 8 },
+  { yaw: TOWARD_PLUS_X, frames: 18 },
+];
+
+/** The legs of {@link CLIMB} that end on the half-landing, halfway up. */
+const HALFWAY_UP: readonly Leg[] = CLIMB.slice(0, 3);
+
+/** Down one storey: the same half-turn walked the other way. */
+const DESCENT: readonly Leg[] = [
+  { yaw: TOWARD_MINUS_X, frames: 18 },
+  { yaw: TOWARD_MINUS_Z, frames: 8 },
+  { yaw: TOWARD_PLUS_X, frames: 18 },
+];
 
 /** An action that does not exist, as an on-screen control could send it by mistake. */
 const UNKNOWN_ACTION = 'jump' as unknown as EyeAction;
@@ -335,16 +494,24 @@ describe('eyeNavigation', () => {
     const STAIR_ARRIVAL: StairsArrival = { x: 5.1, z: 5, yaw: -QUARTER_TURN };
 
     it('stands on the stairs arrival point, looking level', () => {
-      const start = createArrivalPose(STAIR_ARRIVAL);
+      const start = createArrivalPose(STAIR_ARRIVAL, GROUND_FLOOR);
 
       expect(start.x).toBe(STAIR_ARRIVAL.x);
       expect(start.z).toBe(STAIR_ARRIVAL.z);
       expect(start.pitch).toBe(0);
     });
 
+    it('stands on the storey it is told to, on that storey’s own finished floor', () => {
+      const third = createArrivalPose(STAIR_ARRIVAL, 3);
+
+      expect(third.floor).toBe(3);
+      expect(third.rise).toBe(0);
+      expect(getFootLevel(third)).toBe(2 * FLOOR_TO_FLOOR);
+    });
+
     // The forward vector is asserted, not assumed: it is the module's (−sin yaw, −cos yaw).
     it('faces +x from the stairs arrival, straight down the corridor', () => {
-      const { yaw } = createArrivalPose(STAIR_ARRIVAL);
+      const { yaw } = createArrivalPose(STAIR_ARRIVAL, GROUND_FLOOR);
 
       expect(yaw).toBeCloseTo(-QUARTER_TURN);
       expect(-Math.sin(yaw)).toBeCloseTo(1);
@@ -355,14 +522,14 @@ describe('eyeNavigation', () => {
       const arrival = Object.freeze({ ...STAIR_ARRIVAL });
       const snapshot = { ...arrival };
 
-      const raised = createArrivalPose(arrival);
+      const raised = createArrivalPose(arrival, GROUND_FLOOR);
 
       expect(arrival).toEqual(snapshot);
       expect(raised).not.toBe(arrival);
     });
 
     it('wraps a heading that lies outside (-π, π]', () => {
-      const { yaw } = createArrivalPose({ x: 0, z: 0, yaw: Math.PI + QUARTER_TURN });
+      const { yaw } = createArrivalPose({ x: 0, z: 0, yaw: Math.PI + QUARTER_TURN }, GROUND_FLOOR);
 
       expect(yaw).toBeGreaterThan(-Math.PI);
       expect(yaw).toBeLessThanOrEqual(Math.PI);
@@ -370,8 +537,8 @@ describe('eyeNavigation', () => {
     });
 
     it('returns a fresh object on each call', () => {
-      const first = createArrivalPose(STAIR_ARRIVAL);
-      const second = createArrivalPose(STAIR_ARRIVAL);
+      const first = createArrivalPose(STAIR_ARRIVAL, GROUND_FLOOR);
+      const second = createArrivalPose(STAIR_ARRIVAL, GROUND_FLOOR);
 
       expect(second).not.toBe(first);
       expect(second).toEqual(first);
@@ -504,7 +671,7 @@ describe('eyeNavigation', () => {
     });
 
     it('stops at a wall, not at a rectangle edge', () => {
-      const end = walkUntilStopped(pose({ z: 2 }), { move: 1 }, PARTITIONED_FIELD);
+      const end = walkUntilStopped(pose({ z: 2 }), { move: 1 }, PARTITIONED_SURFACE);
 
       expect(end.z).toBeCloseTo(PARTITION_STOP_Z);
       // The floor rectangle runs on to −5: the partition, not an edge, is what stopped it.
@@ -512,7 +679,7 @@ describe('eyeNavigation', () => {
     });
 
     it('walks through a doorway left in that same wall', () => {
-      const end = walkUntilStopped(pose({ z: 2 }), { move: 1 }, DOORWAY_FIELD);
+      const end = walkUntilStopped(pose({ z: 2 }), { move: 1 }, DOORWAY_SURFACE);
 
       expect(end.z).toBeLessThan(PARTITION_MIN_Z);
       expect(end.z).toBeCloseTo(-WALK_LIMIT);
@@ -673,6 +840,245 @@ describe('eyeNavigation', () => {
 
     it('is frozen', () => {
       expect(Object.isFrozen(EYE_NAVIGATION_CONFIG)).toBe(true);
+    });
+  });
+
+  describe('getFootLevel and getEyeLevel', () => {
+    it.each([
+      ['the ground storey', 1, 0, 0, 1.68],
+      ['the third storey', 3, 0, 6, 7.68],
+      ['the second storey, half a storey down the stair', 2, -1.5, 1.5, 3.18],
+    ] as const)('stands on %s with the feet at %d m', (_label, floor, rise, feet, eyes) => {
+      const standing = pose({ floor, rise });
+
+      expect(getFootLevel(standing)).toBe(feet);
+      expect(getEyeLevel(standing)).toBeCloseTo(eyes);
+    });
+
+    it('puts the eyes exactly one person above the feet, whatever the storey', () => {
+      const standing = pose({ floor: 4, rise: 0.75 });
+
+      expect(getEyeLevel(standing)).toBe(getFootLevel(standing) + PERSON_SPEC.eyeHeight);
+    });
+
+    it('measures a storey of the stack, not a storey of its own', () => {
+      const tall = { floorToFloor: 4, wall: 3.6, door: 2.1, railing: 1.1 };
+
+      expect(getFootLevel(pose({ floor: 3 }), tall)).toBe(2 * tall.floorToFloor);
+    });
+  });
+
+  describe('getSurfaceField', () => {
+    /** A point on the plan at the depth of the bay, some distance west of its face. */
+    const westOfBay = (distance: number) => ({
+      x: REAL_LAYOUT.bay.minX - distance,
+      z: REAL_LAYOUT.arrival.z,
+    });
+
+    it('hands out the bay field inside the bay', () => {
+      expect(getSurfaceField(STAIR_SURFACE, REAL_LAYOUT.arrival, BODY_RADIUS)).toBe(
+        STAIR_SURFACE.bayField,
+      );
+    });
+
+    it('hands out the bay field a body radius before the bay, so nothing catches', () => {
+      expect(getSurfaceField(STAIR_SURFACE, westOfBay(BODY_RADIUS / 2), BODY_RADIUS)).toBe(
+        STAIR_SURFACE.bayField,
+      );
+    });
+
+    it('hands out the plan field further out than a body radius', () => {
+      expect(getSurfaceField(STAIR_SURFACE, westOfBay(BODY_RADIUS * 2), BODY_RADIUS)).toBe(
+        STAIR_SURFACE.field,
+      );
+    });
+
+    it('reads the radius as well as the point: a wider body changes over sooner', () => {
+      const point = westOfBay(BODY_RADIUS * 2);
+
+      expect(getSurfaceField(STAIR_SURFACE, point, BODY_RADIUS)).toBe(STAIR_SURFACE.field);
+      expect(getSurfaceField(STAIR_SURFACE, point, BODY_RADIUS * 3)).toBe(STAIR_SURFACE.bayField);
+    });
+  });
+
+  describe('stepEyePose on the real stair', () => {
+    it('arrives on the storey above, exactly, having promoted once', () => {
+      const climb = walkLegs(STAIR_START, CLIMB, STAIR_SURFACE);
+
+      expect(climb.pose.floor).toBe(GROUND_FLOOR + 1);
+      expect(climb.pose.rise).toBe(0);
+      expect(getFootLevel(climb.pose)).toBe(FLOOR_TO_FLOOR);
+      expect(climb.steps.filter((step) => step.storeyChanged)).toHaveLength(1);
+    });
+
+    it('is never blocked on the way up: the half-turn neither traps nor wedges', () => {
+      const climb = walkLegs(STAIR_START, CLIMB, STAIR_SURFACE);
+
+      expect(climb.steps.filter((step) => step.blocked)).toHaveLength(0);
+    });
+
+    it('climbs continuously, never more than a body can reach in one frame', () => {
+      const climb = walkLegs(STAIR_START, CLIMB, STAIR_SURFACE);
+      const total = climb.steps.reduce((sum, step) => sum + step.climbed, 0);
+
+      expect(total).toBeCloseTo(FLOOR_TO_FLOOR);
+      for (const step of climb.steps) {
+        expect(Math.abs(step.climbed)).toBeLessThanOrEqual(REACH);
+      }
+    });
+
+    it('comes back down exactly, promoting once the other way', () => {
+      const top = walkLegs(STAIR_START, CLIMB, STAIR_SURFACE).pose;
+
+      const descent = walkLegs(top, DESCENT, STAIR_SURFACE);
+
+      expect(descent.pose.floor).toBe(GROUND_FLOOR);
+      expect(descent.pose.rise).toBe(0);
+      expect(getFootLevel(descent.pose)).toBe(0);
+      expect(descent.steps.filter((step) => step.storeyChanged)).toHaveLength(1);
+    });
+
+    it('turns on the half-landing without promoting, half a storey up', () => {
+      const halfway = walkLegs(STAIR_START, HALFWAY_UP, STAIR_SURFACE);
+
+      expect(halfway.pose.floor).toBe(GROUND_FLOOR);
+      expect(getFootLevel(halfway.pose)).toBe(FLOOR_TO_FLOOR / 2);
+      expect(halfway.steps.filter((step) => step.storeyChanged)).toHaveLength(0);
+    });
+
+    it.each([
+      ['the landing it was promoted onto', CLIMB],
+      ['the half-landing halfway up', HALFWAY_UP],
+    ] as const)('stands still on %s, frame after frame', (_label, legs) => {
+      const stance = walkLegs(STAIR_START, legs, STAIR_SURFACE).pose;
+
+      const after = standStill(stance, STAIR_SURFACE);
+
+      expect(after.floor).toBe(stance.floor);
+      expect(after.rise).toBe(stance.rise);
+      expect(after.x).toBe(stance.x);
+      expect(after.z).toBe(stance.z);
+    });
+
+    it('refuses to leave the bay from halfway up the stair', () => {
+      const halfway = walkLegs(STAIR_START, HALFWAY_UP, STAIR_SURFACE).pose;
+      expect(Math.abs(halfway.rise)).toBeGreaterThan(REACH);
+
+      const out = walkLegs(halfway, [{ yaw: TOWARD_MINUS_X, frames: 20 }], STAIR_SURFACE);
+
+      expect(out.pose.x).toBeGreaterThan(REAL_LAYOUT.bay.minX - LENGTH_TOLERANCE);
+      expect(out.pose.rise).toBe(halfway.rise);
+      expect(out.steps.at(-1)?.blocked).toBe(true);
+    });
+
+    it('lets the same walker out of the bay at the floor plane', () => {
+      const out = walkLegs(STAIR_START, [{ yaw: TOWARD_PLUS_X, frames: 10 }], STAIR_SURFACE);
+
+      expect(out.pose.x).toBeGreaterThan(REAL_LAYOUT.bay.maxX);
+      expect(out.pose.rise).toBe(0);
+      expect(out.pose.floor).toBe(GROUND_FLOOR);
+      expect(out.steps.filter((step) => step.blocked)).toHaveLength(0);
+    });
+
+    it('climbs a flight that the same rectangle standing as a wall would stop it at', () => {
+      const start = walkLegs(STAIR_START, [{ yaw: TOWARD_MINUS_Z, frames: 4 }], STAIR_SURFACE).pose;
+      const west: readonly Leg[] = [{ yaw: TOWARD_MINUS_X, frames: 10 }];
+      /** The flight read as masonry instead of as a stair: no stairwell, one blocker. */
+      const asWall = surfaceOf(makeWalkField([], [FLIGHT_UP.rect]));
+
+      const tread = walkLegs(start, west, STAIR_SURFACE).pose;
+      const wall = walkLegs(start, west, asWall).pose;
+
+      expect(tread.x).toBeLessThan(FLIGHT_UP.rect.maxX);
+      expect(tread.rise).toBeGreaterThan(0);
+      expect(wall.x).toBe(FLIGHT_UP.rect.maxX + BODY_RADIUS);
+      expect(wall.rise).toBe(0);
+    });
+  });
+
+  describe('stepEyePose across the stack', () => {
+    /** Where the partition stops a walker on the ground storey. */
+    const groundStop = walkUntilStopped(pose({ z: 2 }), { move: 1 }, PARTITIONED_SURFACE);
+
+    it('stops the ground-storey walker at the partition', () => {
+      expect(groundStop.z).toBeCloseTo(PARTITION_STOP_Z);
+    });
+
+    it.each([2, 3, 7, 10])('stops a walker on storey %i at exactly the same wall', (floor) => {
+      const end = walkUntilStopped(pose({ z: 2, floor }), { move: 1 }, PARTITIONED_SURFACE);
+
+      expect(end.z).toBe(groundStop.z);
+      expect(end.floor).toBe(floor);
+      expect(end.rise).toBe(0);
+    });
+
+    it('reports a walk on flat floor as climbing nothing', () => {
+      const step = walk(pose({ floor: 4 }), { move: 1 });
+
+      expect(step.climbed).toBe(0);
+      expect(step.storeyChanged).toBe(false);
+      expect(step.pose.floor).toBe(4);
+      expect(step.pose.rise).toBe(0);
+    });
+  });
+
+  describe('placeInStack', () => {
+    /** Standing away from the stair, high in a tall stack. */
+    const HIGH_UP: EyePose = pose({ x: 13, z: 7, yaw: QUARTER_TURN, pitch: 0.3, floor: 7 });
+
+    it('leaves a pose that already stands in the stack exactly as it is', () => {
+      expect(placeInStack(HIGH_UP, 9, STAIR_START)).toBe(HIGH_UP);
+    });
+
+    it('puts a viewer above the new top storey on it, where they were standing', () => {
+      const placed = placeInStack(HIGH_UP, 3, STAIR_START);
+
+      expect(placed.floor).toBe(3);
+      expect(placed.rise).toBe(0);
+      expect(placed.x).toBe(HIGH_UP.x);
+      expect(placed.z).toBe(HIGH_UP.z);
+      expect(placed.yaw).toBe(HIGH_UP.yaw);
+      expect(placed.pitch).toBe(HIGH_UP.pitch);
+    });
+
+    it('returns a viewer caught mid-flight to the arrival landing, still looking their way', () => {
+      const midFlight: EyePose = { ...HIGH_UP, rise: FLOOR_TO_FLOOR / 2 };
+
+      const placed = placeInStack(midFlight, 3, STAIR_START);
+
+      expect(placed.x).toBe(STAIR_START.x);
+      expect(placed.z).toBe(STAIR_START.z);
+      expect(placed.yaw).toBe(STAIR_START.yaw);
+      expect(placed.pitch).toBe(midFlight.pitch);
+      expect(placed.floor).toBe(3);
+      expect(placed.rise).toBe(0);
+    });
+
+    it('sets a mid-flight viewer down even when their own storey survives', () => {
+      const midFlight: EyePose = pose({ floor: 2, rise: FLOOR_TO_FLOOR / 2 });
+
+      const placed = placeInStack(midFlight, 5, STAIR_START);
+
+      expect(placed.floor).toBe(2);
+      expect(placed.rise).toBe(0);
+      expect(placed.x).toBe(STAIR_START.x);
+    });
+
+    it.each([
+      [7, 3],
+      [1, 10],
+      [0, 5],
+      [-4, 5],
+      [12, 10],
+      [3, 0],
+      [5, 99],
+    ] as const)('never lands storey %i of %i outside the stack', (floor, count) => {
+      const placed = placeInStack(pose({ floor, rise: 0.4 }), count, STAIR_START);
+
+      expect(Number.isInteger(placed.floor)).toBe(true);
+      expect(placed.floor).toBeGreaterThanOrEqual(1);
+      expect(placed.floor).toBeLessThanOrEqual(Math.min(Math.max(count, 1), 10));
+      expect(placed.rise).toBe(0);
     });
   });
 });

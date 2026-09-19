@@ -16,7 +16,11 @@
  *   ceiling and a light panel per roofed space. They are *not* part of a `BuiltFloor`: a
  *   ceiling is the underside of the slab above, which belongs to the next storey, and a
  *   light panel is a luminaire, not structure. Both are derived from the plan and the
- *   heights alone.
+ *   heights alone. That first clause is also the rule the scene stacks by: once the next
+ *   storey genuinely exists, its slab already *is* the ceiling, so `FloorModel.tsx` draws
+ *   the `ceiling` bucket at the top storey only — drawing it under every storey would put
+ *   two solids coincident on all six faces, and they would z-fight. The `lightPanel`
+ *   bucket is drawn at every storey: a luminaire is nobody else's slab.
  * - {@link getFixtureLayout} builds the sanitary ware: the basins, baths and shower trays
  *   the spec stands in the bathrooms. They are not part of a `BuiltFloor` either, and for
  *   the same reason a light panel is not: a bath is a thing standing in a room, not a piece

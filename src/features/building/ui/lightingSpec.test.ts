@@ -21,7 +21,16 @@ const PRECISION_DIGITS = 9;
 const FOV_DEGREES = 50;
 const WIDESCREEN_ASPECT = 16 / 9;
 
-const FRAMING = getExteriorFraming(PLOT_RECT, FLOOR_HEIGHTS, FOV_DEGREES, WIDESCREEN_ASPECT);
+/** The single designed floor on its own: the count the app opens on. */
+const SINGLE_STOREY = 1;
+
+const FRAMING = getExteriorFraming(
+  PLOT_RECT,
+  FLOOR_HEIGHTS,
+  FOV_DEGREES,
+  WIDESCREEN_ASPECT,
+  SINGLE_STOREY,
+);
 const SUN_DISTANCE = getSunDistance(FRAMING);
 
 /** Both views, so every property is checked on each of them. */
@@ -49,8 +58,41 @@ const NEGATIVE_DISTANCE = -TEST_DISTANCE_METRES;
 /** A view value that is neither of the two supported ones, as it could arrive at runtime. */
 const UNKNOWN_VIEW = 'overhead' as unknown as LightingView;
 
+/** Base of a `#rrggbb` colour string, and the layout of the byte it packs each channel in. */
+const HEXADECIMAL = 16;
+const CHANNEL_MASK = 0xff;
+const CHANNEL_FULL = 255;
+const RED_SHIFT = 16;
+const GREEN_SHIFT = 8;
+
+/**
+ * Largest share of its own brightest channel the ground bounce may spread across the other
+ * two: the colour has to read as a neutral, because a soffit is lit by nothing else.
+ */
+const MAX_BOUNCE_SATURATION = 0.15;
+/**
+ * Darkest channel the ground bounce may have, so a face lit by it alone lands in the range a
+ * surface in shadow occupies rather than in the dark end of the frame.
+ */
+const MIN_BOUNCE_CHANNEL = 0.65;
+
 const EXTERIOR = getLightingSpec('exterior', FRAMING);
 const INTERIOR = getLightingSpec('interior', FRAMING);
+
+/**
+ * Splits a `#rrggbb` colour into its three channels, each in `[0, 1]`.
+ *
+ * @param color - The colour to split, as a six-digit hexadecimal string.
+ * @returns Its red, green and blue channels, in that order.
+ */
+function channelsOf(color: string): readonly [number, number, number] {
+  const packed = Number.parseInt(color.slice(1), HEXADECIMAL);
+  return [
+    ((packed >> RED_SHIFT) & CHANNEL_MASK) / CHANNEL_FULL,
+    ((packed >> GREEN_SHIFT) & CHANNEL_MASK) / CHANNEL_FULL,
+    (packed & CHANNEL_MASK) / CHANNEL_FULL,
+  ];
+}
 
 /**
  * Collects every number the spec holds, including the sun's coordinates, with a readable
@@ -197,6 +239,29 @@ describe('getLightingSpec', () => {
     expect(x).toBeLessThan(0);
     expect(Math.hypot(x, y, z)).toBeCloseTo(SUN_DISTANCE, PRECISION_DIGITS);
     expect(y).toBeGreaterThan(FLOOR_HEIGHTS.wall);
+  });
+
+  /**
+   * The hemisphere's ground half is the only light a downward-facing face gets — no
+   * directional light reaches one, and there are no shadow maps or point lights — so its
+   * hue is painted undiluted onto every soffit in the building, and below the top storey a
+   * soffit is the whole ceiling of every room (`ui/FloorModel.tsx`). A saturated bounce
+   * colour therefore does not tint those faces, it *is* their colour: the muted sage this
+   * once held rendered the concrete slab above a middle storey at `#7c7756`, an olive, where
+   * the very same screed underfoot reads `#beb7a7`.
+   *
+   * Two properties keep that from coming back, and neither of them restates the constant:
+   * the bounce is near-neutral, so no hue survives to the soffit on its own, and it is light
+   * enough that a face lit by it alone is a shaded surface rather than a dark one.
+   */
+  it('bounces a near-neutral light, the only light a downward-facing face receives', () => {
+    const [red, green, blue] = channelsOf(EXTERIOR.groundColor);
+    const brightest = Math.max(red, green, blue);
+    const darkest = Math.min(red, green, blue);
+
+    expect((brightest - darkest) / brightest).toBeLessThanOrEqual(MAX_BOUNCE_SATURATION);
+    expect(brightest).toBe(red);
+    expect(darkest).toBeGreaterThanOrEqual(MIN_BOUNCE_CHANNEL);
   });
 
   it('brightens the fill inside, where there is neither a shadow nor a point light', () => {

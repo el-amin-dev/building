@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { makeFloorSpaceRef } from '../domain/floorSpace.ts';
+import { MIN_FLOOR_COUNT } from '../domain/storeys.ts';
 import { useRoomWalkStore } from './roomWalkStore.ts';
 import { useViewStore } from './viewStore.ts';
+
+/** The ground-floor kitchen: the room the one walk in this file asks for. */
+const KITCHEN = makeFloorSpaceRef(MIN_FLOOR_COUNT, 'kitchen');
 
 describe('useViewStore', () => {
   beforeEach(() => {
@@ -168,7 +173,7 @@ describe('useViewStore', () => {
     // locomotion, not decoration, so a walk in progress is not touched by the preference.
     it('leaves a "go to room" walk untouched', () => {
       useRoomWalkStore.setState(useRoomWalkStore.getInitialState(), true);
-      useRoomWalkStore.getState().startWalkTo('kitchen');
+      useRoomWalkStore.getState().startWalkTo(KITCHEN);
       const walk = useRoomWalkStore.getState();
       useViewStore.getState().setPrefersReducedMotion(true);
 
@@ -177,7 +182,7 @@ describe('useViewStore', () => {
       expect(useViewStore.getState().cameraTransition).toBe('none');
       expect(useRoomWalkStore.getState()).toBe(walk);
       expect(useRoomWalkStore.getState().status).toBe('walking');
-      expect(useRoomWalkStore.getState().target).toBe('kitchen');
+      expect(useRoomWalkStore.getState().target).toBe(KITCHEN);
     });
   });
 });

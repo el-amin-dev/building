@@ -211,8 +211,10 @@ const TILT_SPEED_DEGREES_PER_SECOND = 45;
  *
  * Zoom is multiplicative — a second of zooming in scales the distance by `e^−0.8`, about
  * 0.45 — so a step feels the same size when the whole floor is in frame as when one room
- * is. At this rate crossing the framing's whole zoom range (`maxDistance` is eight times
- * `minDistance`) takes `ln(8) / 0.8`, a little over two and a half seconds.
+ * is. At this rate crossing the framing's whole zoom range takes `ln(range) / 0.8`: at most
+ * `ln(8) / 0.8`, a little over two and a half seconds, since `maxDistance` is eight times
+ * the proportional part of `minDistance` and less than that whenever the footprint
+ * clearance is what floors the zoom (`exteriorFraming.ts`).
  */
 const ZOOM_RATE_PER_SECOND = 0.8;
 

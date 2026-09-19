@@ -2,9 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { makeRect } from '../planGeometry.ts';
 import type { PlanPoint, PlanRect } from '../planGeometry.ts';
 import { FLOOR_PLAN } from './floorPlanData.ts';
+import { FLOOR_NUMBER, INSULATED_WALLS } from '../sourceOfTruth/plan.ts';
 import {
+  FLOOR_MATRICULE_SEPARATOR,
+  FLOOR_PREFIX,
   SPACE_LABEL_SEPARATOR,
   findSpaceAt,
+  getFloorMatricule,
   getNeighbours,
   getSpace,
   getSpaceArea,
@@ -16,6 +20,16 @@ import type { FloorPlan, Space, SpaceContact, SpaceId, SpaceKind } from './types
 
 const HALF = 0.5;
 const PRECISION_DIGITS = 9;
+
+/** The lowest storey the plan numbers: a building of one is still `F1-`. */
+const GROUND_FLOOR = 1;
+/** A storey high enough to check that the label carries the whole number. */
+const THIRD_FLOOR = 3;
+/** The highest storey the owner may stack to: two digits, and none of them padding. */
+const TENTH_FLOOR = 10;
+
+/** Floors no stamp may accept: no storey is numbered zero, negative, or by halves. */
+const REFUSED_FLOORS = [[0], [-1], [1.5]] as const satisfies readonly (readonly [number])[];
 const PLOT = makeRect(0, 15, 0, 8);
 const INTERIOR = makeRect(0.3, 14.7, 0.3, 7.7);
 
@@ -156,23 +170,73 @@ describe('floorPlan queries', () => {
     });
   });
 
+  describe('getFloorMatricule', () => {
+    it('stamps the storey on the front, separated by a dash', () => {
+      expect(FLOOR_PREFIX).toBe('F');
+      expect(FLOOR_MATRICULE_SEPARATOR).toBe('-');
+      expect(getFloorMatricule('R11/KIT', 2)).toBe('F2-R11/KIT');
+    });
+
+    it('stamps a two-digit storey without padding it', () => {
+      expect(getFloorMatricule('R11/KIT', TENTH_FLOOR)).toBe('F10-R11/KIT');
+    });
+
+    it('spells the storey out even in a building of one', () => {
+      expect(getFloorMatricule('R11/KIT', GROUND_FLOOR)).toBe('F1-R11/KIT');
+    });
+
+    it.each(REFUSED_FLOORS)('refuses floor %s, which is no storey', (floor) => {
+      expect(() => getFloorMatricule('R11/KIT', floor)).toThrow(RangeError);
+      expect(() => getFloorMatricule('R11/KIT', floor)).toThrow(String(floor));
+    });
+
+    it('stamps the storey the way the wall register already does', () => {
+      // The convention pin. Wall matricules are written `F1-R02-BED-W1` in the source of
+      // truth; if the prefix, the number or the separator here ever drifted from that, a
+      // room and the walls around it would read as belonging to two different floors.
+      const stamp = `${FLOOR_PREFIX}${String(FLOOR_NUMBER)}${FLOOR_MATRICULE_SEPARATOR}`;
+
+      expect(INSULATED_WALLS.length).toBeGreaterThan(0);
+      INSULATED_WALLS.forEach((wall) => {
+        expect(wall.matricule.startsWith(stamp)).toBe(true);
+      });
+      expect(getFloorMatricule('R02/BED', FLOOR_NUMBER).startsWith(stamp)).toBe(true);
+    });
+  });
+
   describe('getSpaceLabel', () => {
     it('separates the matricule from the name with a middle dot', () => {
       expect(SPACE_LABEL_SEPARATOR).toBe('·');
     });
 
-    it('labels the kitchen "R11/KIT · Kitchen"', () => {
-      expect(getSpaceLabel(getSpace(FLOOR_PLAN, 'kitchen'))).toBe('R11/KIT · Kitchen');
+    it('labels the second-floor kitchen "F2-R11/KIT · Kitchen"', () => {
+      expect(getSpaceLabel(getSpace(FLOOR_PLAN, 'kitchen'), 2)).toBe('F2-R11/KIT · Kitchen');
+    });
+
+    it('names the kitchens of two storeys differently', () => {
+      const kitchen = getSpace(FLOOR_PLAN, 'kitchen');
+
+      expect(getSpaceLabel(kitchen, GROUND_FLOOR)).not.toBe(getSpaceLabel(kitchen, 2));
+    });
+
+    it('spells the storey out even in a building of one', () => {
+      expect(getSpaceLabel(getSpace(FLOOR_PLAN, 'kitchen'), GROUND_FLOOR)).toBe(
+        'F1-R11/KIT · Kitchen',
+      );
     });
 
     it.each([
       ['stairs', 'R06/STR', 'Stairwell'],
       ['balconyA', 'R01/BAL', 'Side-A balcony'],
       ['voidWest', 'R17/VOID', 'Void (west)'],
-    ] as const)('puts %s as "%s · %s"', (id, matricule, name) => {
-      expect(getSpaceLabel(getSpace(FLOOR_PLAN, id))).toBe(
-        `${matricule} ${SPACE_LABEL_SEPARATOR} ${name}`,
+    ] as const)('puts %s as "F3-%s · %s"', (id, matricule, name) => {
+      expect(getSpaceLabel(getSpace(FLOOR_PLAN, id), THIRD_FLOOR)).toBe(
+        `${getFloorMatricule(matricule, THIRD_FLOOR)} ${SPACE_LABEL_SEPARATOR} ${name}`,
       );
+    });
+
+    it.each(REFUSED_FLOORS)('refuses to label a space on floor %s', (floor) => {
+      expect(() => getSpaceLabel(getSpace(FLOOR_PLAN, 'kitchen'), floor)).toThrow(RangeError);
     });
   });
 

@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { useFloorCountStore } from '../application/floorCountStore.ts';
 import { FLOOR_PLAN, SPACE_IDS, getSpace, hasFloor } from '../domain/floorPlan/index.ts';
 import type { SpaceId } from '../domain/floorPlan/index.ts';
 import type { PlanPoint } from '../domain/planGeometry.ts';
 import { PORT_SCHEDULE } from '../domain/ports/index.ts';
+import { MAX_FLOOR_COUNT, MIN_FLOOR_COUNT } from '../domain/storeys.ts';
 import { BUILT_FLOOR } from './floorInstance.ts';
 import { ROOM_TARGETS, getRoomTargets } from './roomTargets.ts';
 
@@ -30,6 +32,10 @@ const INSIDE_A_WALL: PlanPoint = Object.freeze({ x: 1.45, z: 2.0 });
 function idsOf(targets: readonly { readonly id: SpaceId }[]): readonly SpaceId[] {
   return targets.map((space) => space.id);
 }
+
+afterEach(() => {
+  useFloorCountStore.setState(useFloorCountStore.getInitialState(), true);
+});
 
 describe('getRoomTargets', () => {
   it('offers every floored space of the plan and neither void', () => {
@@ -83,5 +89,34 @@ describe('ROOM_TARGETS', () => {
       expect(space.matricule).not.toBe('');
       expect(space.name).not.toBe('');
     });
+  });
+});
+
+describe('the floor-agnostic shape of a room target', () => {
+  it('answers with plain spaces of the plan, carrying no storey of their own', () => {
+    // A guard, not a feature. Every storey repeats the typical floor, so "which rooms can
+    // be walked to" has one answer for the whole stack: baking a floor number in here would
+    // turn twenty rooms into twenty per storey — 200 at the maximum — for no new fact. The
+    // storey belongs to the *identity of a place* (`FloorSpaceRef`) and to the label the HUD
+    // asks `getSpaceLabel` for, both of which the caller supplies.
+    ROOM_TARGETS.forEach((space) => {
+      expect(space).not.toHaveProperty('floor');
+      expect(space).not.toHaveProperty('spaceId');
+      expect(space).toBe(getSpace(FLOOR_PLAN, space.id));
+    });
+  });
+
+  it('offers the same twenty rooms however tall the building is', () => {
+    // The list is resolved once at module level from one floor's reachability graph, and
+    // nothing about the stack reaches it. Asserted through the store the stack's height
+    // actually lives in, so a future coupling would fail here rather than in the HUD.
+    for (const count of [MIN_FLOOR_COUNT, MAX_FLOOR_COUNT]) {
+      useFloorCountStore.getState().setFloorCount(count);
+
+      expect(ROOM_TARGETS).toHaveLength(EXPECTED_TARGET_COUNT);
+      expect(idsOf(getRoomTargets(FLOOR_PLAN, PORT_SCHEDULE, IN_CORRIDOR))).toEqual(
+        idsOf(ROOM_TARGETS),
+      );
+    }
   });
 });

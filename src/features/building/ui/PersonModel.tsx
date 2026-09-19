@@ -2,6 +2,7 @@ import { useFrame } from '@react-three/fiber';
 import { useRef } from 'react';
 import type { RefObject } from 'react';
 import type { Group } from 'three';
+import { getFootLevel } from '../domain/eyeNavigation.ts';
 import type { EyePose } from '../domain/eyeNavigation.ts';
 import { PERSON_SPEC } from '../domain/person.ts';
 import type { CameraField } from '../domain/thirdPersonCamera.ts';
@@ -13,8 +14,6 @@ import type { MannequinPart } from './personModelParts.ts';
 const BODY_COLOR = '#64748b';
 /** Facing marker colour: a much darker slate, so the front of the head reads at a glance. */
 const FACING_MARKER_COLOR = '#0f172a';
-/** Feet on the finished floor. */
-const FLOOR_LEVEL = 0;
 /** Radial faces of capsules and cylinders: few, for a faceted low-poly look. */
 const RADIAL_SEGMENTS = 8;
 /** Curve segments of each capsule cap. */
@@ -64,9 +63,15 @@ function MannequinGeometry({ part }: MannequinGeometryProps) {
  *
  * Built from `getMannequinParts(PERSON_SPEC.height)`: a neutral body and a darker visor on
  * the front of the head. Every frame it copies the pose from `poseRef` into its group
- * (feet on the floor at the pose's plan position, turned by the yaw; never pitched) and
- * sets the group's visibility with `isPersonModelVisible`: hidden in first person and
- * whenever the follow camera is pulled in too close. No React state changes per frame.
+ * (turned by the yaw; never pitched) and sets the group's visibility with
+ * `isPersonModelVisible`: hidden in first person and whenever the follow camera is pulled in
+ * too close. No React state changes per frame.
+ *
+ * The group stands at `getFootLevel(pose)` — the level of the storey the pose is on plus the
+ * rise it stands at — rather than at a constant zero, which is what puts the mannequin on the
+ * storey it is walking and carries it up a flight rather than leaving it on the ground floor
+ * while the camera climbs. Every part is positioned relative to the feet (`personModelParts.ts`),
+ * so nothing inside the group changes with the storey.
  *
  * @param props - {@link PersonModelProps}
  * @returns The mannequin group.
@@ -80,7 +85,7 @@ export function PersonModel({ poseRef, field, cameraMode }: PersonModelProps) {
       return;
     }
     const pose = poseRef.current;
-    group.position.set(pose.x, FLOOR_LEVEL, pose.z);
+    group.position.set(pose.x, getFootLevel(pose), pose.z);
     group.rotation.y = pose.yaw;
     group.visible = isPersonModelVisible(cameraMode, pose, field);
   });

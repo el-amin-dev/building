@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getBuiltFloor } from '../domain/builtFloor.ts';
 import type { PlanBox } from '../domain/planBox.ts';
+import { MAX_FLOOR_COUNT, MIN_FLOOR_COUNT } from '../domain/storeys.ts';
 import { FloorModel } from './FloorModel.tsx';
 import {
   FLOOR_MATERIAL_KEYS,
@@ -14,27 +15,44 @@ import {
 import type { FloorLayout } from './floorLayout.ts';
 import { MATERIAL_PALETTE } from './floorMaterials.ts';
 import type { FloorMaterialKey } from './floorMaterials.ts';
+import { createMergedBoxGeometry } from './mergeBoxes.ts';
+import type { MergedBoxesMeshProps } from './MergedBoxesMesh.tsx';
+import { getStoreyLevelsFor, getTopStoreyLevelFor } from './storeyLevels.ts';
 
-/** One recorded `MergedBoxesMesh`: the boxes it was given and the material element inside it. */
+/** One recorded `MergedBoxesMesh`: what it was asked to draw, and where. */
 interface RecordedMesh {
   /** The array handed to the mesh; its identity is what the anti-thrash test watches. */
   readonly boxes: readonly PlanBox[];
+  /** The storey levels handed to it: one mesh is drawn at each. */
+  readonly levels: readonly number[];
   /** The material element the model nested in the mesh. */
   readonly material: ReactNode;
 }
 
 const { meshes } = vi.hoisted(() => ({ meshes: [] as unknown[] }));
 
-// The merged geometry is covered by `mergeBoxes.test.ts` and `MergedBoxesMesh.test.tsx`; here
-// the mesh is replaced by a probe that records what it is asked to draw and renders nothing,
-// so no three.js buffer is built and jsdom never sees a WebGL element — the same reasoning as
-// the `@react-three/fiber` mock in `BuildingScene.test.tsx`.
-vi.mock('./MergedBoxesMesh.tsx', () => ({
-  MergedBoxesMesh: ({ boxes, children }: { boxes: readonly PlanBox[]; children?: ReactNode }) => {
-    meshes.push({ boxes, material: children });
-    return null;
-  },
+// jsdom has no WebGL and the merge itself is covered by `mergeBoxes.test.ts`, so the baked
+// geometry is a stub. It is spied on rather than skipped because "a stepper press rebuilds no
+// geometry" is a claim about this very function being called — the same reasoning as the
+// `@react-three/fiber` mock in `BuildingScene.test.tsx`.
+vi.mock('./mergeBoxes.ts', () => ({
+  createMergedBoxGeometry: vi.fn(() => ({ dispose: vi.fn() })),
 }));
+
+// The mesh is wrapped, not replaced: the probe records the props the model handed down and
+// then renders the real component, so the level arrays and the box arrays can be read while
+// the real memoisation — the thing the storey count must not invalidate — still runs.
+vi.mock('./MergedBoxesMesh.tsx', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./MergedBoxesMesh.tsx')>();
+  return {
+    MergedBoxesMesh: (props: MergedBoxesMeshProps) => {
+      meshes.push({ boxes: props.boxes, levels: props.levels, material: props.children });
+      return <actual.MergedBoxesMesh {...props} />;
+    },
+  };
+});
+
+const createGeometry = vi.mocked(createMergedBoxGeometry);
 
 const MATERIAL_ELEMENT = 'meshStandardMaterial';
 
@@ -68,6 +86,19 @@ const ALWAYS_DRAWN_COUNT = 10;
 
 const ONCE = 1;
 const NONE = 0;
+/** The building as it was drawn before it could be stacked: the designed floor, alone. */
+const ONE_STOREY_COUNT = MIN_FLOOR_COUNT;
+/**
+ * The stack the stacking tests use: three storeys, the smallest building in which "every
+ * storey" and "the top storey" are different answers.
+ */
+const THREE_STOREY_COUNT = 3;
+/** Meshes one non-empty bucket draws for that building: one per storey. */
+const THREE_MESHES = THREE_STOREY_COUNT;
+/** Levels the ceilings are drawn at, whatever the count: the top storey's, and no other. */
+const ONE_CEILING_LEVEL = 1;
+/** Index of the last entry of an array, for `Array.prototype.at`. */
+const LAST_INDEX = -1;
 
 /**
  * Returns what the probe recorded, typed.
@@ -76,6 +107,16 @@ const NONE = 0;
  */
 function recorded(): readonly RecordedMesh[] {
   return meshes as readonly RecordedMesh[];
+}
+
+/** The `<mesh>` elements actually rendered, across every bucket. */
+function renderedMeshes(container: HTMLElement): readonly Element[] {
+  return [...container.querySelectorAll('mesh')];
+}
+
+/** The levels those meshes sit at, read back off their `position-y`, in render order. */
+function renderedLevels(container: HTMLElement): readonly string[] {
+  return renderedMeshes(container).map((mesh) => mesh.getAttribute('position-y') ?? '');
 }
 
 /**
@@ -148,17 +189,18 @@ function boxesOf(
 describe('FloorModel', () => {
   beforeEach(() => {
     meshes.length = NONE;
+    createGeometry.mockClear();
   });
 
   it('draws one mesh per non-empty bucket, in palette order', () => {
-    render(<FloorModel showCeilings={false} />);
+    render(<FloorModel showCeilings={false} floorCount={ONE_STOREY_COUNT} />);
 
     expect(ALWAYS_DRAWN_KEYS).toHaveLength(ALWAYS_DRAWN_COUNT);
     expect(drawnKeys()).toStrictEqual([...ALWAYS_DRAWN_KEYS]);
   });
 
   it('renders no mesh for an empty bucket, and leaves no drawn bucket empty', () => {
-    render(<FloorModel showCeilings={false} />);
+    render(<FloorModel showCeilings={false} floorCount={ONE_STOREY_COUNT} />);
 
     // An empty bucket is the vacuous case here: a mesh drawn over an empty array would
     // still be recorded, and every per-bucket assertion below would pass over nothing.
@@ -183,7 +225,7 @@ describe('FloorModel', () => {
     const lightPanelCount = 16;
     const ceilings = getCeilingLayout();
 
-    render(<FloorModel showCeilings={true} />);
+    render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
 
     const drawn = boxesByKey();
     expect(boxesOf(drawn, 'sanitaryWare')).toHaveLength(sanitaryWareCount);
@@ -193,7 +235,7 @@ describe('FloorModel', () => {
   });
 
   it('gives every mesh the boxes of its own bucket', () => {
-    render(<FloorModel showCeilings={false} />);
+    render(<FloorModel showCeilings={false} floorCount={ONE_STOREY_COUNT} />);
 
     const drawn = boxesByKey();
     for (const key of ALWAYS_DRAWN_KEYS) {
@@ -202,7 +244,7 @@ describe('FloorModel', () => {
   });
 
   it('gives every mesh the palette material of its key', () => {
-    render(<FloorModel showCeilings={true} />);
+    render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
 
     for (const mesh of recorded()) {
       const key = materialKeyOf(mesh);
@@ -211,11 +253,11 @@ describe('FloorModel', () => {
   });
 
   it('adds the ceiling and light-panel meshes, and only those, when the ceilings are shown', () => {
-    render(<FloorModel showCeilings={false} />);
+    render(<FloorModel showCeilings={false} floorCount={ONE_STOREY_COUNT} />);
     const withoutCeilings = boxesByKey();
     meshes.length = NONE;
 
-    render(<FloorModel showCeilings={true} />);
+    render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
 
     const withCeilings = boxesByKey();
     expect(drawnKeys()).toStrictEqual([...ALWAYS_DRAWN_KEYS, ...CEILING_KEYS]);
@@ -228,7 +270,7 @@ describe('FloorModel', () => {
   it('draws the ceilings and light panels of the ceiling layout', () => {
     const ceilings = getCeilingLayout();
 
-    render(<FloorModel showCeilings={true} />);
+    render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
 
     const drawn = boxesByKey();
     expect(boxesOf(drawn, 'ceiling')).toStrictEqual([...ceilings.ceiling]);
@@ -236,11 +278,11 @@ describe('FloorModel', () => {
   });
 
   it('keeps the identity of every box array across a re-render, so no geometry is rebuilt', () => {
-    const { rerender } = render(<FloorModel showCeilings={true} />);
+    const { rerender } = render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
     const first = boxesByKey();
     meshes.length = NONE;
 
-    rerender(<FloorModel showCeilings={true} />);
+    rerender(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
 
     const second = boxesByKey();
     expect(second.size).toBe(first.size);
@@ -250,12 +292,12 @@ describe('FloorModel', () => {
   });
 
   it('keeps the identity of the ceiling arrays across a hide and a show', () => {
-    const { rerender } = render(<FloorModel showCeilings={true} />);
+    const { rerender } = render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
     const first = boxesByKey();
 
-    rerender(<FloorModel showCeilings={false} />);
+    rerender(<FloorModel showCeilings={false} floorCount={ONE_STOREY_COUNT} />);
     meshes.length = NONE;
-    rerender(<FloorModel showCeilings={true} />);
+    rerender(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
 
     for (const key of CEILING_KEYS) {
       expect(boxesOf(boxesByKey(), key), key).toBe(boxesOf(first, key));
@@ -263,12 +305,101 @@ describe('FloorModel', () => {
   });
 
   it('adds no light and no camera of its own to the scene', () => {
-    render(<FloorModel showCeilings={true} />);
+    render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
 
     for (const mesh of recorded()) {
       expect(materialPropsOf(mesh)).not.toHaveProperty('intensity');
     }
     expect(recorded()).toHaveLength(ALWAYS_DRAWN_COUNT + CEILING_KEYS.length);
     expect(recorded().length).toBeGreaterThan(ONCE);
+  });
+});
+
+describe('FloorModel, stacked', () => {
+  beforeEach(() => {
+    meshes.length = NONE;
+    createGeometry.mockClear();
+  });
+
+  it('draws a one-storey building exactly as it was drawn before it could be stacked', () => {
+    const { container } = render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
+
+    // The regression guard of the whole change: one storey is the building as shipped, so
+    // its mesh count and every mesh's level must be what they were — one mesh per non-empty
+    // bucket, all of them at the datum, ceilings included.
+    const expectedMeshCount = ALWAYS_DRAWN_COUNT + CEILING_KEYS.length;
+    expect(recorded()).toHaveLength(expectedMeshCount);
+    expect(renderedMeshes(container)).toHaveLength(expectedMeshCount);
+    expect(drawnKeys()).toStrictEqual([...ALWAYS_DRAWN_KEYS, ...CEILING_KEYS]);
+    for (const mesh of recorded()) {
+      expect(mesh.levels, materialKeyOf(mesh)).toStrictEqual([0]);
+    }
+    expect(renderedLevels(container)).toStrictEqual(
+      Array.from({ length: expectedMeshCount }, () => '0'),
+    );
+  });
+
+  it('draws one mesh per storey for every always-drawn bucket', () => {
+    const levels = getStoreyLevelsFor(THREE_STOREY_COUNT);
+
+    const { container } = render(
+      <FloorModel showCeilings={false} floorCount={THREE_STOREY_COUNT} />,
+    );
+
+    expect(drawnKeys()).toStrictEqual([...ALWAYS_DRAWN_KEYS]);
+    for (const mesh of recorded()) {
+      // Identity, not equality: the shared array of `storeyLevels.ts` reaches every bucket.
+      expect(mesh.levels, materialKeyOf(mesh)).toBe(levels);
+    }
+    expect(renderedMeshes(container)).toHaveLength(ALWAYS_DRAWN_COUNT * THREE_MESHES);
+    expect(new Set(renderedLevels(container))).toStrictEqual(
+      new Set(levels.map((level) => String(level))),
+    );
+  });
+
+  it('roofs the top storey only, and lights every storey', () => {
+    const levels = getStoreyLevelsFor(THREE_STOREY_COUNT);
+    const top = getTopStoreyLevelFor(THREE_STOREY_COUNT);
+
+    render(<FloorModel showCeilings={true} floorCount={THREE_STOREY_COUNT} />);
+
+    const drawn = new Map(recorded().map((mesh) => [materialKeyOf(mesh), mesh.levels]));
+    // A ceiling is the underside of the slab above; below the top storey that slab is drawn
+    // already, so a ceiling there would be the same solid twice and the two would z-fight.
+    expect(drawn.get('ceiling')).toBe(top);
+    expect(drawn.get('ceiling')).toHaveLength(ONE_CEILING_LEVEL);
+    expect(drawn.get('ceiling')?.[0]).toBe(levels.at(LAST_INDEX));
+    // A luminaire is nobody else's slab, and it hangs clear of the slab band, so every
+    // storey keeps its rooms lit.
+    expect(drawn.get('lightPanel')).toBe(levels);
+  });
+
+  it('rebuilds no geometry when the storey count changes', () => {
+    const { rerender } = render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
+    const first = boxesByKey();
+    const bakedOnMount = createGeometry.mock.calls.length;
+    expect(bakedOnMount).toBeGreaterThan(NONE);
+    meshes.length = NONE;
+
+    rerender(<FloorModel showCeilings={true} floorCount={THREE_STOREY_COUNT} />);
+    rerender(<FloorModel showCeilings={true} floorCount={MAX_FLOOR_COUNT} />);
+    rerender(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
+
+    // Not one further merge across three changes of count: the geometry is keyed on the
+    // boxes alone, and stepping the count only changes which shared level array is handed
+    // down. The alternative — keying it on the levels too — would re-merge every wall, slab
+    // and step of the building on every press of the stepper.
+    expect(createGeometry).toHaveBeenCalledTimes(bakedOnMount);
+    const last = boxesByKey();
+    for (const key of [...ALWAYS_DRAWN_KEYS, ...CEILING_KEYS]) {
+      expect(boxesOf(last, key), key).toBe(boxesOf(first, key));
+    }
+  });
+
+  it('draws every storey the count asks for, up to the maximum', () => {
+    const { container } = render(<FloorModel showCeilings={false} floorCount={MAX_FLOOR_COUNT} />);
+
+    expect(renderedMeshes(container)).toHaveLength(ALWAYS_DRAWN_COUNT * MAX_FLOOR_COUNT);
+    expect(new Set(renderedLevels(container)).size).toBe(MAX_FLOOR_COUNT);
   });
 });

@@ -23,8 +23,13 @@ vi.mock('@react-three/fiber', () => ({
 /** Default `useFrame` priority: the camera controls step the pose before it, at −1. */
 const DEFAULT_FRAME_PRIORITY = 0;
 
-/** Yaw and pitch never reach the room lookup; the test poses look level ahead. */
-const LEVEL_POSE = { yaw: 0, pitch: 0 };
+/**
+ * Yaw and pitch never reach the room lookup; the test poses look level ahead.
+ *
+ * Nor does the height: the reporter samples a plan point, and the typical floor is the same
+ * plan at every storey. Both poses stand flat on the ground storey — floor 1, no rise.
+ */
+const LEVEL_POSE = { yaw: 0, pitch: 0, floor: 1, rise: 0 };
 /** The centre of the kitchen's west rect (x 10.00–12.20, z 6.30–8.60). */
 const IN_KITCHEN: EyePose = { x: 11.1, z: 7.45, ...LEVEL_POSE };
 /** The centre of the stairwell (x 1.60–5.60, z 4.00–6.00), rooms away from the kitchen. */
@@ -75,7 +80,7 @@ describe('ExplorerPoseReporter', () => {
     renderReporter();
 
     expect(useExplorerPoseStore.getState().getLatestPose()).toBeUndefined();
-    expect(useExplorerPoseStore.getState().currentSpaceId).toBeUndefined();
+    expect(useExplorerPoseStore.getState().currentSpace).toBeUndefined();
   });
 
   it('reports the pose of every frame, so the room follows the explorer', () => {
@@ -83,13 +88,13 @@ describe('ExplorerPoseReporter', () => {
 
     runFrame();
     expect(useExplorerPoseStore.getState().getLatestPose()).toBe(IN_KITCHEN);
-    expect(useExplorerPoseStore.getState().currentSpaceId).toBe('kitchen');
+    expect(useExplorerPoseStore.getState().currentSpace?.spaceId).toBe('kitchen');
 
     poseRef.current = IN_STAIRS;
     runFrame();
 
     expect(useExplorerPoseStore.getState().getLatestPose()).toBe(IN_STAIRS);
-    expect(useExplorerPoseStore.getState().currentSpaceId).toBe('stairs');
+    expect(useExplorerPoseStore.getState().currentSpace?.spaceId).toBe('stairs');
   });
 
   it('clears the pose and the room when it unmounts with the interior view', () => {
@@ -98,7 +103,7 @@ describe('ExplorerPoseReporter', () => {
 
     unmount();
 
-    expect(useExplorerPoseStore.getState().currentSpaceId).toBeUndefined();
+    expect(useExplorerPoseStore.getState().currentSpace).toBeUndefined();
     expect(useExplorerPoseStore.getState().getLatestPose()).toBeUndefined();
   });
 });

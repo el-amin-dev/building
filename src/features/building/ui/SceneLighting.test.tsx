@@ -2,6 +2,7 @@ import { Fragment, isValidElement } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getExteriorFraming } from '../domain/exteriorFraming.ts';
+import type { ExteriorFraming } from '../domain/exteriorFraming.ts';
 import { PLOT_RECT } from '../domain/floorPlan/index.ts';
 import { FLOOR_HEIGHTS } from '../domain/heights.ts';
 import {
@@ -72,7 +73,25 @@ function dragControl(path: string, value: unknown): void {
 
 const FOV_DEGREES = 50;
 const WIDESCREEN_ASPECT = 16 / 9;
-const FRAMING = getExteriorFraming(PLOT_RECT, FLOOR_HEIGHTS, FOV_DEGREES, WIDESCREEN_ASPECT);
+/** The single designed floor on its own: the count the app opens on. */
+const SINGLE_STOREY = 1;
+/** A full stack: the most storeys the owner's stepper can reach. */
+const TALL_STOREY = 10;
+const FRAMING = getExteriorFraming(
+  PLOT_RECT,
+  FLOOR_HEIGHTS,
+  FOV_DEGREES,
+  WIDESCREEN_ASPECT,
+  SINGLE_STOREY,
+);
+/** The same canvas over a ten-storey building: a 29.70 m subject instead of a 2.70 m one. */
+const TALL_FRAMING = getExteriorFraming(
+  PLOT_RECT,
+  FLOOR_HEIGHTS,
+  FOV_DEGREES,
+  WIDESCREEN_ASPECT,
+  TALL_STOREY,
+);
 const SUN_DISTANCE = getSunDistance(FRAMING);
 
 const VIEWS: readonly LightingView[] = ['exterior', 'interior'];
@@ -136,11 +155,15 @@ function flatten(node: ReactNode, into: LightingElement[]): void {
  * them into on an unknown DOM tag.
  *
  * @param view - The view to light.
+ * @param framing - The exterior framing to light for; the one-storey one by default.
  * @returns The rendered elements, in order.
  */
-function renderLighting(view: LightingView): readonly LightingElement[] {
+function renderLighting(
+  view: LightingView,
+  framing: ExteriorFraming = FRAMING,
+): readonly LightingElement[] {
   const elements: LightingElement[] = [];
-  flatten(SceneLighting({ view, framing: FRAMING }), elements);
+  flatten(SceneLighting({ view, framing }), elements);
   return elements;
 }
 
@@ -195,6 +218,32 @@ describe('SceneLighting', () => {
   it.each(VIEWS)('lights the %s view with a background, fog and exactly three lights', (view) => {
     expectThreeLights(renderLighting(view));
   });
+
+  it.each(VIEWS)(
+    'lights a ten-storey building of the %s view with those same three lights',
+    (view) => {
+      const sun = getSunPosition(
+        SUN_ELEVATION_DEGREES,
+        SUN_AZIMUTH_FROM_B_DEGREES,
+        getSunDistance(TALL_FRAMING),
+      );
+
+      const tall = renderLighting(view, TALL_FRAMING);
+
+      // The light count is compiled into every material's shader program, so a light that
+      // appeared with the storey count would recompile every program in the scene on every
+      // press of the stepper. The height of the building reaches the lighting through the
+      // framing's fog range and the sun's distance, and through nothing else.
+      expectThreeLights(tall);
+      expect(TALL_FRAMING.fogFar).toBeGreaterThan(FRAMING.fogFar);
+      expect(propsOf(tall, FOG).args).toStrictEqual([
+        getLightingSpec(view, TALL_FRAMING).skyColor,
+        TALL_FRAMING.fogNear,
+        TALL_FRAMING.fogFar,
+      ]);
+      expect(propsOf(tall, DIRECTIONAL_LIGHT).position).toStrictEqual([sun.x, sun.y, sun.z]);
+    },
+  );
 
   it.each(VIEWS)('seeds the %s lights from the spec of that view', (view) => {
     const spec = getLightingSpec(view, FRAMING);
