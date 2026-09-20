@@ -1838,6 +1838,28 @@ export const SERVICE_SPEC = deepFreeze({
     /** Hot scales faster, so it carries the larger allowance. */
     hot: 0.2,
   },
+  /**
+   * The centreline bend radius a corner really needs, as a multiple of the bore.
+   *
+   * Every polyline in `SERVICE_RUNS` turns a square 90°, and a square 90° is a
+   * duct that does not exist: the fitting that actually makes that turn sweeps a
+   * radius, and it needs straight pipe on both sides of it to land on. The square
+   * corner is therefore a DRAWING CONVENTION, and this number is what the drawing
+   * is lying about — stated here so the lie is bounded and checkable rather than
+   * invisible.
+   *
+   * The check it licenses is not "draw an arc" but "is there room for one": both
+   * legs meeting at a corner must be at least this long, or the real fitting does
+   * not fit and the route has to change. Ducts are the binding case, which is why
+   * they carry the larger multiple — a 160 mm duct turning a corner needs a good
+   * deal more than a 20 mm pipe with a push-fit elbow on it.
+   */
+  minBendRadius: {
+    /** A rigid duct elbow, centreline radius one diameter. */
+    duct: 1,
+    /** A bent or elbowed pipe; small bores turn tightly. */
+    pipe: 1.5,
+  },
   /** Minimum air between a data run and a power run laid parallel to it, in metres. */
   dataToPowerSeparation: 0.2,
   /** Minimum air between a gas run and an electrical run, in metres. */
@@ -2077,8 +2099,7 @@ const DRAINAGE_RUNS = [
     from: { at: 'fitting', space: 'mainSanitair', kind: 'sink' },
     to: { at: 'space', space: 'voidEast' },
     points: [
-      [19.95, 6.45, -0.05],
-      [19.95, 9.3, -0.13],
+      [19.9, 6.45, -0.05],
       [19.9, 9.3, -0.14],
     ],
   },
@@ -3128,8 +3149,7 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'ccBalcony' },
     to: { at: 'space', space: 'voidEast' },
     points: [
-      [4.5, 9.35, 0.9],
-      [4.5, 9.35, 2.55],
+      [4.5, 9.45, 0.9],
       [4.5, 9.45, 2.55],
       [20.3, 9.45, 2.55],
     ],
@@ -3163,7 +3183,7 @@ const DRY_RUNS = [
     points: [
       [7, 9.45, 2.55],
       [7, 8.6, 2.55],
-      [7, 8.6, 2.45],
+      [7, 8.6, 2.35],
     ],
   },
   {
@@ -3174,7 +3194,7 @@ const DRY_RUNS = [
     points: [
       [5, 5.1, 2.55],
       [5, 3.7, 2.55],
-      [5, 3.7, 2.45],
+      [5, 3.7, 2.35],
     ],
   },
   {
@@ -3185,7 +3205,7 @@ const DRY_RUNS = [
     points: [
       [10.4, 5.1, 2.55],
       [10.4, 3.85, 2.55],
-      [10.4, 3.85, 2.45],
+      [10.4, 3.85, 2.35],
     ],
   },
   {
@@ -3196,7 +3216,7 @@ const DRY_RUNS = [
     points: [
       [15.5, 5.1, 2.55],
       [15.5, 3.85, 2.55],
-      [15.5, 3.85, 2.45],
+      [15.5, 3.85, 2.35],
     ],
   },
   {
@@ -3207,7 +3227,7 @@ const DRY_RUNS = [
     points: [
       [20.7, 5.1, 2.55],
       [20.7, 3.85, 2.55],
-      [20.7, 3.85, 2.45],
+      [20.7, 3.85, 2.35],
     ],
   },
   {
@@ -3217,7 +3237,7 @@ const DRY_RUNS = [
     to: { at: 'space', space: 'corridor' },
     points: [
       [12, 5.1, 2.55],
-      [12, 5.1, 2.45],
+      [12, 5.1, 2.35],
     ],
   },
 
