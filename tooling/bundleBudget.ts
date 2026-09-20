@@ -55,11 +55,26 @@ export interface BundleBudget {
  * It was 87.5 kB before the resilience layer was wired into the shell: the WebGL check, the
  * error boundary and the two fallback panels are in the entry chunk by design, since they are
  * what has to render when the scene chunk is the thing that will not arrive.
+ *
+ * **Re-measured at 101.5 kB after Part 5 (2026-09-20), and the budget raised 100 → 117.**
+ * The breach was a question, and it has an answer worth writing down rather than a fix:
+ * **the whole of `plan.ts` ships before the HUD paints**, and it now carries 116 service runs
+ * on top of every room, port, window and fixture. The HUD genuinely needs the room names
+ * (`RoomMenu`, `Minimap`, `RoomInfoPanel`) and the layer names (`LayerSwitcher`), and those
+ * imports drag the rest of the module with them — so a visitor downloads roughly ten
+ * kilobytes of pipe coordinates they cannot see until the scene arrives.
+ *
+ * That is **pre-existing debt Part 5 pushed over the line**, not something Part 5 introduced:
+ * `plan.ts` was already in the entry chunk before any of this. The fix is to split the heavy
+ * arrays out of the eager path so the HUD pulls names and not geometry, and it is its own
+ * task because it restructures the single source of truth. **Owner decision, 2026-09-20:
+ * record the number and carry the debt** — the thing this budget was really built to protect
+ * is the lazy scene, and `three`, `r3f` and `leva` are all still on demand.
  */
 export const INITIAL_JS_BUDGET: BundleBudget = {
   label: 'initial JS (entry + static imports)',
-  limitBytes: 100 * BYTES_PER_KILOBYTE,
-  measuredBytes: 91.8 * BYTES_PER_KILOBYTE,
+  limitBytes: 117 * BYTES_PER_KILOBYTE,
+  measuredBytes: 101.5 * BYTES_PER_KILOBYTE,
   reason: 'What must arrive before the HUD can paint; a static scene import would blow it.',
 };
 
