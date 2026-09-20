@@ -57,6 +57,7 @@ import { makeRect, rectArea, rectDepth, rectWidth } from '../domain/planGeometry
 import type { PlanRect } from '../domain/planGeometry.ts';
 import type { ShownLayers } from '../application/layerStore.ts';
 import type { BuiltServiceRun } from '../domain/services.ts';
+import { SERVICE_LAYERS } from '../domain/sourceOfTruth/plan.ts';
 import type { PlanServiceFamily, PlanServiceLayerKey } from '../domain/sourceOfTruth/plan.ts';
 import { getSlabMaterialKey, MATERIAL_PALETTE } from './floorMaterials.ts';
 import type { FloorMaterialKey } from './floorMaterials.ts';
@@ -330,6 +331,81 @@ export const FLOOR_MATERIAL_KEYS: readonly FloorMaterialKey[] = Object.freeze(
   // Every key of the palette is a `FloorMaterialKey` by the palette's own type.
   Object.keys(MATERIAL_PALETTE) as readonly FloorMaterialKey[],
 );
+
+/**
+ * The one layer that answers to {@link BucketRule.finish} rather than to `hiddenBy`.
+ *
+ * Named here because {@link LAYER_BUCKETS} has to read the second column of
+ * {@link BUCKET_RULES} as well as the first: `finishing` is the checkbox that is not a set
+ * of boxes, and the boxes it speaks for are the ones it RE-SURFACES, plus the one bucket it
+ * genuinely hides (`artwork`). Inverting `hiddenBy` alone would say `finishing` has nothing
+ * to draw whenever the floor hangs no picture, while ticking it would still lay carpet,
+ * marble and oak across the whole storey.
+ */
+const FINISHING_LAYER: PlanServiceLayerKey = 'finishing';
+
+/**
+ * Builds which buckets each checkbox speaks for: {@link BUCKET_RULES}, inverted.
+ *
+ * Derived from that table and never written out again, for the reason the table exists at
+ * all — a second hand-written list of "what gas draws" would drift from the rows the
+ * renderer actually obeys, and the drift would show up as a layer reporting itself empty
+ * while its pipes are on screen. A bucket whose `hiddenBy` is {@link ALWAYS_DRAWN} belongs
+ * to no layer and appears in no entry here: it is the building, and no checkbox speaks for
+ * it.
+ *
+ * Total over {@link PlanServiceLayerKey} because it starts from `SERVICE_LAYERS`: a tenth
+ * layer declared in the plan gets an entry the day it is declared, empty until a bucket
+ * names it, which is exactly the state {@link isLayerEmpty} exists to make visible.
+ *
+ * @returns One frozen list of material keys per layer, in palette order.
+ */
+function buildLayerBuckets(): Readonly<Record<PlanServiceLayerKey, readonly FloorMaterialKey[]>> {
+  const buckets = Object.fromEntries(
+    SERVICE_LAYERS.map((layer) => [layer.key, [] as FloorMaterialKey[]]),
+  ) as Record<PlanServiceLayerKey, FloorMaterialKey[]>;
+  for (const materialKey of FLOOR_MATERIAL_KEYS) {
+    const rule = BUCKET_RULES[materialKey];
+    if (rule.hiddenBy !== ALWAYS_DRAWN) {
+      buckets[rule.hiddenBy].push(materialKey);
+    }
+    if (rule.finish) {
+      buckets[FINISHING_LAYER].push(materialKey);
+    }
+  }
+  for (const layer of SERVICE_LAYERS) {
+    Object.freeze(buckets[layer.key]);
+  }
+  return Object.freeze(buckets);
+}
+
+/** {@link buildLayerBuckets}, run once: the table is as constant as the one it inverts. */
+const LAYER_BUCKETS: Readonly<Record<PlanServiceLayerKey, readonly FloorMaterialKey[]>> =
+  buildLayerBuckets();
+
+/**
+ * Whether a layer has nothing at all to draw on this floor.
+ *
+ * The question behind the HUD's empty state: with the box ticked and the layer still
+ * showing nothing, "this floor has no gas" and "the gas layer is broken" are the same
+ * picture, and only one of them is worth shipping. A layer is empty when EVERY bucket it
+ * speaks for is empty ({@link LAYER_BUCKETS}) — one box anywhere is something to look at.
+ *
+ * **Unreachable on the current plan, and deliberately kept anyway.** All nine layers of
+ * `SERVICE_LAYERS` have geometry on this floor, and `floorLayout.test.ts` pins that: no
+ * argument built from `FLOOR_PLAN` makes this function return `true`. It becomes reachable
+ * the day the plan declares a layer no run carries — the shape `vent` already has among the
+ * service FAMILIES — or the day a storey is built that holds none of a layer's runs. Until
+ * then it is exercised against constructed layouts, and the HUD sentence it drives is
+ * untestable against the real floor on purpose rather than by oversight.
+ *
+ * @param layout - The buckets to look in, from {@link getFloorLayout}. Not mutated.
+ * @param layerKey - The layer asked about.
+ * @returns `true` when no bucket the layer speaks for holds a single box.
+ */
+export function isLayerEmpty(layout: FloorLayout, layerKey: PlanServiceLayerKey): boolean {
+  return LAYER_BUCKETS[layerKey].every((materialKey) => layout[materialKey].length === 0);
+}
 
 /** The buckets of a layout while it is still being filled. */
 type MutableLayout = Record<FloorMaterialKey, PlanBox[]>;

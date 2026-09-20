@@ -9,8 +9,14 @@ import { rectContainsRect } from '../domain/planGeometry.ts';
 import { PORT_SCHEDULE } from '../domain/ports/index.ts';
 import { FABRIC_FIXTURE_KINDS } from '../domain/fixtures.ts';
 import { PARAPET_WALLS, SERVICE_LAYERS, WINDOWS } from '../domain/sourceOfTruth/plan.ts';
-import type { PlanServiceFamily } from '../domain/sourceOfTruth/plan.ts';
-import { FLOOR_MATERIAL_KEYS, getCeilingLayout, getFloorLayout } from './floorLayout.ts';
+import type { PlanServiceFamily, PlanServiceLayerKey } from '../domain/sourceOfTruth/plan.ts';
+import {
+  FLOOR_MATERIAL_KEYS,
+  getCeilingLayout,
+  getFloorLayout,
+  isLayerEmpty,
+} from './floorLayout.ts';
+import type { FloorLayout } from './floorLayout.ts';
 import { getSlabMaterialKey, MATERIAL_PALETTE } from './floorMaterials.ts';
 import type { FloorMaterialKey } from './floorMaterials.ts';
 
@@ -832,5 +838,121 @@ describe('the floor finish of every space (negative control for Part 5)', () => 
     for (const spaceId of SPACE_IDS.filter((id) => SPACE_SLAB_MATERIAL[id] === 'slabRoom')) {
       expect(SERVICED_SPACE_IDS, spaceId).not.toContain(spaceId);
     }
+  });
+});
+
+/**
+ * One bucket per layer, hand-written: the second opinion on the inversion under test.
+ *
+ * `isLayerEmpty` derives layer → buckets from `BUCKET_RULES`, so a test that read the same
+ * table would assert that a map equals itself. This names, for each of the nine checkboxes,
+ * one bucket that checkbox is answerable for, chosen by reading what the layer means rather
+ * than what the table says. A bucket moved to another checkbox has to be moved here too, by
+ * somebody who can say why.
+ *
+ * Every one of the nine is a bucket the decorative scheme does NOT reach (`finish: false`),
+ * which is what lets the case below demand *exactly one* non-empty layer: a bucket carrying
+ * a finish answers to its own checkbox and to `finishing` both, and rightly so.
+ */
+const LAYER_SAMPLE_BUCKET: Readonly<Record<PlanServiceLayerKey, FloorMaterialKey>> = Object.freeze({
+  drainage: 'serviceDrainage',
+  water: 'serviceWaterCold',
+  gas: 'serviceGas',
+  electricity: 'serviceElectricity',
+  lowVoltage: 'serviceLowVoltage',
+  climate: 'serviceClimateCool',
+  covers: 'serviceCover',
+  furniture: 'sanitaryWare',
+  // The one bucket `finishing` hides rather than re-surfaces; the case below covers the
+  // re-surfaced ones separately, because they are the bigger half of what it draws.
+  finishing: 'artwork',
+});
+
+/** A bucket that is the building itself, so no checkbox speaks for it. */
+const ALWAYS_DRAWN_KEY: FloorMaterialKey = 'wall';
+
+/** A bucket the decorative scheme re-surfaces without `finishing` ever hiding it. */
+const RESURFACED_KEY: FloorMaterialKey = 'slabRoom';
+
+/** One real box, so a filled bucket holds something the renderer could actually draw. */
+const A_BOX: PlanBox = LAYOUT.wall[0];
+
+/** How many layers a single filled bucket may leave with something to draw. */
+const ONE_LAYER = 1;
+
+/**
+ * A floor with every bucket present and every bucket empty.
+ *
+ * Constructed, never derived: no plan of this building produces one (see the case below),
+ * which is exactly why the empty branch needs a layout built by hand to be exercised at all.
+ *
+ * @returns A layout carrying every material key, each with no box.
+ */
+function emptyTestLayout(): FloorLayout {
+  const buckets = Object.fromEntries(
+    FLOOR_MATERIAL_KEYS.map((key) => [key, Object.freeze([]) as readonly PlanBox[]]),
+  ) as Record<FloorMaterialKey, readonly PlanBox[]>;
+  return Object.freeze(buckets);
+}
+
+/**
+ * An otherwise empty floor with one bucket holding one box.
+ *
+ * @param materialKey - The bucket to fill.
+ * @returns A layout in which that bucket alone has something to draw.
+ */
+function layoutWithOnly(materialKey: FloorMaterialKey): FloorLayout {
+  return Object.freeze({
+    ...emptyTestLayout(),
+    [materialKey]: Object.freeze([A_BOX]) as readonly PlanBox[],
+  });
+}
+
+/**
+ * The layers that still have something to draw in a layout.
+ *
+ * @param layout - The layout to ask about.
+ * @returns Their keys, in the plan's order.
+ */
+function drawingLayers(layout: FloorLayout): readonly PlanServiceLayerKey[] {
+  return SERVICE_LAYERS.filter((layer) => !isLayerEmpty(layout, layer.key)).map(
+    (layer) => layer.key,
+  );
+}
+
+describe('isLayerEmpty', () => {
+  it('reports no empty layer on the real floor, so the HUD never cries wolf', () => {
+    // The whole point of the empty state, stated as a fact about THIS plan: every one of
+    // the nine checkboxes has geometry behind it, so a viewer who ticks one and sees
+    // nothing change is looking at a bug and not at a floor without gas.
+    expect(drawingLayers(LAYOUT)).toStrictEqual(SERVICE_LAYERS.map((layer) => layer.key));
+  });
+
+  it('calls every layer empty when the floor holds nothing at all', () => {
+    // Unreachable from any plan: this is the constructed layout the branch exists for, and
+    // it stays constructed until a layer is declared with no runs, or a storey carries none.
+    expect(drawingLayers(emptyTestLayout())).toStrictEqual([]);
+  });
+
+  it('answers for exactly the layer whose checkbox owns the bucket', () => {
+    for (const [layerKey, materialKey] of Object.entries(LAYER_SAMPLE_BUCKET)) {
+      const drawing = drawingLayers(layoutWithOnly(materialKey));
+
+      expect(drawing, materialKey).toStrictEqual([layerKey]);
+      expect(drawing, materialKey).toHaveLength(ONE_LAYER);
+    }
+  });
+
+  it('counts what finishing re-surfaces, not only the artwork it hides', () => {
+    // `finishing` is the checkbox that is not a set of boxes: inverting `hiddenBy` alone
+    // would call it empty on a floor with no picture on the wall, while ticking it still
+    // lays carpet, marble and oak across the whole storey.
+    expect(drawingLayers(layoutWithOnly(RESURFACED_KEY))).toStrictEqual(['finishing']);
+  });
+
+  it('leaves every layer empty when only the building itself is drawn', () => {
+    // A bucket whose rule is ALWAYS_DRAWN belongs to no checkbox, so a floor of naked walls
+    // has nine layers with nothing to draw — which is precisely what naked walls means.
+    expect(drawingLayers(layoutWithOnly(ALWAYS_DRAWN_KEY))).toStrictEqual([]);
   });
 });

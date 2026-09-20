@@ -3,7 +3,22 @@ import type { KeyboardEvent, MouseEvent } from 'react';
 import { useLayerStore } from '../application/layerStore.ts';
 import { SERVICE_LAYERS } from '../domain/sourceOfTruth/plan.ts';
 import type { PlanServiceLayerKey } from '../domain/sourceOfTruth/plan.ts';
+import { BUILT_FLOOR } from './floorInstance.ts';
+import { getFloorLayout, isLayerEmpty } from './floorLayout.ts';
+import type { FloorLayout } from './floorLayout.ts';
 import { INTERIOR_REGION_ID, LAYER_PANEL_ID, LAYER_SUMMARY_ID } from './hudIds.ts';
+
+/**
+ * The solids of the floor grouped by material, built once when this module is loaded.
+ *
+ * The switcher needs them for one question only — whether a ticked layer has a single box
+ * to draw — so nothing here is handed to the GPU and no identity depends on it. The floor
+ * itself is still not re-derived: {@link BUILT_FLOOR} is the page's one derivation of it
+ * (`floorInstance.ts`), and only the grouping is repeated. `FloorModel.tsx` builds the same
+ * grouping for the meshes; the day a third reader wants it, the constant belongs in
+ * `floorInstance.ts` beside the floor rather than twice in `ui/`.
+ */
+const FLOOR_LAYOUT: FloorLayout = getFloorLayout(BUILT_FLOOR);
 
 /**
  * The half of the trigger's name that stays VISIBLE on a phone; the summary is the half
@@ -45,6 +60,45 @@ const SUMMARY_SEPARATOR = ': ';
  * — "Layers shown: 3 of 9 on" — while the pixels stay the bare summary.
  */
 const SUMMARY_PREFIX = 'Layers shown: ';
+
+/**
+ * Said in the live region when a ticked layer has nothing to draw, before the layers it
+ * names: `Nothing to draw on this floor: Gas`.
+ *
+ * `RoomInfoPanel`'s rule, applied to a list of checkboxes instead of a list of fittings: an
+ * empty result stated in words, never as silence. A layer that is ticked and draws nothing
+ * looks exactly like a layer that is broken, and the viewer has no way to tell the two
+ * apart — so the HUD says which of the two it is. It is a SENTENCE and not only the marker
+ * on the row below, because a marker beside a name is a pixel: the summary is the one
+ * element of this panel assistive technology is already listening to.
+ */
+const EMPTY_LAYER_SENTENCE = 'Nothing to draw on this floor';
+
+/** Between the sentence and the layers it names, and between two layer names. */
+const EMPTY_LAYER_JOIN = ': ';
+const EMPTY_LAYER_SEPARATOR = ', ';
+
+/**
+ * The marker on a ticked-but-empty row, in the list itself.
+ *
+ * Inside the row's `<label>`, so it is read as part of that checkbox's own name: a viewer
+ * who tabs onto the box hears `Gas — nothing to draw` and needs neither the summary above
+ * nor the colour the marker is painted in. The live sentence still carries the message on
+ * its own, for the viewer who never walks the rows.
+ *
+ * The dash is part of the words rather than a gap between two elements, and that is not a
+ * nicety: an accessible name is the concatenation of the label's nodes with each node
+ * TRIMMED, so CSS spacing and a whitespace text node alike contribute nothing to it, and
+ * the box would announce itself as `Gasnothing to draw`. `LayerSwitcher.test.tsx` pins the
+ * name the marker actually produces.
+ */
+const EMPTY_LAYER_MARK = '— nothing to draw';
+
+/** The marker's look: quiet, but never the only carrier of the message. */
+const EMPTY_LAYER_MARK_CLASS_NAME = 'text-amber-300 italic';
+
+/** The sentence's look inside the live region: its own line under the count. */
+const EMPTY_LAYER_SENTENCE_CLASS_NAME = 'mt-1 block text-amber-300';
 
 /** `KeyboardEvent.key` that closes the panel, as every disclosure in this HUD does. */
 const CLOSE_KEY = 'Escape';
@@ -165,9 +219,28 @@ function formatSummary(shownCount: number, total: number): string {
  * building is layered is as much a fact of the exterior it is seen from as of the interior it
  * is walked in.
  *
+ * ## A ticked layer with nothing to draw
+ *
+ * Such a layer is marked on its row and said in the live summary
+ * ({@link EMPTY_LAYER_SENTENCE}), because ticking a box and seeing the floor not change is
+ * the one outcome this panel cannot leave unexplained: "this floor has no gas" and "the gas
+ * layer is broken" are the same picture, and without the sentence the second one ships. The
+ * answer comes from `isLayerEmpty` over the floor's own buckets, so it follows the table the
+ * renderer obeys rather than a list kept here.
+ *
+ * **No layer is empty on the floor as it is drawn today** — all nine have geometry
+ * (`floorLayout.test.ts`) — so this state is unreachable in the running app and is proved
+ * against constructed layouts instead. It becomes reachable the day the plan declares a
+ * layer no run carries, or a storey is built that holds none of one layer's runs.
+ *
+ * @param props - The switcher's one input.
+ * @param props.layout - The solids of the floor grouped by material, read only to tell
+ *   whether a ticked layer has anything to draw; defaults to the floor of the page. A
+ *   parameter so a test can hand in a floor whose layers are empty, which no plan of this
+ *   building produces.
  * @returns The layer switcher, in every view mode.
  */
-export function LayerSwitcher() {
+export function LayerSwitcher({ layout = FLOOR_LAYOUT }: { readonly layout?: FloorLayout }) {
   const shown = useLayerStore((state) => state.shown);
   const toggleLayer = useLayerStore((state) => state.toggleLayer);
   const [isOpen, setIsOpen] = useState(false);
@@ -175,6 +248,12 @@ export function LayerSwitcher() {
 
   const shownCount = SERVICE_LAYERS.filter((layer) => shown[layer.key]).length;
   const summary = formatSummary(shownCount, SERVICE_LAYERS.length);
+  // Ticked AND empty: an unticked layer draws nothing by definition, and saying so about it
+  // would turn nine rows into nine complaints.
+  const emptyLayers = SERVICE_LAYERS.filter(
+    (layer) => shown[layer.key] && isLayerEmpty(layout, layer.key),
+  );
+  const emptyKeys = new Set<PlanServiceLayerKey>(emptyLayers.map((layer) => layer.key));
 
   /**
    * Toggles the panel and puts focus where the press asked for it.
@@ -234,6 +313,13 @@ export function LayerSwitcher() {
           <p id={LAYER_SUMMARY_ID} aria-live="polite" aria-atomic="true" className="mt-1">
             <span className="sr-only">{SUMMARY_PREFIX}</span>
             {summary}
+            {emptyLayers.length > 0 ? (
+              <span className={EMPTY_LAYER_SENTENCE_CLASS_NAME}>
+                {`${EMPTY_LAYER_SENTENCE}${EMPTY_LAYER_JOIN}${emptyLayers
+                  .map((layer) => layer.name)
+                  .join(EMPTY_LAYER_SEPARATOR)}`}
+              </span>
+            ) : null}
           </p>
           <ul className="mt-2">
             {SERVICE_LAYERS.map((layer) => (
@@ -246,6 +332,9 @@ export function LayerSwitcher() {
                     className={CHECKBOX_CLASS_NAME}
                   />
                   <span>{layer.name}</span>
+                  {emptyKeys.has(layer.key) ? (
+                    <span className={EMPTY_LAYER_MARK_CLASS_NAME}>{EMPTY_LAYER_MARK}</span>
+                  ) : null}
                 </label>
               </li>
             ))}

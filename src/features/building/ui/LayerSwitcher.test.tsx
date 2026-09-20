@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useLayerStore } from '../application/layerStore.ts';
 import { useViewStore } from '../application/viewStore.ts';
 import { SERVICE_LAYERS } from '../domain/sourceOfTruth/plan.ts';
+import { FLOOR_MATERIAL_KEYS } from './floorLayout.ts';
+import type { FloorLayout } from './floorLayout.ts';
 import { LAYER_PANEL_ID, LAYER_SUMMARY_ID } from './hudIds.ts';
 import { LayerSwitcher } from './LayerSwitcher.tsx';
 import { ViewModeToggle } from './ViewModeToggle.tsx';
@@ -48,6 +50,41 @@ const CLOSE_KEY = '{Escape}';
 /** Ticked boxes after one tick, and after two. */
 const ONE_TICKED = 1;
 const TWO_TICKED = 2;
+
+/** What the panel says about a ticked layer with nothing to draw, and how a row is marked. */
+const EMPTY_SENTENCE = 'Nothing to draw on this floor';
+const EMPTY_MARK = '— nothing to draw';
+
+/**
+ * A floor with every bucket present and every one of them empty.
+ *
+ * **No plan of this building produces one**: all nine layers have geometry on the real floor
+ * (`floorLayout.test.ts` pins that), so the empty state is unreachable in the running app
+ * and can only be exercised by handing the switcher a layout built here. It becomes
+ * reachable the day the plan declares a layer no run carries, or a storey is built that
+ * holds none of one layer's runs — and the sentence is written now so that day is a data
+ * change and not a bug report.
+ */
+const EMPTY_LAYOUT: FloorLayout = Object.freeze(
+  Object.fromEntries(FLOOR_MATERIAL_KEYS.map((key) => [key, Object.freeze([])])) as Record<
+    string,
+    readonly never[]
+  >,
+) as FloorLayout;
+
+/** The live reading with `count` boxes ticked, before anything is said about empty ones. */
+function readingFor(count: number): string {
+  return `Layers shown: ${String(count)} of ${String(SERVICE_LAYERS.length)} on`;
+}
+
+/** Ticks every layer at once, without clicking nine boxes. */
+function tickEveryLayer(): void {
+  act(() => {
+    for (const layer of SERVICE_LAYERS) {
+      useLayerStore.getState().toggleLayer(layer.key);
+    }
+  });
+}
 
 function toggleView(): void {
   act(() => {
@@ -278,6 +315,69 @@ describe('LayerSwitcher', () => {
 
     expect(queryPanel()).toBeNull();
     expect(getTrigger()).toHaveFocus();
+  });
+
+  it('never says a layer is empty on the floor as it is really drawn', async () => {
+    const user = userEvent.setup();
+    render(<LayerSwitcher />);
+
+    await open(user);
+    tickEveryLayer();
+
+    // The negative control for everything below: with all nine on, the real floor draws
+    // something for every one of them, so the empty sentence must not appear anywhere.
+    expect(getSummary().textContent).toBe(readingFor(SERVICE_LAYERS.length));
+    expect(getPanel().textContent).not.toContain(EMPTY_MARK);
+  });
+
+  it('marks a ticked layer with nothing to draw, and says so in the live reading', async () => {
+    const user = userEvent.setup();
+    render(<LayerSwitcher layout={EMPTY_LAYOUT} />);
+
+    await open(user);
+    await user.click(screen.getByRole('checkbox', { name: TICKED_LAYER.name }));
+
+    // Both halves, because either alone is half a message: the marker is a pixel a screen
+    // reader would have to be sitting on the row to meet, and the sentence is the element
+    // this panel's assistive technology is already listening to.
+    expect(getSummary().textContent).toBe(
+      `${readingFor(ONE_TICKED)}${EMPTY_SENTENCE}: ${TICKED_LAYER.name}`,
+    );
+    // Glued, because an accessible name trims each node before joining them: the dash is
+    // inside the marker's own words for exactly that reason.
+    expect(getBoxes()[1]).toHaveAccessibleName(`${TICKED_LAYER.name}${EMPTY_MARK}`);
+    expect(getBoxes()[0]).toHaveAccessibleName(FIRST_LAYER.name);
+  });
+
+  it('marks only the rows that are ticked, and names them in the plan order', async () => {
+    const user = userEvent.setup();
+    render(<LayerSwitcher layout={EMPTY_LAYOUT} />);
+
+    await open(user);
+    await user.click(screen.getByRole('checkbox', { name: TICKED_LAYER.name }));
+    await user.click(screen.getByRole('checkbox', { name: FIRST_LAYER.name }));
+
+    // The first layer was ticked second and is still named first: the sentence reads the
+    // plan's order, which is the order the rows are in.
+    expect(getSummary().textContent).toBe(
+      `${readingFor(TWO_TICKED)}${EMPTY_SENTENCE}: ${FIRST_LAYER.name}, ${TICKED_LAYER.name}`,
+    );
+    const marked = getBoxes().filter((box) =>
+      (box.labels?.[0]?.textContent ?? '').includes(EMPTY_MARK),
+    );
+    expect(marked).toHaveLength(TWO_TICKED);
+  });
+
+  it('says nothing about a layer nobody ticked, however empty it is', async () => {
+    const user = userEvent.setup();
+    render(<LayerSwitcher layout={EMPTY_LAYOUT} />);
+
+    await open(user);
+
+    // An unticked layer draws nothing by definition; saying so about all nine would turn
+    // the naked-walls default into nine complaints.
+    expect(getSummary().textContent).toBe(NAKED_READING);
+    expect(getPanel().textContent).not.toContain(EMPTY_MARK);
   });
 
   it('leaves focus on the box that was ticked, so a run of ticks is one gesture', async () => {
