@@ -45,7 +45,7 @@ const UNFOCUSED_KEY_HOLD_MS = 500;
  * shaders compile — see {@link FIRST_MANNEQUIN_FRAME_TIMEOUT_MS}.
  *
  * CI has no GPU, so every frame of the whole floor is rasterised in software on the CPU, and
- * the same suite takes **12.8 min** there against **4.5 min** here: a **3× slowdown**, paid by
+ * the same suite takes **12.8 min** there against **~10 min** here (4.5 min when that ratio was measured; the suite has since grown to 31 tests, and `tour.spec.ts` alone is about 4 of them): a **3× slowdown**, paid by
  * exactly that per-frame work. 23 s here is therefore some **70 s** there, against the 90 s
  * that `test.slow()` (three times the 30 s default) allowed — it passes, but with barely 20 s
  * left, which is no margin at all on a shared runner. It and the unfocused-keys test below are

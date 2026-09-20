@@ -34,3 +34,13 @@ export const CAMERA_TRANSITION_ATTRIBUTE = 'data-camera-transition';
 export const CAMERA_TRANSITION_IDLE = 'idle';
 /** Value of {@link CAMERA_TRANSITION_ATTRIBUTE} while the camera is flying between the views. */
 export const CAMERA_TRANSITION_RUNNING = 'running';
+
+/**
+ * CSS selector for the open layer panel: the `<fieldset>` of nine build-layer checkboxes.
+ *
+ * By id and not by role, because a `<fieldset>` with a `<legend>` is a `group` and the
+ * interior HUD already has two of those (the remote control and the orbit pad). The id is
+ * the contract `src/features/building/ui/hudIds.ts` publishes for exactly this, and it is
+ * what the trigger's `aria-controls` names while the panel is open.
+ */
+export const LAYER_PANEL_SELECTOR = '#layer-panel';
