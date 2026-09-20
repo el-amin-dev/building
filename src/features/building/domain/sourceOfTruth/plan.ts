@@ -1718,7 +1718,7 @@ export const SERVICE_LAYERS = deepFreeze([
     key: 'lowVoltage',
     name: 'Low voltage',
     service: true,
-    why: 'Ethernet and the rest of the low-voltage side, with an outlet in every room so a mesh node or a router can be added to any of them later. Held clear of the electricity runs by a stated separation, because power interferes with the signal — a distance the verifier checks rather than a sentence in a comment.',
+    why: 'Ethernet and the rest of the low-voltage side, with an outlet in every room except the three bath and shower cubicles, so a mesh node or a router can be added anywhere a person would put one. Held clear of the electricity runs by a stated separation, because power interferes with the signal — a distance the verifier checks rather than a sentence in a comment.',
   },
   {
     key: 'climate',
@@ -2194,7 +2194,7 @@ const DRAINAGE_RUNS = [
  *
  * Lanes, by (z, y): cold (8.95, 2.35) · hot (8.95, 2.20) · gas (9.00, 2.50) ·
  * heating flow (9.00, 2.35) · heating return (9.00, 2.20) · data (9.35, 2.50) ·
- * cooling (9.45, 2.60) · power (9.60, 2.35) · lighting (9.60, 2.20).
+ * cooling (9.45, 2.55) · power (9.60, 2.35) · lighting (9.60, 2.20).
  *
  * Data sits 0.29 m from power and 0.39 m from lighting — both over the 0.20 m
  * `SERVICE_SPEC.dataToPowerSeparation`, which is the distance mains cable stops
@@ -2205,7 +2205,10 @@ const CHAMBER_VENT_RUNS = [
     layer: 'gas',
     family: 'chamberVent',
     from: { at: 'chamber', chamber: 'wetGasChamber' },
-    to: { at: 'space', space: 'balconyA' },
+    to: {
+      at: 'cap',
+      why: 'Discharges to open air over balcony A. A vent TERMINATES; it does not serve the space it discharges into, and declaring it `to` the balcony made the room panel report that the balcony was on gas.',
+    },
     points: [
       [1.98, 9.35, 2.1],
       [1.3, 9.35, 2.1],
@@ -2216,7 +2219,10 @@ const CHAMBER_VENT_RUNS = [
     layer: 'electricity',
     family: 'chamberVent',
     from: { at: 'chamber', chamber: 'electricalChamber' },
-    to: { at: 'space', space: 'ccBalcony' },
+    to: {
+      at: 'cap',
+      why: 'Discharges to open air over the control-center balcony. A vent terminates rather than serving what it discharges into.',
+    },
     points: [
       [2.72, 9.35, 2.1],
       [4.1, 9.35, 2.1],
@@ -2261,9 +2267,9 @@ const WATER_RUNS = [
     from: { at: 'space', space: 'voidEast' },
     to: { at: 'fitting', space: 'mainSanitair', kind: 'sink' },
     points: [
-      [19.95, 8.95, 2.35],
-      [19.95, 6.5, 2.35],
-      [19.95, 6.5, 0.95],
+      [19.75, 8.95, 2.35],
+      [19.75, 6.5, 2.35],
+      [19.75, 6.5, 0.95],
     ],
   },
   {
@@ -2303,7 +2309,7 @@ const WATER_RUNS = [
   {
     layer: 'water',
     family: 'cold',
-    from: { at: 'space', space: 'voidEast' },
+    from: { at: 'space', space: 'balconySlabB' },
     to: { at: 'fitting', space: 'laundry', kind: 'sink' },
     points: [
       [15.25, 8.95, 2.35],
@@ -2394,7 +2400,7 @@ const WATER_RUNS = [
   {
     layer: 'water',
     family: 'hot',
-    from: { at: 'space', space: 'voidEast' },
+    from: { at: 'space', space: 'balconySlabB' },
     to: { at: 'fitting', space: 'laundry', kind: 'sink' },
     points: [
       [15.15, 8.95, 2.2],
@@ -2445,6 +2451,35 @@ const WATER_RUNS = [
  * also why the isolation rule matters so much for so little pipe: the danger is
  * not the length of the run, it is which compartment it ends in.
  */
+/**
+ * The water heater's relief and condensate discharge.
+ *
+ * Found by the room panel's roll-call: the control center held a heater, gas,
+ * water, electricity and low voltage and had **no drainage at all**. A stored
+ * hot-water heater has a temperature-and-pressure relief that must be able to
+ * let go, and there is no stack within ten metres of this room.
+ *
+ * It discharges over balcony A, and that is the correct answer rather than a
+ * convenient one: a relief discharge is required to be VISIBLE, so that a heater
+ * quietly relieving itself is something somebody notices instead of something
+ * that drains away unseen.
+ */
+const HEATER_DRAIN_RUNS = [
+  {
+    layer: 'drainage',
+    family: 'waste',
+    from: { at: 'chamber', chamber: 'wetGasChamber' },
+    to: {
+      at: 'cap',
+      why: 'Discharges in open air over balcony A, where it can be seen. A relief that drains away unseen is a fault nobody finds.',
+    },
+    points: [
+      [1.75, 9.5, 0.35],
+      [1.3, 9.5, 0.32],
+    ],
+  },
+] as const satisfies readonly PlanServiceRun[];
+
 const GAS_RUNS = [
   {
     layer: 'gas',
@@ -2498,9 +2533,9 @@ const DRY_RUNS = [
     from: { at: 'chamber', chamber: 'electricalChamber' },
     to: { at: 'space', space: 'voidEast' },
     points: [
-      [2.72, 9.35, 1.2],
-      [2.72, 9.35, 2.35],
-      [2.72, 9.6, 2.35],
+      [2.9, 9.35, 1.2],
+      [2.9, 9.35, 2.35],
+      [2.9, 9.6, 2.35],
       [20.3, 9.6, 2.35],
     ],
   },
@@ -2532,8 +2567,8 @@ const DRY_RUNS = [
     to: { at: 'space', space: 'utilityRoom' },
     points: [
       [20.3, 9.6, 2.35],
-      [21.35, 9.6, 2.35],
-      [21.35, 9.6, 0.3],
+      [21.45, 9.6, 2.35],
+      [21.45, 9.6, 0.3],
     ],
   },
   {
@@ -2542,9 +2577,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidEast' },
     to: { at: 'space', space: 'mainShowerCubicle' },
     points: [
-      [19.9, 9.6, 2.35],
-      [19.9, 8.6, 2.35],
-      [19.9, 8.6, 0.3],
+      [20, 9.6, 2.35],
+      [20, 8.6, 2.35],
+      [20, 8.6, 0.3],
     ],
   },
   {
@@ -2553,9 +2588,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidEast' },
     to: { at: 'space', space: 'mainBathCubicle' },
     points: [
-      [18.5, 9.6, 2.35],
-      [18.5, 8.6, 2.35],
-      [18.5, 8.6, 0.3],
+      [18.6, 9.6, 2.35],
+      [18.6, 8.6, 2.35],
+      [18.6, 8.6, 0.3],
     ],
   },
   {
@@ -2564,9 +2599,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidEast' },
     to: { at: 'space', space: 'mainSanitair' },
     points: [
-      [18.2, 9.6, 2.35],
-      [18.2, 7.3, 2.35],
-      [18.2, 7.3, 0.3],
+      [18.3, 9.6, 2.35],
+      [18.3, 7.3, 2.35],
+      [18.3, 7.3, 0.3],
     ],
   },
   {
@@ -2575,9 +2610,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidEast' },
     to: { at: 'space', space: 'laundry' },
     points: [
-      [16.5, 9.6, 2.35],
-      [16.5, 8.6, 2.35],
-      [16.5, 8.6, 0.3],
+      [16.6, 9.6, 2.35],
+      [16.6, 8.6, 2.35],
+      [16.6, 8.6, 0.3],
     ],
   },
   {
@@ -2586,9 +2621,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'balconySlabB' },
     to: { at: 'space', space: 'kitchen' },
     points: [
-      [12.6, 9.6, 2.35],
-      [12.6, 8.6, 2.35],
-      [12.6, 8.6, 0.3],
+      [12.7, 9.6, 2.35],
+      [12.7, 8.6, 2.35],
+      [12.7, 8.6, 0.3],
     ],
   },
   {
@@ -2597,9 +2632,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidWest' },
     to: { at: 'space', space: 'guestBathCubicle' },
     points: [
-      [8.5, 9.6, 2.35],
-      [8.5, 8.6, 2.35],
-      [8.5, 8.6, 0.3],
+      [8.6, 9.6, 2.35],
+      [8.6, 8.6, 2.35],
+      [8.6, 8.6, 0.3],
     ],
   },
   {
@@ -2608,9 +2643,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidWest' },
     to: { at: 'space', space: 'guestSanitair' },
     points: [
-      [8.5, 9.6, 2.35],
-      [8.5, 7.75, 2.35],
-      [8.5, 7.75, 0.3],
+      [8.6, 9.6, 2.35],
+      [8.6, 7.75, 2.35],
+      [8.6, 7.75, 0.3],
     ],
   },
   {
@@ -2619,9 +2654,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidWest' },
     to: { at: 'space', space: 'guestRoom' },
     points: [
-      [6, 9.6, 2.35],
-      [6, 8.6, 2.35],
-      [6, 8.6, 0.3],
+      [6.1, 9.6, 2.35],
+      [6.1, 8.6, 2.35],
+      [6.1, 8.6, 0.3],
     ],
   },
   {
@@ -2630,9 +2665,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'masterBedroom' },
     points: [
-      [4, 4.75, 2.5],
-      [4, 3.7, 2.5],
-      [4, 3.7, 0.3],
+      [4.1, 4.75, 2.5],
+      [4.1, 3.7, 2.5],
+      [4.1, 3.7, 0.3],
     ],
   },
   {
@@ -2641,9 +2676,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'livingRoom' },
     points: [
-      [9.4, 4.75, 2.5],
-      [9.4, 3.85, 2.5],
-      [9.4, 3.85, 0.3],
+      [9.5, 4.75, 2.5],
+      [9.5, 3.85, 2.5],
+      [9.5, 3.85, 0.3],
     ],
   },
   {
@@ -2652,9 +2687,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'bedroomMaleKids' },
     points: [
-      [14.5, 4.75, 2.5],
-      [14.5, 3.85, 2.5],
-      [14.5, 3.85, 0.3],
+      [14.6, 4.75, 2.5],
+      [14.6, 3.85, 2.5],
+      [14.6, 3.85, 0.3],
     ],
   },
   {
@@ -2663,9 +2698,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'bedroomFemaleKids' },
     points: [
-      [19.7, 4.75, 2.5],
-      [19.7, 3.85, 2.5],
-      [19.7, 3.85, 0.3],
+      [19.8, 4.75, 2.5],
+      [19.8, 3.85, 2.5],
+      [19.8, 3.85, 0.3],
     ],
   },
   {
@@ -2674,8 +2709,8 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'corridor' },
     points: [
-      [11, 4.75, 2.5],
-      [11, 4.75, 0.3],
+      [11.1, 4.75, 2.5],
+      [11.1, 4.75, 0.3],
     ],
   },
   {
@@ -2685,8 +2720,8 @@ const DRY_RUNS = [
     to: { at: 'space', space: 'stairs' },
     points: [
       [5.6, 4.75, 2.5],
-      [3.6, 4.75, 2.5],
-      [3.6, 4.75, 0.3],
+      [3.7, 4.75, 2.5],
+      [3.7, 4.75, 0.3],
     ],
   },
   {
@@ -2695,9 +2730,9 @@ const DRY_RUNS = [
     from: { at: 'chamber', chamber: 'electricalChamber' },
     to: { at: 'space', space: 'controlCenter' },
     points: [
-      [2.82, 9.05, 1.2],
-      [2.82, 8.2, 1.2],
-      [2.82, 8.2, 0.3],
+      [2.9, 9.05, 1.2],
+      [2.9, 8.2, 1.2],
+      [2.9, 8.2, 0.3],
     ],
   },
 
@@ -2708,9 +2743,9 @@ const DRY_RUNS = [
     from: { at: 'chamber', chamber: 'electricalChamber' },
     to: { at: 'space', space: 'voidEast' },
     points: [
-      [2.72, 9.35, 1.2],
-      [2.72, 9.35, 2.2],
-      [2.72, 9.6, 2.2],
+      [2.78, 9.35, 1.2],
+      [2.78, 9.35, 2.2],
+      [2.78, 9.6, 2.2],
       [20.3, 9.6, 2.2],
     ],
   },
@@ -2742,8 +2777,8 @@ const DRY_RUNS = [
     to: { at: 'space', space: 'utilityRoom' },
     points: [
       [20.3, 9.6, 2.2],
-      [21.35, 9.6, 2.2],
-      [21.35, 9.6, 2.65],
+      [21.55, 9.6, 2.2],
+      [21.55, 9.6, 2.65],
     ],
   },
   {
@@ -2752,9 +2787,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidEast' },
     to: { at: 'space', space: 'mainShowerCubicle' },
     points: [
-      [19.9, 9.6, 2.2],
-      [19.9, 8.6, 2.2],
-      [19.9, 8.6, 2.65],
+      [20.1, 9.6, 2.2],
+      [20.1, 8.6, 2.2],
+      [20.1, 8.6, 2.65],
     ],
   },
   {
@@ -2763,9 +2798,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidEast' },
     to: { at: 'space', space: 'mainBathCubicle' },
     points: [
-      [18.5, 9.6, 2.2],
-      [18.5, 8.6, 2.2],
-      [18.5, 8.6, 2.65],
+      [18.7, 9.6, 2.2],
+      [18.7, 8.6, 2.2],
+      [18.7, 8.6, 2.65],
     ],
   },
   {
@@ -2774,9 +2809,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidEast' },
     to: { at: 'space', space: 'mainSanitair' },
     points: [
-      [18.2, 9.6, 2.2],
-      [18.2, 7.3, 2.2],
-      [18.2, 7.3, 2.65],
+      [18.4, 9.6, 2.2],
+      [18.4, 7.3, 2.2],
+      [18.4, 7.3, 2.65],
     ],
   },
   {
@@ -2785,9 +2820,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidEast' },
     to: { at: 'space', space: 'laundry' },
     points: [
-      [16.5, 9.6, 2.2],
-      [16.5, 8.6, 2.2],
-      [16.5, 8.6, 2.65],
+      [16.7, 9.6, 2.2],
+      [16.7, 8.6, 2.2],
+      [16.7, 8.6, 2.65],
     ],
   },
   {
@@ -2796,9 +2831,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'balconySlabB' },
     to: { at: 'space', space: 'kitchen' },
     points: [
-      [12.6, 9.6, 2.2],
-      [12.6, 8.6, 2.2],
-      [12.6, 8.6, 2.65],
+      [12.8, 9.6, 2.2],
+      [12.8, 8.6, 2.2],
+      [12.8, 8.6, 2.65],
     ],
   },
   {
@@ -2807,9 +2842,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidWest' },
     to: { at: 'space', space: 'guestBathCubicle' },
     points: [
-      [8.5, 9.6, 2.2],
-      [8.5, 8.6, 2.2],
-      [8.5, 8.6, 2.65],
+      [8.7, 9.6, 2.2],
+      [8.7, 8.6, 2.2],
+      [8.7, 8.6, 2.65],
     ],
   },
   {
@@ -2818,9 +2853,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidWest' },
     to: { at: 'space', space: 'guestSanitair' },
     points: [
-      [8.5, 9.6, 2.2],
-      [8.5, 7.75, 2.2],
-      [8.5, 7.75, 2.65],
+      [8.7, 9.6, 2.2],
+      [8.7, 7.75, 2.2],
+      [8.7, 7.75, 2.65],
     ],
   },
   {
@@ -2829,9 +2864,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidWest' },
     to: { at: 'space', space: 'guestRoom' },
     points: [
-      [6, 9.6, 2.2],
-      [6, 8.6, 2.2],
-      [6, 8.6, 2.65],
+      [6.2, 9.6, 2.2],
+      [6.2, 8.6, 2.2],
+      [6.2, 8.6, 2.65],
     ],
   },
   {
@@ -2840,9 +2875,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'masterBedroom' },
     points: [
-      [4, 4.75, 2.6],
-      [4, 3.7, 2.6],
-      [4, 3.7, 2.65],
+      [4.2, 4.75, 2.6],
+      [4.2, 3.7, 2.6],
+      [4.2, 3.7, 2.65],
     ],
   },
   {
@@ -2851,9 +2886,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'livingRoom' },
     points: [
-      [9.4, 4.75, 2.6],
-      [9.4, 3.85, 2.6],
-      [9.4, 3.85, 2.65],
+      [9.6, 4.75, 2.6],
+      [9.6, 3.85, 2.6],
+      [9.6, 3.85, 2.65],
     ],
   },
   {
@@ -2862,9 +2897,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'bedroomMaleKids' },
     points: [
-      [14.5, 4.75, 2.6],
-      [14.5, 3.85, 2.6],
-      [14.5, 3.85, 2.65],
+      [14.7, 4.75, 2.6],
+      [14.7, 3.85, 2.6],
+      [14.7, 3.85, 2.65],
     ],
   },
   {
@@ -2873,9 +2908,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'bedroomFemaleKids' },
     points: [
-      [19.7, 4.75, 2.6],
-      [19.7, 3.85, 2.6],
-      [19.7, 3.85, 2.65],
+      [19.9, 4.75, 2.6],
+      [19.9, 3.85, 2.6],
+      [19.9, 3.85, 2.65],
     ],
   },
   {
@@ -2884,8 +2919,8 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'corridor' },
     points: [
-      [11, 4.75, 2.6],
-      [11, 4.75, 2.65],
+      [11.2, 4.75, 2.6],
+      [11.2, 4.75, 2.65],
     ],
   },
   {
@@ -2895,8 +2930,8 @@ const DRY_RUNS = [
     to: { at: 'space', space: 'stairs' },
     points: [
       [5.6, 4.75, 2.6],
-      [3.6, 4.75, 2.6],
-      [3.6, 4.75, 2.65],
+      [3.8, 4.75, 2.6],
+      [3.8, 4.75, 2.65],
     ],
   },
   {
@@ -2905,9 +2940,9 @@ const DRY_RUNS = [
     from: { at: 'chamber', chamber: 'electricalChamber' },
     to: { at: 'space', space: 'controlCenter' },
     points: [
-      [2.82, 9.05, 1.2],
-      [2.82, 8.2, 1.2],
-      [2.82, 8.2, 2.65],
+      [2.78, 9.05, 1.2],
+      [2.78, 8.2, 1.2],
+      [2.78, 8.2, 2.65],
     ],
   },
 
@@ -2918,8 +2953,8 @@ const DRY_RUNS = [
     from: { at: 'chamber', chamber: 'electricalChamber' },
     to: { at: 'space', space: 'voidEast' },
     points: [
-      [2.72, 9.35, 1.2],
-      [2.72, 9.35, 2.5],
+      [2.52, 9.35, 1.2],
+      [2.52, 9.35, 2.5],
       [20.3, 9.35, 2.5],
     ],
   },
@@ -2929,8 +2964,8 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'balconySlabB' },
     to: { at: 'space', space: 'corridor' },
     points: [
-      [12.7, 9.35, 2.5],
-      [12.7, 4.45, 2.5],
+      [12.4, 9.35, 2.5],
+      [12.4, 4.45, 2.5],
     ],
   },
   {
@@ -2950,8 +2985,8 @@ const DRY_RUNS = [
     to: { at: 'space', space: 'utilityRoom' },
     points: [
       [20.3, 9.35, 2.5],
-      [21.35, 9.35, 2.5],
-      [21.35, 9.35, 0.3],
+      [22, 9.35, 2.5],
+      [22, 9.35, 0.3],
     ],
   },
   {
@@ -2960,9 +2995,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidEast' },
     to: { at: 'space', space: 'mainSanitair' },
     points: [
-      [18.2, 9.35, 2.5],
-      [18.2, 7.3, 2.5],
-      [18.2, 7.3, 0.3],
+      [18.85, 9.35, 2.5],
+      [18.85, 7.3, 2.5],
+      [18.85, 7.3, 0.3],
     ],
   },
   {
@@ -2971,9 +3006,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidEast' },
     to: { at: 'space', space: 'laundry' },
     points: [
-      [16.5, 9.35, 2.5],
-      [16.5, 8.6, 2.5],
-      [16.5, 8.6, 0.3],
+      [17.15, 9.35, 2.5],
+      [17.15, 8.6, 2.5],
+      [17.15, 8.6, 0.3],
     ],
   },
   {
@@ -2982,9 +3017,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'balconySlabB' },
     to: { at: 'space', space: 'kitchen' },
     points: [
-      [12.6, 9.35, 2.5],
-      [12.6, 8.6, 2.5],
-      [12.6, 8.6, 0.3],
+      [13.25, 9.35, 2.5],
+      [13.25, 8.6, 2.5],
+      [13.25, 8.6, 0.3],
     ],
   },
   {
@@ -2993,9 +3028,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidWest' },
     to: { at: 'space', space: 'guestSanitair' },
     points: [
-      [8.5, 9.35, 2.5],
-      [8.5, 7.75, 2.5],
-      [8.5, 7.75, 0.3],
+      [9.15, 9.35, 2.5],
+      [9.15, 7.75, 2.5],
+      [9.15, 7.75, 0.3],
     ],
   },
   {
@@ -3004,9 +3039,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidWest' },
     to: { at: 'space', space: 'guestRoom' },
     points: [
-      [6, 9.35, 2.5],
-      [6, 8.6, 2.5],
-      [6, 8.6, 0.3],
+      [6.65, 9.35, 2.5],
+      [6.65, 8.6, 2.5],
+      [6.65, 8.6, 0.3],
     ],
   },
   {
@@ -3015,9 +3050,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'masterBedroom' },
     points: [
-      [4, 4.45, 2.5],
-      [4, 3.7, 2.5],
-      [4, 3.7, 0.3],
+      [4.65, 4.45, 2.5],
+      [4.65, 3.7, 2.5],
+      [4.65, 3.7, 0.3],
     ],
   },
   {
@@ -3026,9 +3061,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'livingRoom' },
     points: [
-      [9.4, 4.45, 2.5],
-      [9.4, 3.85, 2.5],
-      [9.4, 3.85, 0.3],
+      [10.05, 4.45, 2.5],
+      [10.05, 3.85, 2.5],
+      [10.05, 3.85, 0.3],
     ],
   },
   {
@@ -3037,9 +3072,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'bedroomMaleKids' },
     points: [
-      [14.5, 4.45, 2.5],
-      [14.5, 3.85, 2.5],
-      [14.5, 3.85, 0.3],
+      [15.15, 4.45, 2.5],
+      [15.15, 3.85, 2.5],
+      [15.15, 3.85, 0.3],
     ],
   },
   {
@@ -3048,9 +3083,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'bedroomFemaleKids' },
     points: [
-      [19.7, 4.45, 2.5],
-      [19.7, 3.85, 2.5],
-      [19.7, 3.85, 0.3],
+      [20.35, 4.45, 2.5],
+      [20.35, 3.85, 2.5],
+      [20.35, 3.85, 0.3],
     ],
   },
   {
@@ -3059,8 +3094,8 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'corridor' },
     points: [
-      [11, 4.45, 2.5],
-      [11, 4.45, 0.3],
+      [11.65, 4.45, 2.5],
+      [11.65, 4.45, 0.3],
     ],
   },
   {
@@ -3070,8 +3105,8 @@ const DRY_RUNS = [
     to: { at: 'space', space: 'stairs' },
     points: [
       [5.6, 4.45, 2.5],
-      [3.6, 4.45, 2.5],
-      [3.6, 4.45, 0.3],
+      [4.25, 4.45, 2.5],
+      [4.25, 4.45, 0.3],
     ],
   },
   {
@@ -3080,9 +3115,9 @@ const DRY_RUNS = [
     from: { at: 'chamber', chamber: 'electricalChamber' },
     to: { at: 'space', space: 'controlCenter' },
     points: [
-      [2.82, 9.05, 1.2],
-      [2.82, 8.2, 1.2],
-      [2.82, 8.2, 0.3],
+      [2.52, 9.05, 1.2],
+      [2.52, 8.2, 1.2],
+      [2.52, 8.2, 0.3],
     ],
   },
 
@@ -3098,7 +3133,7 @@ const DRY_RUNS = [
       [4.5, 9.45, 2.55],
       [20.3, 9.45, 2.55],
     ],
-    why: 'The cooling plant is an OUTDOOR unit standing on the control-center balcony, not a compartment of the control center. A condenser rejects heat and needs open air, so it could not go in the sealed electrical box — and putting it in the wet-and-gas box would have stood a refrigeration unit next to a burner. It is the one service whose source is a place rather than a chamber, which is why `from` names a space.',
+    why: 'The cooling plant is an OUTDOOR unit standing on the control-center balcony, not a compartment of the control center. A condenser rejects heat and needs open air, so it could not go in the sealed electrical box — and the wet-and-gas box would have stood a refrigeration unit beside a burner. It is the one service whose source is a place rather than a chamber.',
   },
   {
     layer: 'climate',
@@ -3126,9 +3161,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidWest' },
     to: { at: 'space', space: 'guestRoom' },
     points: [
-      [6, 9.45, 2.55],
-      [6, 8.6, 2.55],
-      [6, 8.6, 2.45],
+      [7, 9.45, 2.55],
+      [7, 8.6, 2.55],
+      [7, 8.6, 2.45],
     ],
   },
   {
@@ -3137,9 +3172,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'masterBedroom' },
     points: [
-      [4, 5.1, 2.55],
-      [4, 3.7, 2.55],
-      [4, 3.7, 2.45],
+      [5, 5.1, 2.55],
+      [5, 3.7, 2.55],
+      [5, 3.7, 2.45],
     ],
   },
   {
@@ -3148,9 +3183,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'livingRoom' },
     points: [
-      [9.4, 5.1, 2.55],
-      [9.4, 3.85, 2.55],
-      [9.4, 3.85, 2.45],
+      [10.4, 5.1, 2.55],
+      [10.4, 3.85, 2.55],
+      [10.4, 3.85, 2.45],
     ],
   },
   {
@@ -3159,9 +3194,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'bedroomMaleKids' },
     points: [
-      [14.5, 5.1, 2.55],
-      [14.5, 3.85, 2.55],
-      [14.5, 3.85, 2.45],
+      [15.5, 5.1, 2.55],
+      [15.5, 3.85, 2.55],
+      [15.5, 3.85, 2.45],
     ],
   },
   {
@@ -3170,9 +3205,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'bedroomFemaleKids' },
     points: [
-      [19.7, 5.1, 2.55],
-      [19.7, 3.85, 2.55],
-      [19.7, 3.85, 2.45],
+      [20.7, 5.1, 2.55],
+      [20.7, 3.85, 2.55],
+      [20.7, 3.85, 2.45],
     ],
   },
   {
@@ -3181,8 +3216,8 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'corridor' },
     points: [
-      [11, 5.1, 2.55],
-      [11, 5.1, 2.45],
+      [12, 5.1, 2.55],
+      [12, 5.1, 2.45],
     ],
   },
 
@@ -3193,9 +3228,9 @@ const DRY_RUNS = [
     from: { at: 'chamber', chamber: 'wetGasChamber' },
     to: { at: 'space', space: 'voidEast' },
     points: [
-      [2.6, 9.35, 1.2],
-      [2.6, 9.35, 2.35],
-      [2.6, 9, 2.35],
+      [2.15, 9.35, 1.2],
+      [2.15, 9.35, 2.35],
+      [2.15, 9, 2.35],
       [20.3, 9, 2.35],
     ],
   },
@@ -3226,8 +3261,8 @@ const DRY_RUNS = [
     to: { at: 'space', space: 'utilityRoom' },
     points: [
       [20.3, 9, 2.35],
-      [21.35, 9, 2.35],
-      [21.35, 9, 0.6],
+      [21.25, 9, 2.35],
+      [21.25, 9, 0.6],
     ],
   },
   {
@@ -3236,9 +3271,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidEast' },
     to: { at: 'space', space: 'mainShowerCubicle' },
     points: [
-      [19.9, 9, 2.35],
-      [19.9, 8.6, 2.35],
-      [19.9, 8.6, 0.6],
+      [19.8, 9, 2.35],
+      [19.8, 8.6, 2.35],
+      [19.8, 8.6, 0.6],
     ],
   },
   {
@@ -3247,9 +3282,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidEast' },
     to: { at: 'space', space: 'mainBathCubicle' },
     points: [
-      [18.5, 9, 2.35],
-      [18.5, 8.6, 2.35],
-      [18.5, 8.6, 0.6],
+      [18.4, 9, 2.35],
+      [18.4, 8.6, 2.35],
+      [18.4, 8.6, 0.6],
     ],
   },
   {
@@ -3258,9 +3293,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidEast' },
     to: { at: 'space', space: 'mainSanitair' },
     points: [
-      [18.2, 9, 2.35],
-      [18.2, 7.3, 2.35],
-      [18.2, 7.3, 0.6],
+      [18.1, 9, 2.35],
+      [18.1, 7.3, 2.35],
+      [18.1, 7.3, 0.6],
     ],
   },
   {
@@ -3269,9 +3304,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidEast' },
     to: { at: 'space', space: 'laundry' },
     points: [
-      [16.5, 9, 2.35],
-      [16.5, 8.6, 2.35],
-      [16.5, 8.6, 0.6],
+      [16.4, 9, 2.35],
+      [16.4, 8.6, 2.35],
+      [16.4, 8.6, 0.6],
     ],
   },
   {
@@ -3280,9 +3315,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'balconySlabB' },
     to: { at: 'space', space: 'kitchen' },
     points: [
-      [12.6, 9, 2.35],
-      [12.6, 8.6, 2.35],
-      [12.6, 8.6, 0.6],
+      [12.5, 9, 2.35],
+      [12.5, 8.6, 2.35],
+      [12.5, 8.6, 0.6],
     ],
   },
   {
@@ -3291,9 +3326,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidWest' },
     to: { at: 'space', space: 'guestBathCubicle' },
     points: [
-      [8.5, 9, 2.35],
-      [8.5, 8.6, 2.35],
-      [8.5, 8.6, 0.6],
+      [8.4, 9, 2.35],
+      [8.4, 8.6, 2.35],
+      [8.4, 8.6, 0.6],
     ],
   },
   {
@@ -3302,9 +3337,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidWest' },
     to: { at: 'space', space: 'guestSanitair' },
     points: [
-      [8.5, 9, 2.35],
-      [8.5, 7.75, 2.35],
-      [8.5, 7.75, 0.6],
+      [8.4, 9, 2.35],
+      [8.4, 7.75, 2.35],
+      [8.4, 7.75, 0.6],
     ],
   },
   {
@@ -3313,9 +3348,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'voidWest' },
     to: { at: 'space', space: 'guestRoom' },
     points: [
-      [6, 9, 2.35],
-      [6, 8.6, 2.35],
-      [6, 8.6, 0.6],
+      [5.9, 9, 2.35],
+      [5.9, 8.6, 2.35],
+      [5.9, 8.6, 0.6],
     ],
   },
   {
@@ -3324,9 +3359,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'masterBedroom' },
     points: [
-      [4, 5.3, 2.35],
-      [4, 3.7, 2.35],
-      [4, 3.7, 0.6],
+      [3.9, 5.3, 2.35],
+      [3.9, 3.7, 2.35],
+      [3.9, 3.7, 0.6],
     ],
   },
   {
@@ -3335,9 +3370,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'livingRoom' },
     points: [
-      [9.4, 5.3, 2.35],
-      [9.4, 3.85, 2.35],
-      [9.4, 3.85, 0.6],
+      [9.3, 5.3, 2.35],
+      [9.3, 3.85, 2.35],
+      [9.3, 3.85, 0.6],
     ],
   },
   {
@@ -3346,9 +3381,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'bedroomMaleKids' },
     points: [
-      [14.5, 5.3, 2.35],
-      [14.5, 3.85, 2.35],
-      [14.5, 3.85, 0.6],
+      [14.4, 5.3, 2.35],
+      [14.4, 3.85, 2.35],
+      [14.4, 3.85, 0.6],
     ],
   },
   {
@@ -3357,9 +3392,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'bedroomFemaleKids' },
     points: [
-      [19.7, 5.3, 2.35],
-      [19.7, 3.85, 2.35],
-      [19.7, 3.85, 0.6],
+      [19.6, 5.3, 2.35],
+      [19.6, 3.85, 2.35],
+      [19.6, 3.85, 0.6],
     ],
   },
   {
@@ -3368,8 +3403,8 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'corridor' },
     points: [
-      [11, 5.3, 2.35],
-      [11, 5.3, 0.6],
+      [10.9, 5.3, 2.35],
+      [10.9, 5.3, 0.6],
     ],
   },
   {
@@ -3379,8 +3414,8 @@ const DRY_RUNS = [
     to: { at: 'space', space: 'stairs' },
     points: [
       [5.6, 5.3, 2.35],
-      [3.6, 5.3, 2.35],
-      [3.6, 5.3, 0.6],
+      [3.5, 5.3, 2.35],
+      [3.5, 5.3, 0.6],
     ],
   },
   {
@@ -3389,9 +3424,9 @@ const DRY_RUNS = [
     from: { at: 'chamber', chamber: 'wetGasChamber' },
     to: { at: 'space', space: 'controlCenter' },
     points: [
-      [2.7, 9.05, 1.2],
-      [2.7, 8.2, 1.2],
-      [2.7, 8.2, 0.6],
+      [2.15, 9.05, 1.2],
+      [2.15, 8.2, 1.2],
+      [2.15, 8.2, 0.6],
     ],
   },
 ] as const satisfies readonly PlanServiceRun[];
@@ -3406,6 +3441,7 @@ const DRY_RUNS = [
 export const SERVICE_RUNS = deepFreeze([
   ...DRAINAGE_RUNS,
   ...WATER_RUNS,
+  ...HEATER_DRAIN_RUNS,
   ...GAS_RUNS,
   ...CHAMBER_VENT_RUNS,
   ...DRY_RUNS,
