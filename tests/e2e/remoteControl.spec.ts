@@ -54,7 +54,7 @@ const AFTER_RELEASE_MS = 700;
  * 34–45 s across earlier runs — call the slowest local run 45 s.
  *
  * CI has no GPU, so every frame of the whole floor is rasterised in software on the CPU. The
- * same suite takes **12.8 min** there against **4.5 min** here: a **3× slowdown**, and it lands
+ * same suite takes **12.8 min** there against **~10 min** here (4.5 min when that ratio was measured; the suite has since grown to 31 tests, and `tour.spec.ts` alone is about 4 of them): a **3× slowdown**, and it lands
  * squarely on what this test spends its time doing. It settles the scene four times (each
  * settle is a series of canvas screenshots until two come back byte-identical), polls canvas
  * screenshots twice until a held button changes one, and waits out two fixed

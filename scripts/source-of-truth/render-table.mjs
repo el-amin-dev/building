@@ -5,7 +5,8 @@
  * matricule, every derived wall with its run and its length, and every port and
  * window with its span, its clear width and the owner's reason for it, are what
  * the owner actually checks a revision against — so they get their own page,
- * beside the plan, as five tables: ROOMS, WALLS, PORTS, WINDOWS, FIXTURES.
+ * beside the plan, as six tables: ROOMS, WALLS, PORTS, WINDOWS, FIXTURES,
+ * SERVICES.
  *
  * This module consumes the contract of `sourceOfTruth/plan.ts`, nothing else:
  *
@@ -40,6 +41,21 @@
  */
 
 /**
+ * The one runtime import this page makes, and the reason it is allowed.
+ *
+ * Every other number on this page is read straight off `spec`. A run's
+ * MATRICULE cannot be: `F1-DRN-S4` is numbered within its layer in declaration
+ * order, the domain's own rule (`services.ts`, {@link getServiceRuns}), and a
+ * second implementation of that rule here would be free to disagree with the
+ * model the moment a run is inserted rather than appended — which is exactly the
+ * drift ADR-010 exists to prevent. So the numbering is not re-derived, it is
+ * called. `getServiceRuns` takes the runs as an argument, so this page stays a
+ * pure function of the `spec` it is handed: it is `spec.SERVICE_RUNS` that is
+ * numbered, never an array this module reached for by itself.
+ */
+import { getServiceRuns } from '../../src/features/building/domain/services.ts';
+
+/**
  * The derivation's own vocabulary. `walls.mjs` is the one place a wall, a contact
  * and the plan namespace are described, so those descriptions are imported rather
  * than restated here: a renderer that re-declared them could drift from what it
@@ -49,7 +65,8 @@
  */
 
 /**
- * @import { PlanFixture, PlanRectCoordinates, PlanRoom }
+ * @import { PlanFixture, PlanRectCoordinates, PlanRoom, PlanServiceEnd,
+ *   PlanServicePoint, PlanServiceRun }
  *   from '../../src/features/building/domain/sourceOfTruth/plan.ts'
  */
 
@@ -1052,6 +1069,321 @@ function buildFixturesTable(spec, walls) {
   };
 }
 
+/* ------------------------------------------------------------------ *
+ * Services: the height band, which is the one thing a plan view destroys.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Level of the finished floor, in metres: the datum every declared `y` is on.
+ *
+ * Below it a run is inside the floor build-up — the 0.30 m between `HEIGHTS.wall`
+ * and `HEIGHTS.floorToFloor` — which is where waste actually runs and where
+ * nobody will ever see it. `services.ts` calls the same number `FLOOR_LEVEL` and
+ * uses it to decide that a buried run gets no boxing; this page uses it to decide
+ * what to call the run's height. Not imported from there because it is not
+ * exported, and a zero that means "the finished floor" is not a number that can
+ * drift.
+ */
+const SERVICE_FLOOR_LEVEL = 0;
+
+/**
+ * Metres above the finished floor at which a run is overhead, and why 2.10.
+ *
+ * It is the top of a door: every port on this floor is 2.10 m high or less, so a
+ * run at or above this level clears every opening, every fitting and every head
+ * on the storey. That is precisely the band the spine occupies (2.20–2.65), and
+ * it is the difference between a duct a person walks under and one they walk
+ * into. Below it a run is in the room — at hand height, behind a wall face, in
+ * the one band where two runs crossing on the plan page might really be fighting
+ * over the same space.
+ */
+const SERVICE_OVERHEAD_LEVEL = 2.1;
+
+/**
+ * What each height band is called, in the register and in the plan page's key.
+ *
+ * The words are shared rather than written twice because the plan page draws the
+ * band as a line style and the register states it in a column, and a drawing
+ * whose key says "under floor" over a register that says "buried" is a drawing
+ * the owner has to reconcile by hand.
+ *
+ * @type {Readonly<Record<'under' | 'wall' | 'overhead' | 'rises', string>>}
+ */
+export const SERVICE_BAND_NAMES = Object.freeze({
+  under: 'under floor',
+  wall: 'wall level',
+  overhead: 'overhead',
+  rises: 'rises',
+});
+
+/**
+ * Which height band a stretch of centreline lies in.
+ *
+ * Exported, and this is the point of exporting it: a plan view flattens `y`, so
+ * on the plan page two runs that never come within two metres of each other are
+ * drawn crossing. That page tells them apart by LINE STYLE, and the style it
+ * picks has to be the same fact the register's HEIGHT column prints, or the
+ * drawing and its own register disagree about where a pipe is. One classifier,
+ * two readings of it.
+ *
+ * Asked of any list of points, so the register can ask it of a whole run and the
+ * plan page of one leg at a time — a run that leaves a chamber at 1.20 and joins
+ * the spine at 2.35 is `rises` as a whole, and its spine leg is `overhead`.
+ *
+ * @param {readonly PlanServicePoint[]} points - Centreline points, `[x, z, y]`.
+ * @returns {'under' | 'wall' | 'overhead' | 'rises'} The band, or `rises` when
+ *   the stretch crosses from one band into another.
+ */
+export function serviceHeightBand(points) {
+  const heights = points.map((point) => point[2]);
+  const low = Math.min(...heights);
+  const high = Math.max(...heights);
+  if (high <= SERVICE_FLOOR_LEVEL + COORD_EPSILON) return 'under';
+  if (low >= SERVICE_OVERHEAD_LEVEL - COORD_EPSILON) return 'overhead';
+  if (
+    low >= SERVICE_FLOOR_LEVEL - COORD_EPSILON &&
+    high <= SERVICE_OVERHEAD_LEVEL + COORD_EPSILON
+  ) {
+    return 'wall';
+  }
+  return 'rises';
+}
+
+/**
+ * What a `cap` end reads as.
+ *
+ * A capped run does not arrive anywhere: the building is 1…10 identical storeys,
+ * floor 0 is undesigned and the roof is not modelled, so a riser stops at a
+ * declared stop-end rather than ending in mid-air. Printing that as a blank — or
+ * as {@link ABSENT}, which means "this record has no value for this column" —
+ * would read as a gap in the data instead of the deliberate end of a pipe. The
+ * owner's reason for each one is in the WHY column beside it.
+ */
+const CAPPED_END = 'capped end';
+
+/**
+ * Length of a run's centreline, in metres, in all three dimensions.
+ *
+ * Three and not two, because what this column answers is how much pipe the run
+ * is, and a stack that rises 3.00 m without moving on the plan is 3.00 m of pipe.
+ * The plan page measures the same runs flat, for a different question — how far
+ * across the floor they reach — and those two numbers are allowed to differ.
+ *
+ * @param {readonly PlanServicePoint[]} points - Centreline points, `[x, z, y]`.
+ * @returns {number} The summed leg lengths, in metres.
+ */
+function serviceRunLength(points) {
+  let total = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const [fromX, fromZ, fromY] = points[index - 1];
+    const [toX, toZ, toY] = points[index];
+    total += Math.hypot(toX - fromX, toZ - fromZ, toY - fromY);
+  }
+  return total;
+}
+
+/**
+ * The band a run is in, and the heights it is actually at.
+ *
+ * Both, because neither alone is enough: the word is what the plan page's line
+ * style means, and the numbers are what the owner checks a clash against.
+ *
+ * @param {readonly PlanServicePoint[]} points - Centreline points, `[x, z, y]`.
+ * @returns {string} e.g. `'overhead 2.55'` or `'under floor -0.17…-0.05'`.
+ */
+function describeServiceHeight(points) {
+  if (points.length === 0) return ABSENT;
+  const heights = points.map((point) => point[2]);
+  const low = Math.min(...heights);
+  const high = Math.max(...heights);
+  const level = high - low <= COORD_EPSILON ? metres(low) : `${metres(low)}…${metres(high)}`;
+  return `${SERVICE_BAND_NAMES[serviceHeightBand(points)]} ${level}`;
+}
+
+/**
+ * Name one end of a run.
+ *
+ * A room is given by matricule AND name — the matricule so the row can be taken
+ * straight to the ROOMS and WALLS tables above, the name so the register can be
+ * read without them. A fitting adds what it is, because `F1-R13-BTH` is served by
+ * four runs and which of the basin, the bath, the WC and the shower a pipe goes
+ * to is the whole content of the row.
+ *
+ * @param {PlanSpec} spec - The plan namespace.
+ * @param {Map<string, string>} names - From {@link buildNameIndex}.
+ * @param {Map<string, PlanRoom>} roomsById - The rooms, by id.
+ * @param {Map<number, string>} prefixes - From {@link buildRoomPrefixes}.
+ * @param {PlanServiceEnd} end - One end of a declared run.
+ * @returns {string} A readable end.
+ */
+function describeServiceEnd(spec, names, roomsById, prefixes, end) {
+  /**
+   * @param {string} id - A space id.
+   * @returns {string} Its matricule and its name.
+   */
+  const space = (id) => {
+    const room = roomsById.get(id);
+    const matricule = room ? roomMatricule(spec, room, prefixes) : '';
+    return matricule === '' ? spaceName(names, id) : `${matricule} ${spaceName(names, id)}`;
+  };
+  switch (end.at) {
+    case 'space':
+      return space(end.space);
+    case 'fitting':
+      return `${space(end.space)} · ${end.kind}`;
+    case 'chamber': {
+      // By name, not by id: a chamber is a declared thing with a name printed on
+      // the drawing, and `holds` — the isolation rule the whole control-centre
+      // split exists for — is read against that name.
+      const chamber = spec.SERVICE_CHAMBERS.find((candidate) => candidate.id === end.chamber);
+      return chamber ? chamber.name : end.chamber;
+    }
+    case 'cap':
+      return CAPPED_END;
+  }
+}
+
+/**
+ * The owner's reasons for one run, in one cell.
+ *
+ * A capped end carries its own reason and the run may carry another, and all of
+ * them are the owner's sentences rather than derived text, so all of them are
+ * printed. The caps are labelled by which end they stop, because "the roof is not
+ * modelled" and "floor 0 is undesigned" are the same shape of sentence and only
+ * the label says which end of the stack is which.
+ *
+ * @param {PlanServiceRun} run - The declaration.
+ * @returns {string} The reasons, or `''` where none was given.
+ */
+function describeServiceWhy(run) {
+  /** @type {string[]} */
+  const parts = [];
+  if (run.from.at === 'cap') parts.push(`from capped — ${run.from.why}`);
+  if (run.to.at === 'cap') parts.push(`to capped — ${run.to.why}`);
+  if (run.why !== undefined && run.why !== '') parts.push(run.why);
+  return parts.join('  ·  ');
+}
+
+/**
+ * SERVICES: every declared run of every service — what it carries, how wide it
+ * is, where it starts and stops, how much pipe it is and how high it runs.
+ *
+ * This is the table the plan page leans on. 116 runs cannot all be named on a
+ * drawing 1350 px wide without burying the floor under them, so the plan names
+ * the trunks and the risers and this register carries every one of them. The
+ * matricule is the join between the two, and it is not composed here: it comes
+ * from `getServiceRuns`, the domain's own numbering — per layer, in declaration
+ * order, `F1-DRN-S4` — so a run inserted in the middle of `SERVICE_RUNS`
+ * renumbers the register and the model together or not at all.
+ *
+ * Grouped by layer in `SERVICE_LAYERS` order, which is the order a building is
+ * actually built in, and within a layer in declaration order, which is the order
+ * the plan writes them in. Layers that carry no runs — `covers`, `furniture`,
+ * `finishing` are drawn layers, not services — never appear, because they have no
+ * rows rather than because this function names them.
+ *
+ * BORE is printed in MILLIMETRES against the metres everywhere else on this page,
+ * and deliberately: a pipe is specified in mm by every plumber, every merchant
+ * and every standard, so `110` is a size the owner can check against a catalogue
+ * where `0.11` is a number he would have to convert first. The column head says
+ * `mm` so the change of unit is stated rather than assumed.
+ *
+ * @param {PlanSpec} spec - The plan namespace.
+ * @param {readonly Wall[]} walls - The derived walls, for the room matricules.
+ * @returns {Table}
+ */
+function buildServicesTable(spec, walls) {
+  const names = buildNameIndex(spec);
+  const prefixes = buildRoomPrefixes(walls);
+  const roomsById = new Map(
+    spec.ROOMS.map((room) => /** @type {[string, PlanRoom]} */ ([room.id, room])),
+  );
+  const built = getServiceRuns(spec.SERVICE_RUNS);
+
+  /** @type {Row[]} */
+  const rows = [];
+  /** @type {string[]} */
+  const summary = [];
+  let total = 0;
+
+  for (const layer of spec.SERVICE_LAYERS) {
+    const ofLayer = built.filter((run) => run.layer === layer.key);
+    if (ofLayer.length === 0) continue;
+    let layerLength = 0;
+    for (const run of ofLayer) {
+      const { points } = run.run;
+      const length = serviceRunLength(points);
+      layerLength += length;
+      rows.push({
+        kind: 'body',
+        cells: [
+          run.matricule,
+          layer.name,
+          run.family,
+          // Rounded: 0.11 m is 110.00000000000001 mm in binary floating point,
+          // and a bore is a catalogue size rather than a measurement.
+          String(Math.round(run.bore * 1000)),
+          describeServiceEnd(spec, names, roomsById, prefixes, run.run.from),
+          describeServiceEnd(spec, names, roomsById, prefixes, run.run.to),
+          metres(length),
+          describeServiceHeight(points),
+          describeServiceWhy(run.run),
+        ],
+      });
+    }
+    total += layerLength;
+    summary.push(`${layer.name} ${ofLayer.length}`);
+    // Each layer closes with what it costs, the way the walls table closes each
+    // room with its wall length: the question asked of a service is how much of
+    // it there is, and no individual row answers it.
+    rows.push({
+      kind: 'subtotal',
+      cells: [
+        '',
+        `subtotal — ${layer.name}`,
+        `${ofLayer.length} run${ofLayer.length === 1 ? '' : 's'}`,
+        '',
+        '',
+        '',
+        metres(layerLength),
+        '',
+        '',
+      ],
+    });
+  }
+
+  rows.push({
+    kind: 'total',
+    cells: [
+      '',
+      'TOTAL — every run',
+      `${built.length} run${built.length === 1 ? '' : 's'}`,
+      '',
+      '',
+      '',
+      metres(total),
+      '',
+      '',
+    ],
+  });
+
+  return {
+    title: `SERVICES — ${built.length} runs, the run register: ${summary.join(' · ')}`,
+    columns: [
+      { head: 'MATRICULE', align: 'left' },
+      { head: 'LAYER', align: 'left' },
+      { head: 'FAMILY', align: 'left' },
+      { head: 'BORE mm', align: 'right' },
+      { head: 'FROM', align: 'left' },
+      { head: 'TO', align: 'left' },
+      { head: 'LENGTH m', align: 'right' },
+      { head: 'HEIGHT m', align: 'left' },
+      { head: 'WHY', align: 'left' },
+    ],
+    rows,
+  };
+}
+
 /**
  * The draw.io style of one grid cell.
  *
@@ -1214,12 +1546,16 @@ function layoutTable(table, x, y, nextId) {
 /**
  * Render the reference-table page of the source-of-truth document.
  *
- * The five tables are stacked down one page in the order a revision is read in:
+ * The six tables are stacked down one page in the order a revision is read in:
  * what the spaces are (ROOMS), what the derivation made of them (WALLS), how they
- * are entered (PORTS), how they are aired and lit (WINDOWS) and what stands in
- * them (FIXTURES). Each table starts
+ * are entered (PORTS), how they are aired and lit (WINDOWS), what stands in
+ * them (FIXTURES) and what is run through them (SERVICES). Each table starts
  * below the previous one's real height, and the page is sized to the widest of
  * them, so adding a room or rewording a note never pushes a table off the page.
+ *
+ * SERVICES is last because it is the only table that reads the others: a run
+ * ends in a room, so its FROM and TO are the matricules ROOMS declared and WALLS
+ * confirmed, and a reader who meets `F1-R13-BTH` there has already met it twice.
  *
  * @param {object} args
  * @param {PlanSpec} args.spec - Module namespace of `sourceOfTruth/plan.ts`.
@@ -1234,6 +1570,7 @@ export function renderTablePage({ spec, walls }) {
     buildPortsTable(spec, derivedOpenings),
     buildWindowsTable(spec, derivedOpenings),
     buildFixturesTable(spec, walls),
+    buildServicesTable(spec, walls),
   ];
 
   const nextId = createIdFactory();

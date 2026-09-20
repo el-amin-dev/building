@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { EXTERIOR_STATUS, FIRST_PERSON_STATUS, VIEW_TOGGLE_NAME } from './constants.ts';
+import { FURNISHED_LAYER_NAMES, showLayers } from './layerSwitcher.ts';
 import {
   captureSettledScene,
   expectCanvasVisible,
@@ -8,15 +9,68 @@ import {
 } from './sceneCapture.ts';
 
 /**
- * Baseline of the default exterior framing: the whole floor seen from outside, as the app
- * opens. It is the one image that shows the built floor as a whole — a wall, a slab, the
- * side-B void or the stairs bay going missing changes it.
+ * Baseline of the default exterior framing: the whole floor seen from outside, **naked**.
+ *
+ * This is what the app now opens on (ADR-022): structure, slabs, ceiling and light panels
+ * drawn plain, with no furniture, no finish and no services over them. It is the one image
+ * that shows the built floor as a whole — a wall, a slab, the side-B void or the stairs bay
+ * going missing changes it — and with nothing laid over the building, a change to the
+ * building itself has nowhere to hide.
+ *
+ * It replaces `exterior-default.png`, which was a baseline of the furnished floor and became
+ * a picture of a view the app no longer has.
  */
-const EXTERIOR_SNAPSHOT = 'exterior-default.png';
+const NAKED_SNAPSHOT = 'exterior-naked.png';
+
+/**
+ * Baseline of the other end of the switcher: `Furniture` and `Finishing` ticked, every
+ * service off.
+ *
+ * It is deliberately **not** all nine boxes. Ticking a service layer is what makes that
+ * service *visible*, so all nine on is this view with 116 runs drawn over it — twice as far
+ * from the pre-layer frame as this combination was when both were measured (45,942 differing
+ * pixels against 23,914, both figures taken before the fix below).
+ *
+ * ## This frame is the fixed one, and that is the point of it
+ *
+ * The claim the part was written on is that these two boxes reproduce the floor as it was
+ * drawn before the layers landed, pixel for pixel. **Reviewing this baseline as an image
+ * rather than regenerating it is what found that they did not**, and the defect it found was
+ * in `src/`, not in the baseline. Measured against the committed pre-layer baseline this one
+ * replaces, on this machine, at 1280 × 720:
+ *
+ * - **23,914 pixels of 921,600 differed — 2.59 % of the frame — with a maximum channel delta
+ *   of 144**, against the 200-pixel budget in `playwright.config.ts`;
+ * - it was not a settling race: the same 23,914 came back after 1 s, 5 s and 26 s;
+ * - the difference was confined to the finish surfaces, and it was the **generated textures
+ *   of ADR-020 — the oak grain, the carpet weave, the marble vein, the bouclé — not being
+ *   drawn at all**. The geometry was in the right place and the colours were right; the grain
+ *   was missing, so the wardrobes, the corridor floor and the bench rendered as flat blocks
+ *   where v1.0.0 rendered them with a surface.
+ *
+ * It was never the textures failing to exist. Adding a storey and removing it again — which
+ * hands the merged meshes a different `levels` array and rebuilds their materials — brought
+ * the grain back, and the frame from 23,914 differing pixels to **3,967 (0.43 %)**. So the
+ * textures were built and reachable and simply not applied to a material that had first
+ * rendered without one: whether a material has a `map` is a **shader define**, three.js
+ * compiles it in or out when the material is built, and React Three Fiber sets the prop
+ * without setting `needsUpdate`. It only began to matter in this part, because the app now
+ * opens on naked walls and every material therefore first compiles with no map.
+ *
+ * **Fixed in `src/`:** `FloorModel.MaterialMesh` now keys the material on the map's
+ * PRESENCE, so a bucket that gains or loses a texture gets a new material and the right
+ * shader, and a bucket that never carries one is never rebuilt.
+ *
+ * What is committed here is the **post-fix** frame — **436 pixels** from the pre-layer image,
+ * down from 23,914 — so this baseline pins the floor with its grain drawn, and a regression
+ * back to flat blocks fails it. A regenerated baseline would have pinned the defect forever
+ * (ADR-019).
+ */
+const FURNISHED_SNAPSHOT = 'exterior-furnished.png';
 
 /**
  * Baseline of the interior start pose: the first frame of the walk, mid-room and facing the
- * balcony doorway.
+ * balcony doorway, on the naked walls the app now opens on.
  *
  * This one is pinned as of the lighting fix in `SceneLighting`, and could not be before it.
  * The debug panel's Leva store seeded the light intensities from whichever view rendered
@@ -45,7 +99,7 @@ const SCREENSHOT_TIMEOUT_MS = 15_000;
 /**
  * Waits for the scene to come to rest, then compares the whole canvas with `snapshot`.
  *
- * Shared by both baselines so they are taken the same way: settled first, HUD hidden by
+ * Shared by all three baselines so they are taken the same way: settled first, HUD hidden by
  * `hideHud.css`, and the same budget. Nothing is painted over the frame, so the comparison
  * covers all 921,600 pixels of it in either view — the frame the matcher sees is the frame the
  * renderer drew.
@@ -69,21 +123,57 @@ async function expectSettledSceneMatches(page: Page, snapshot: string): Promise<
   });
 }
 
+/**
+ * Opens the app on the exterior view it defaults to, and proves it arrived there.
+ *
+ * @param page - A fresh page.
+ * @returns The errors the page throws, collected for the assertion at the end of the test.
+ */
+async function openExterior(page: Page): Promise<Error[]> {
+  const pageErrors: Error[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error));
+
+  await page.goto('/');
+  await expectCanvasVisible(page);
+  await expect(page.getByRole('status')).toHaveText(EXTERIOR_STATUS);
+  return pageErrors;
+}
+
+/**
+ * The two ends of the switcher and the interior start pose, pinned frame by frame.
+ *
+ * Three baselines and not two, because the switcher turned one default view into a range and
+ * a single image can only pin one point of it. The naked end is what the app opens on; the
+ * furnished end is every layer that is not a service; the interior is the view the walk starts
+ * from. A regression in the building shows in the first, a regression in the layering shows in
+ * the second, and a regression in the interior lighting or camera shows in the third.
+ *
+ * **Regenerating a baseline is not the same as reviewing one** (ADR-019): a wrong baseline
+ * passes every run once it is committed. All three were looked at after they were written, and
+ * {@link FURNISHED_SNAPSHOT} records what looking at that one found.
+ */
 test.describe('rendered floor baselines', () => {
-  test('matches the exterior baseline of the whole floor', async ({ page }) => {
+  test('matches the naked exterior baseline the app opens on', async ({ page }) => {
     // The first frame of the run compiles the scene's shaders, and the whole floor is far
     // heavier than the interim chamber these budgets were first tuned for.
     test.slow();
-    const pageErrors: Error[] = [];
-    page.on('pageerror', (error) => pageErrors.push(error));
+    const pageErrors = await openExterior(page);
 
-    await page.goto('/');
-    await expectCanvasVisible(page);
+    // Nothing is ticked: the default is the naked building, not a selection.
+    await expectSettledSceneMatches(page, NAKED_SNAPSHOT);
 
-    // The exterior view is the default: nothing is toggled before the baseline is taken.
-    await expect(page.getByRole('status')).toHaveText(EXTERIOR_STATUS);
+    expect(pageErrors).toEqual([]);
+  });
 
-    await expectSettledSceneMatches(page, EXTERIOR_SNAPSHOT);
+  test('matches the furnished and finished baseline', async ({ page }) => {
+    test.slow();
+    const pageErrors = await openExterior(page);
+
+    // Two ticks, and only two. `showLayers` asserts the count it ended on, so a click that
+    // landed on the wrong row fails there rather than being written into this baseline.
+    await showLayers(page, FURNISHED_LAYER_NAMES);
+
+    await expectSettledSceneMatches(page, FURNISHED_SNAPSHOT);
 
     expect(pageErrors).toEqual([]);
   });
@@ -91,12 +181,7 @@ test.describe('rendered floor baselines', () => {
   test('matches the interior baseline of the start pose', async ({ page }) => {
     // Two settled scenes in one test — the exterior the app opens on, then the interior.
     test.slow();
-    const pageErrors: Error[] = [];
-    page.on('pageerror', (error) => pageErrors.push(error));
-
-    await page.goto('/');
-    await expectCanvasVisible(page);
-    await expect(page.getByRole('status')).toHaveText(EXTERIOR_STATUS);
+    const pageErrors = await openExterior(page);
 
     await page.getByRole('button', { name: VIEW_TOGGLE_NAME }).click();
     await expect(page.getByRole('status')).toHaveText(FIRST_PERSON_STATUS);

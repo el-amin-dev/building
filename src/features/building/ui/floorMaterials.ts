@@ -80,6 +80,7 @@ const APPLIANCE_ENAMEL = '#dfe3e2';
  * modulation of exactly these values rather than a second, slightly different opinion about
  * what oak looks like. A colour of a scheme belongs in the palette; the weave of it belongs
  * in the generator; neither may hold a copy of the other.
+ */
 
 /** Flat-weave carpet: a warm greige that reads as textile rather than as screed. */
 export const PARIS_CARPET = '#cfc7ba';
@@ -111,6 +112,73 @@ const PARIS_OAK_FLOOR = '#d2ba95';
 const PARIS_MARBLE_FLOOR = '#e4e7e9';
 /** The canvas: a muted, low-saturation pastel, which is as much colour as the room takes. */
 const ARTWORK_PASTEL = '#c2b2a4';
+
+/*
+ * The service layers, and the one place in this file where the scheme does not apply.
+ *
+ * ADR-020 made the decorative scheme the palette: every finished surface is carpet, oak,
+ * bouclé or marble. Inside a service layer that rule is inverted, and deliberately so. A
+ * services view exists to answer a question the scheme cannot: a plumber's first question
+ * about a pipe is which of two identical pipes it is, and no amount of marble answers it.
+ * So the ten keys below are read by HUE and never by texture — they carry no `map`, they
+ * have no entry in `FAMILY_TEXTURE` (`FloorModel.tsx`), and they are flat colour by design.
+ * That absence is not an oversight to be tidied up later: texturing these buckets, or
+ * pulling them back towards the four scheme materials, would destroy the only thing the
+ * services view is for.
+ *
+ * The hues follow real service-colour convention wherever one exists, because a convention
+ * is a legend the viewer already knows, and are otherwise chosen to be separable at a glance.
+ */
+
+/** Waste and soil: conventionally the dark, unglamorous one, and the darkest service here. */
+const SERVICE_DRAINAGE_GREY = '#5a6470';
+/** Cold supply: the blue half of a plumber's first question about any pipe. */
+const SERVICE_WATER_COLD_BLUE = '#2f6fd0';
+/** Hot supply: the red half of that same question, so the pair is told apart by hue alone. */
+const SERVICE_WATER_HOT_RED = '#c0392b';
+/** Gas: the one service with a near-universal colour, so it is not ours to choose. */
+const SERVICE_GAS_YELLOW = '#f2c31d';
+/**
+ * Power and lighting, which share one hue on purpose.
+ *
+ * A run's circuit family — 2.5 mm² sockets against 1.5 mm² lighting — is data the run
+ * carries, not something the eye should have to decode from two oranges a shade apart.
+ */
+const SERVICE_ELECTRICITY_ORANGE = '#ff7a1a';
+/** Ethernet and the rest of the low-voltage side, kept far from the power orange. */
+const SERVICE_LOW_VOLTAGE_VIOLET = '#8e44ad';
+/** The cooling runs: cyan reads cold at a glance, and nothing else here is near it. */
+const SERVICE_CLIMATE_COOL_CYAN = '#17b8c4';
+/**
+ * The heating circuit, and the one hue here that is separable rather than conventional.
+ *
+ * Every conventionally warm colour was already spoken for — yellow by gas, orange by
+ * electricity, red by hot water — so a fourth warm hue would have been the conventional
+ * answer and an unreadable one. In a view whose whole purpose is telling services apart at
+ * a glance, being separable beat being conventional, which is why heating is pink.
+ */
+const SERVICE_CLIMATE_HEAT_PINK = '#d94f8a';
+/** The boxing built over a run: a light grey that stays behind whatever it covers. */
+const SERVICE_COVER_LIGHT_GREY = '#cfd3d8';
+/** The two sealed control-center chambers and their vent ducts, a step down from the boxing. */
+const SERVICE_CHAMBER_GREY = '#8d9299';
+
+/*
+ * The building's plain finish, and the one key that is not a surface family at all.
+ *
+ * `finishing` is a checkbox, not a set of boxes: with it off the SAME geometry is drawn
+ * in the plain finish the building would be handed over in, and no box is added or
+ * removed (`SERVICE_LAYERS`, `finishing`). That is only true if the unfinished state is
+ * one material every finish-bearing family can be re-surfaced with, so there is exactly
+ * one of them rather than a second, unfinished palette.
+ *
+ * Raw sand-cement screed and bare plaster are the same thing to look at: a matte,
+ * slightly warm grey with nothing on it. Drawn with no `map` on purpose — a screed has
+ * no grain, and lending it the oak's would be a finish by another name.
+ */
+
+/** Bare screed and unpainted plaster: what the building looks like before it is finished. */
+const PLAIN_SCREED_GREY = '#bdb9b3';
 
 /** Fully diffuse finish: plaster and raw screed scatter all the light they receive. */
 const MATTE_ROUGHNESS = 0.9;
@@ -156,7 +224,23 @@ export type FloorMaterialKey =
   | 'joinery'
   | 'worktop'
   | 'softFurnishing'
-  | 'artwork';
+  | 'artwork'
+  // The building's own fabric that happens to be built as a fitting (Part 5).
+  | 'fabricJoinery'
+  // The unfinished surface the `finishing` checkbox re-surfaces a finish-bearing family
+  // with. A material, not a group of solids: its bucket is always empty.
+  | 'plainSurface'
+  // The service layers (Part 5). Read by hue, never by texture — see the constants above.
+  | 'serviceDrainage'
+  | 'serviceWaterCold'
+  | 'serviceWaterHot'
+  | 'serviceGas'
+  | 'serviceElectricity'
+  | 'serviceLowVoltage'
+  | 'serviceClimateCool'
+  | 'serviceClimateHeat'
+  | 'serviceCover'
+  | 'serviceChamber';
 
 /** The `meshStandardMaterial` settings of one surface family. */
 export interface FloorMaterialSpec {
@@ -216,7 +300,21 @@ function makeSpec(spec: FloorMaterialSpec): FloorMaterialSpec {
  * - `appliance`, `joinery`, `worktop`, `softFurnishing`, `artwork`: the furniture, by the
  *   family the domain names (`fixtures.ts`). Since ADR-020 three of them carry the scheme
  *   everywhere — oak, marble, bouclé — and the `paris*` keys that used to carry it for one
- *   room are gone, along with the per-space override that chose between them.
+ *   room are gone, along with the per-space override that chose between them;
+ * - `fabricJoinery`: the parts of a fitting that are the BUILDING rather than its
+ *   contents — the food-pass counter, which is half a wall with a hole in it. Visually
+ *   identical to `joinery` and a separate bucket for exactly one reason: the `furniture`
+ *   checkbox hides the joinery to clear a room, and hiding the pass counter would not
+ *   clear a room, it would open a 0.30 m slot from the guest room into the kitchen
+ *   (`FABRIC_FIXTURE_KINDS`, `floorLayout.ts`);
+ * - `plainSurface`: not a family of solids but the state the `finishing` checkbox puts
+ *   the finish-bearing families INTO. Its bucket is always empty, and that is correct:
+ *   unticking `finishing` adds and removes no box, it only re-surfaces the ones already
+ *   drawn (`FloorModel.tsx`, `BUCKET_RULES`);
+ * - `serviceDrainage` … `serviceChamber`: the ten service layers of Part 5 — the runs
+ *   themselves, the boxing built over them and the sealed chambers. These are the one group
+ *   the scheme does not reach: flat, separable hues with no texture, for the reason set out
+ *   beside their colour constants above.
  */
 export const MATERIAL_PALETTE: Readonly<Record<FloorMaterialKey, FloorMaterialSpec>> =
   Object.freeze({
@@ -325,6 +423,91 @@ export const MATERIAL_PALETTE: Readonly<Record<FloorMaterialKey, FloorMaterialSp
     }),
     artwork: makeSpec({
       color: ARTWORK_PASTEL,
+      roughness: MATTE_ROUGHNESS,
+      metalness: NON_METAL,
+      dithering: DITHER_SMALL_ELEMENT,
+    }),
+    fabricJoinery: makeSpec({
+      // The same oak as `joinery`, by construction rather than by a copied hex: it IS
+      // the same oak, and the two must never drift apart, because a viewer is meant to
+      // see one pass counter and not an oak carcass with a slightly different lid.
+      color: PARIS_OAK,
+      // Matte, like the millwork it is made of and unlike the treads that are walked on.
+      roughness: MATTE_ROUGHNESS,
+      metalness: NON_METAL,
+      // A hair off `joinery`'s dithering would be a difference nobody asked for, so the
+      // spec is the same one twice over; only the BUCKET differs, and that is the point.
+      dithering: DITHER_SMALL_ELEMENT,
+    }),
+    plainSurface: makeSpec({
+      color: PLAIN_SCREED_GREY,
+      roughness: MATTE_ROUGHNESS,
+      metalness: NON_METAL,
+      // Re-surfaces slabs as well as furniture, so it takes the large-surface dithering:
+      // a whole floor of flat grey is exactly the wide, shallow gradient that bands.
+      dithering: DITHER_LARGE_SURFACE,
+    }),
+    // The service layers. Flat colour throughout: no `map` is ever looked up for these keys,
+    // because what a run IS has to be legible before what it is made of is.
+    serviceDrainage: makeSpec({
+      color: SERVICE_DRAINAGE_GREY,
+      // Plastic waste pipe: sealed, but not a polished surface.
+      roughness: SATIN_ROUGHNESS,
+      metalness: NON_METAL,
+      dithering: DITHER_SMALL_ELEMENT,
+    }),
+    serviceWaterCold: makeSpec({
+      color: SERVICE_WATER_COLD_BLUE,
+      roughness: SATIN_ROUGHNESS,
+      metalness: FAINTLY_METAL,
+      dithering: DITHER_SMALL_ELEMENT,
+    }),
+    serviceWaterHot: makeSpec({
+      color: SERVICE_WATER_HOT_RED,
+      roughness: SATIN_ROUGHNESS,
+      metalness: FAINTLY_METAL,
+      dithering: DITHER_SMALL_ELEMENT,
+    }),
+    serviceGas: makeSpec({
+      color: SERVICE_GAS_YELLOW,
+      roughness: SATIN_ROUGHNESS,
+      metalness: FAINTLY_METAL,
+      dithering: DITHER_SMALL_ELEMENT,
+    }),
+    serviceElectricity: makeSpec({
+      color: SERVICE_ELECTRICITY_ORANGE,
+      // Plastic conduit and trunking: the cable inside is never the surface seen.
+      roughness: SATIN_ROUGHNESS,
+      metalness: NON_METAL,
+      dithering: DITHER_SMALL_ELEMENT,
+    }),
+    serviceLowVoltage: makeSpec({
+      color: SERVICE_LOW_VOLTAGE_VIOLET,
+      roughness: SATIN_ROUGHNESS,
+      metalness: NON_METAL,
+      dithering: DITHER_SMALL_ELEMENT,
+    }),
+    serviceClimateCool: makeSpec({
+      color: SERVICE_CLIMATE_COOL_CYAN,
+      roughness: SATIN_ROUGHNESS,
+      metalness: FAINTLY_METAL,
+      dithering: DITHER_SMALL_ELEMENT,
+    }),
+    serviceClimateHeat: makeSpec({
+      color: SERVICE_CLIMATE_HEAT_PINK,
+      roughness: SATIN_ROUGHNESS,
+      metalness: FAINTLY_METAL,
+      dithering: DITHER_SMALL_ELEMENT,
+    }),
+    serviceCover: makeSpec({
+      color: SERVICE_COVER_LIGHT_GREY,
+      // Painted boxing, so it is the one matte thing among the runs it hides.
+      roughness: MATTE_ROUGHNESS,
+      metalness: NON_METAL,
+      dithering: DITHER_SMALL_ELEMENT,
+    }),
+    serviceChamber: makeSpec({
+      color: SERVICE_CHAMBER_GREY,
       roughness: MATTE_ROUGHNESS,
       metalness: NON_METAL,
       dithering: DITHER_SMALL_ELEMENT,

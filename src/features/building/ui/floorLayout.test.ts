@@ -7,8 +7,16 @@ import type { FloorHeights } from '../domain/heights.ts';
 import type { PlanBox } from '../domain/planBox.ts';
 import { rectContainsRect } from '../domain/planGeometry.ts';
 import { PORT_SCHEDULE } from '../domain/ports/index.ts';
-import { PARAPET_WALLS, WINDOWS } from '../domain/sourceOfTruth/plan.ts';
-import { FLOOR_MATERIAL_KEYS, getCeilingLayout, getFloorLayout } from './floorLayout.ts';
+import { FABRIC_FIXTURE_KINDS } from '../domain/fixtures.ts';
+import { PARAPET_WALLS, SERVICE_LAYERS, WINDOWS } from '../domain/sourceOfTruth/plan.ts';
+import type { PlanServiceFamily, PlanServiceLayerKey } from '../domain/sourceOfTruth/plan.ts';
+import {
+  FLOOR_MATERIAL_KEYS,
+  getCeilingLayout,
+  getFloorLayout,
+  isLayerEmpty,
+} from './floorLayout.ts';
+import type { FloorLayout } from './floorLayout.ts';
 import { getSlabMaterialKey, MATERIAL_PALETTE } from './floorMaterials.ts';
 import type { FloorMaterialKey } from './floorMaterials.ts';
 
@@ -186,6 +194,55 @@ const LIGHT_PANEL_COUNT = 15;
 
 const ONCE = 1;
 const NONE = 0;
+
+/**
+ * Every box every service run of the floor is drawn as: legs, boxing and stop-ends.
+ *
+ * The order is the one {@link getFloorLayout} walks them in, so a box that went missing is
+ * found by identity rather than by a count that happens to add up.
+ */
+const SERVICE_BOXES: readonly PlanBox[] = BUILT_FLOOR.services.flatMap((run) => [
+  ...run.segments.map((segment) => segment.box),
+  ...run.cover,
+  ...run.caps,
+]);
+
+/**
+ * Which bucket each service family is expected to land in, written out rather than imported.
+ *
+ * The module's own table is the thing under test, so a test that read it would assert that
+ * a map equals itself. This is the second opinion: a family moved to another hue has to be
+ * moved here too, deliberately, by somebody who can say why.
+ *
+ * Eight buckets for thirteen families, and the sharing is the design: the four drainage
+ * families are one grey because "which service is this" is the question a services view
+ * answers, power and lighting are one circuit family to a viewer, and a chamber vent is
+ * drawn with the gas it vents.
+ */
+const FAMILY_BUCKET: Readonly<Record<PlanServiceFamily, FloorMaterialKey>> = Object.freeze({
+  soil: 'serviceDrainage',
+  waste: 'serviceDrainage',
+  gully: 'serviceDrainage',
+  vent: 'serviceDrainage',
+  cold: 'serviceWaterCold',
+  hot: 'serviceWaterHot',
+  gas: 'serviceGas',
+  chamberVent: 'serviceGas',
+  power: 'serviceElectricity',
+  lighting: 'serviceElectricity',
+  data: 'serviceLowVoltage',
+  cooling: 'serviceClimateCool',
+  heating: 'serviceClimateHeat',
+});
+
+/** The bucket every run's boxing goes to, whatever it boxes in. */
+const COVER_KEY: FloorMaterialKey = 'serviceCover';
+
+/** The one family the plan declares that no run of this floor carries; see the case below. */
+const UNRUN_FAMILY: PlanServiceFamily = 'vent';
+
+/** The bucket the parts of a building-fabric fitting go to instead of the furniture's. */
+const FABRIC_KEY: FloorMaterialKey = 'fabricJoinery';
 
 /**
  * Counts how many times each box object appears across the buckets of a layout.
@@ -412,17 +469,23 @@ describe('getFloorLayout', () => {
       (sum, fixture) => sum + fixture.parts.length,
       NONE,
     );
+    // ...and a service run is its legs, its boxing and its stop-ends, each of which is a box
+    // of the layout: three groups, three destinations, and none of them dropped.
+    const serviceBoxes = SERVICE_BOXES.length;
 
     // The railings are the one group converted rather than moved, so they are counted, not
     // looked up by identity: a `Railing` is a rect and a top, not a box. The fixture parts
     // are counted for the same reason, and their boxes are identity-checked below with the
     // rest, so nothing here is taken on trust twice.
-    expect(bucketTotal).toBe(solids.length + BUILT_FLOOR.railings.length + fixtureParts);
+    expect(bucketTotal).toBe(
+      solids.length + BUILT_FLOOR.railings.length + fixtureParts + serviceBoxes,
+    );
     expect(countsInLayout(solids)).toStrictEqual(solids.map(() => ONCE));
     const partBoxes = BUILT_FLOOR.fixtures.flatMap((fixture) =>
       fixture.parts.map((part) => part.box),
     );
     expect(countsInLayout(partBoxes)).toStrictEqual(partBoxes.map(() => ONCE));
+    expect(countsInLayout(SERVICE_BOXES)).toStrictEqual(SERVICE_BOXES.map(() => ONCE));
   });
 
   it('freezes the layout and each of its buckets', () => {
@@ -435,6 +498,130 @@ describe('getFloorLayout', () => {
   it('gives an equal layout on every call, so a caller can memoise it', () => {
     expect(getFloorLayout(BUILT_FLOOR)).toStrictEqual(LAYOUT);
     expect(getFloorLayout(getBuiltFloor())).toStrictEqual(LAYOUT);
+  });
+});
+
+describe('getFloorLayout, the service runs', () => {
+  it('puts every leg and every stop-end of a run in the bucket of its family', () => {
+    expect(BUILT_FLOOR.services.length).toBeGreaterThan(NONE);
+    for (const run of BUILT_FLOOR.services) {
+      const bucket = LAYOUT[FAMILY_BUCKET[run.family]];
+      for (const segment of run.segments) {
+        expect(bucket, `${run.matricule} leg`).toContain(segment.box);
+      }
+      // A cap is the plug on the end of a pipe, so it is that pipe: drawn in the gas yellow
+      // when it stops a gas riser and the drainage grey when it stops a stack.
+      for (const cap of run.caps) {
+        expect(bucket, `${run.matricule} cap`).toContain(cap);
+      }
+    }
+  });
+
+  it('really does stop some runs, so the cap rule is not vacuous', () => {
+    const capped = BUILT_FLOOR.services.filter((run) => run.caps.length > NONE);
+
+    expect(capped.length).toBeGreaterThan(NONE);
+  });
+
+  it('boxes every cover into the covers bucket, whatever it covers', () => {
+    const covers = BUILT_FLOOR.services.flatMap((run) => [...run.cover]);
+
+    // Its own checkbox, so its own bucket: with the covers on and the runs off a viewer sees
+    // the finished room, and boxing drawn in the colour of what it hides answers nothing.
+    expect(covers.length).toBeGreaterThan(NONE);
+    expect(LAYOUT[COVER_KEY]).toStrictEqual(covers);
+    for (const key of Object.values(FAMILY_BUCKET)) {
+      for (const cover of covers) {
+        expect(LAYOUT[key], key).not.toContain(cover);
+      }
+    }
+  });
+
+  it('leaves no service layer of the plan with nothing to draw', () => {
+    // A layer whose bucket is empty is a checkbox that does nothing, which is worse than a
+    // missing checkbox: it reads as "this floor has no gas" rather than as a bug.
+    const drawn = new Set(Object.values(FAMILY_BUCKET));
+
+    expect(SERVICE_LAYERS.filter((layer) => layer.service).length).toBeGreaterThan(NONE);
+    for (const key of drawn) {
+      expect(LAYOUT[key], key).not.toHaveLength(NONE);
+    }
+  });
+
+  it('runs every family the table maps but the one the plan declares and never uses', () => {
+    const families = new Set(BUILT_FLOOR.services.map((run) => run.family));
+    const unused = Object.keys(FAMILY_BUCKET).filter(
+      (family) => !families.has(family as PlanServiceFamily),
+    );
+
+    // Guards the table against being trivially satisfied: all but one of its rows is a
+    // family the floor really runs, so it is not a list of hopeful entries.
+    //
+    // The exception is {@link UNRUN_FAMILY}, which the plan declares and no run carries
+    // yet: a stack vent is the open top of a soil stack and this floor's stacks are vented
+    // through the storey above rather than on it. It keeps its row because the table is
+    // total over `PlanServiceFamily` on purpose — the first run that needs one must not be
+    // able to appear without a hue — and it is named here so that the day it acquires a
+    // run, this case tells the reader the table was ready for it.
+    expect(unused).toStrictEqual([UNRUN_FAMILY]);
+    for (const family of families) {
+      expect(Object.keys(FAMILY_BUCKET), family).toContain(family);
+    }
+  });
+});
+
+describe('getFloorLayout, the building fabric built as fittings', () => {
+  it('buckets a fabric fitting apart from the furniture, every part of it', () => {
+    const fabric = BUILT_FLOOR.fixtures.filter((fixture) =>
+      FABRIC_FIXTURE_KINDS.includes(fixture.kind),
+    );
+
+    expect(fabric.length).toBeGreaterThan(NONE);
+    for (const fixture of fabric) {
+      for (const part of fixture.parts) {
+        // A chamber keeps the grey casing it was given its own key for (ADR-022); every
+        // other part of a fabric fitting goes to the oak that the furniture cannot take
+        // away with it. Either way it is never in a bucket the `furniture` checkbox hides.
+        const expected = part.surface === 'serviceChamber' ? 'serviceChamber' : FABRIC_KEY;
+        expect(LAYOUT[expected], `${fixture.kind}/${part.surface}`).toContain(part.box);
+      }
+    }
+  });
+
+  it('takes no 0.30 m slot out of the kitchen wall when the furniture is hidden', () => {
+    // The concrete failure the split exists to prevent: the food-pass counter is the outer
+    // 0.70 m of a tunnel through a 0.30 m wall (ADR-021), so hiding it opens the guest room
+    // onto the kitchen. Its carcass is joinery and its ledge is a worktop BY SHAPE, and
+    // neither may be in the bucket that hides them.
+    const passCounter = BUILT_FLOOR.fixtures.filter((fixture) => fixture.kind === 'passCounter');
+
+    expect(passCounter.length).toBeGreaterThan(NONE);
+    for (const part of passCounter.flatMap((fixture) => [...fixture.parts])) {
+      expect(LAYOUT.joinery).not.toContain(part.box);
+      expect(LAYOUT.worktop).not.toContain(part.box);
+      expect(LAYOUT[FABRIC_KEY]).toContain(part.box);
+    }
+  });
+
+  it('leaves the ordinary furniture exactly where it was', () => {
+    const wardrobes = BUILT_FLOOR.fixtures.filter(
+      (fixture) => !FABRIC_FIXTURE_KINDS.includes(fixture.kind),
+    );
+
+    // The split takes the building out of the furniture, not the furniture out of itself:
+    // a wardrobe is still joinery and still goes when the `furniture` box is unticked.
+    expect(LAYOUT.joinery.length).toBeGreaterThan(NONE);
+    for (const fixture of wardrobes) {
+      for (const part of fixture.parts) {
+        expect(LAYOUT[FABRIC_KEY], `${fixture.kind}/${part.surface}`).not.toContain(part.box);
+      }
+    }
+  });
+
+  it('gives the plain finish a bucket and keeps it empty', () => {
+    // `plainSurface` is a MATERIAL the `finishing` checkbox re-surfaces other buckets with,
+    // not a group of solids: a box in here would be a box no checkbox accounts for.
+    expect(LAYOUT.plainSurface).toStrictEqual([]);
   });
 });
 
@@ -517,5 +704,255 @@ describe('getCeilingLayout', () => {
     });
 
     expect(() => getCeilingLayout(FLOOR_PLAN, noCeiling)).toThrow(RangeError);
+  });
+});
+
+/**
+ * The spaces that have no slab at all: a `void` is a hole in the floor, and asking for its
+ * slab material throws rather than returning a key (`getSlabMaterialKey`).
+ */
+const NO_SLAB = null;
+
+/** How many spaces the plan holds, so the map below is checked against a stated number too. */
+const PINNED_SPACE_COUNT = 21;
+
+/**
+ * The floor finish of the whole flat, space by space — a negative control for Part 5.
+ *
+ * Part 5 runs water, gas, electricity, ethernet and climate across the floor, and a run
+ * crosses rooms it has no business re-flooring: a pipe in the ceiling void of a bedroom must
+ * leave that bedroom carpeted. The question "is this room serviced?" is asked of what STANDS
+ * in a room — `SERVICING_ROLES` is `fitting` · `appliance` · `services` (`isServicedSpace`,
+ * `domain/fixtures.ts`) — and it is deliberately NOT taught about runs. This map is the cheap
+ * guard on that: it pins the bucket every slab lands in today, so the wave that lets a run
+ * reach the finish fails here in one line instead of the owner finding marble in a bedroom.
+ *
+ * ADR-021 is the precedent, and it is the reason this is worth a whole map rather than a spot
+ * check. The rule was once asked negatively — "is anything in here not furniture?" — and the
+ * guest room's dry pass counter answered yes, which laid a bathroom floor under a sofa. The
+ * defect was one space wide and invisible from any aggregate; only reading the finish of
+ * every space catches the next one of that shape.
+ *
+ * Written out longhand on purpose: derived from the plan it would just restate the code it is
+ * meant to watch, and a reviewer should be able to read the floor of the flat in one screen.
+ * `null` is not "unknown" but "no slab": the two voids are holes.
+ */
+const SPACE_SLAB_MATERIAL: Readonly<Record<SpaceId, FloorMaterialKey | typeof NO_SLAB>> =
+  Object.freeze({
+    // Open to the sky: decided by kind, above the serviced question.
+    balconyA: 'slabOpenAir',
+    ccBalcony: 'slabOpenAir',
+    balconySlabB: 'slabOpenAir',
+    // Circulation: boarded whatever stands in it. The stair bay is `stairwell` in the source
+    // of truth and `circulation` in the model, so it is boarded like the corridor.
+    stairs: 'slabCirculation',
+    corridor: 'slabCirculation',
+    // Carpeted rooms: nothing in them is plumbed, powered or a riser.
+    masterBedroom: 'slabRoom',
+    livingRoom: 'slabRoom',
+    bedroomMaleKids: 'slabRoom',
+    bedroomFemaleKids: 'slabRoom',
+    guestRoom: 'slabRoom',
+    utilityRoom: 'slabRoom',
+    // Marble rooms: every one an ordinary `room`, told apart only by what stands in it.
+    controlCenter: 'slabServiced',
+    guestSanitair: 'slabServiced',
+    guestBathCubicle: 'slabServiced',
+    kitchen: 'slabServiced',
+    laundry: 'slabServiced',
+    mainSanitair: 'slabServiced',
+    mainBathCubicle: 'slabServiced',
+    mainShowerCubicle: 'slabServiced',
+    // Holes in the floor.
+    voidWest: NO_SLAB,
+    voidEast: NO_SLAB,
+  });
+
+/**
+ * Returns the spaces whose slabs a bucket holds.
+ *
+ * Read off the built floor rather than the bucket, because a bucket holds bare boxes: only a
+ * slab carries the id of the space it floors.
+ *
+ * @param key - The slab bucket to look in.
+ * @returns Each space with a slab in that bucket, once, sorted.
+ */
+function spacesFlooredIn(key: FloorMaterialKey): readonly SpaceId[] {
+  const spaceIds = BUILT_FLOOR.slabs
+    .filter((slab) => LAYOUT[key].includes(slab))
+    .map((slab) => slab.spaceId as SpaceId);
+  return [...new Set(spaceIds)].sort();
+}
+
+describe('the floor finish of every space (negative control for Part 5)', () => {
+  it.each(SPACE_IDS)('floors %s in the material pinned for it', (spaceId) => {
+    const expectedKey = SPACE_SLAB_MATERIAL[spaceId];
+    const slabs = slabsOf(spaceId);
+
+    if (expectedKey === NO_SLAB) {
+      expect(slabs).toHaveLength(NONE);
+      return;
+    }
+
+    expect(slabs.length).toBeGreaterThan(NONE);
+    for (const slab of slabs) {
+      expect(LAYOUT[expectedKey], expectedKey).toContain(slab);
+      for (const otherKey of SLAB_KEYS.filter((key) => key !== expectedKey)) {
+        expect(LAYOUT[otherKey], `${spaceId} in ${otherKey}`).not.toContain(slab);
+      }
+    }
+  });
+
+  it('pins every space of the plan, so a twenty-second space cannot slip through', () => {
+    expect(Object.keys(SPACE_SLAB_MATERIAL).sort()).toEqual([...SPACE_IDS].sort());
+    expect(FLOOR_PLAN.spaces.map((space) => space.id).sort()).toEqual([...SPACE_IDS].sort());
+    expect(SPACE_IDS).toHaveLength(PINNED_SPACE_COUNT);
+    // And no slab of the floor floors a space the map calls a hole.
+    for (const slab of BUILT_FLOOR.slabs) {
+      expect(SPACE_SLAB_MATERIAL[slab.spaceId as SpaceId], slab.spaceId).not.toBe(NO_SLAB);
+    }
+  });
+
+  it('gives every bucket exactly the spaces the map names, and no space two buckets', () => {
+    for (const key of SLAB_KEYS) {
+      const expectedSpaces = SPACE_IDS.filter((id) => SPACE_SLAB_MATERIAL[id] === key);
+
+      expect(spacesFlooredIn(key), key).toEqual([...expectedSpaces].sort());
+    }
+    // The same statement from the slab's side, and over EVERY key rather than the slab ones:
+    // a slab that also turned up in a Part 5 service bucket would be drawn twice and would
+    // take that run's material with it. One bucket each, never two.
+    for (const slab of BUILT_FLOOR.slabs) {
+      const buckets = FLOOR_MATERIAL_KEYS.filter((key) => LAYOUT[key].includes(slab));
+
+      expect(buckets, slab.spaceId).toEqual([SPACE_SLAB_MATERIAL[slab.spaceId as SpaceId]]);
+    }
+  });
+
+  it('keeps the marble on the serviced rooms and the carpet everywhere else', () => {
+    // The map and the serviced list are two readings of the same rule, so they have to agree:
+    // if a Part 5 run ever reaches the finish, one of them moves and this fails.
+    const marble = SPACE_IDS.filter((id) => SPACE_SLAB_MATERIAL[id] === 'slabServiced');
+
+    expect([...marble].sort()).toEqual([...SERVICED_SPACE_IDS].sort());
+    for (const spaceId of SPACE_IDS.filter((id) => SPACE_SLAB_MATERIAL[id] === 'slabRoom')) {
+      expect(SERVICED_SPACE_IDS, spaceId).not.toContain(spaceId);
+    }
+  });
+});
+
+/**
+ * One bucket per layer, hand-written: the second opinion on the inversion under test.
+ *
+ * `isLayerEmpty` derives layer → buckets from `BUCKET_RULES`, so a test that read the same
+ * table would assert that a map equals itself. This names, for each of the nine checkboxes,
+ * one bucket that checkbox is answerable for, chosen by reading what the layer means rather
+ * than what the table says. A bucket moved to another checkbox has to be moved here too, by
+ * somebody who can say why.
+ *
+ * Every one of the nine is a bucket the decorative scheme does NOT reach (`finish: false`),
+ * which is what lets the case below demand *exactly one* non-empty layer: a bucket carrying
+ * a finish answers to its own checkbox and to `finishing` both, and rightly so.
+ */
+const LAYER_SAMPLE_BUCKET: Readonly<Record<PlanServiceLayerKey, FloorMaterialKey>> = Object.freeze({
+  drainage: 'serviceDrainage',
+  water: 'serviceWaterCold',
+  gas: 'serviceGas',
+  electricity: 'serviceElectricity',
+  lowVoltage: 'serviceLowVoltage',
+  climate: 'serviceClimateCool',
+  covers: 'serviceCover',
+  furniture: 'sanitaryWare',
+  // The one bucket `finishing` hides rather than re-surfaces; the case below covers the
+  // re-surfaced ones separately, because they are the bigger half of what it draws.
+  finishing: 'artwork',
+});
+
+/** A bucket that is the building itself, so no checkbox speaks for it. */
+const ALWAYS_DRAWN_KEY: FloorMaterialKey = 'wall';
+
+/** A bucket the decorative scheme re-surfaces without `finishing` ever hiding it. */
+const RESURFACED_KEY: FloorMaterialKey = 'slabRoom';
+
+/** One real box, so a filled bucket holds something the renderer could actually draw. */
+const A_BOX: PlanBox = LAYOUT.wall[0];
+
+/** How many layers a single filled bucket may leave with something to draw. */
+const ONE_LAYER = 1;
+
+/**
+ * A floor with every bucket present and every bucket empty.
+ *
+ * Constructed, never derived: no plan of this building produces one (see the case below),
+ * which is exactly why the empty branch needs a layout built by hand to be exercised at all.
+ *
+ * @returns A layout carrying every material key, each with no box.
+ */
+function emptyTestLayout(): FloorLayout {
+  const buckets = Object.fromEntries(
+    FLOOR_MATERIAL_KEYS.map((key) => [key, Object.freeze([]) as readonly PlanBox[]]),
+  ) as Record<FloorMaterialKey, readonly PlanBox[]>;
+  return Object.freeze(buckets);
+}
+
+/**
+ * An otherwise empty floor with one bucket holding one box.
+ *
+ * @param materialKey - The bucket to fill.
+ * @returns A layout in which that bucket alone has something to draw.
+ */
+function layoutWithOnly(materialKey: FloorMaterialKey): FloorLayout {
+  return Object.freeze({
+    ...emptyTestLayout(),
+    [materialKey]: Object.freeze([A_BOX]) as readonly PlanBox[],
+  });
+}
+
+/**
+ * The layers that still have something to draw in a layout.
+ *
+ * @param layout - The layout to ask about.
+ * @returns Their keys, in the plan's order.
+ */
+function drawingLayers(layout: FloorLayout): readonly PlanServiceLayerKey[] {
+  return SERVICE_LAYERS.filter((layer) => !isLayerEmpty(layout, layer.key)).map(
+    (layer) => layer.key,
+  );
+}
+
+describe('isLayerEmpty', () => {
+  it('reports no empty layer on the real floor, so the HUD never cries wolf', () => {
+    // The whole point of the empty state, stated as a fact about THIS plan: every one of
+    // the nine checkboxes has geometry behind it, so a viewer who ticks one and sees
+    // nothing change is looking at a bug and not at a floor without gas.
+    expect(drawingLayers(LAYOUT)).toStrictEqual(SERVICE_LAYERS.map((layer) => layer.key));
+  });
+
+  it('calls every layer empty when the floor holds nothing at all', () => {
+    // Unreachable from any plan: this is the constructed layout the branch exists for, and
+    // it stays constructed until a layer is declared with no runs, or a storey carries none.
+    expect(drawingLayers(emptyTestLayout())).toStrictEqual([]);
+  });
+
+  it('answers for exactly the layer whose checkbox owns the bucket', () => {
+    for (const [layerKey, materialKey] of Object.entries(LAYER_SAMPLE_BUCKET)) {
+      const drawing = drawingLayers(layoutWithOnly(materialKey));
+
+      expect(drawing, materialKey).toStrictEqual([layerKey]);
+      expect(drawing, materialKey).toHaveLength(ONE_LAYER);
+    }
+  });
+
+  it('counts what finishing re-surfaces, not only the artwork it hides', () => {
+    // `finishing` is the checkbox that is not a set of boxes: inverting `hiddenBy` alone
+    // would call it empty on a floor with no picture on the wall, while ticking it still
+    // lays carpet, marble and oak across the whole storey.
+    expect(drawingLayers(layoutWithOnly(RESURFACED_KEY))).toStrictEqual(['finishing']);
+  });
+
+  it('leaves every layer empty when only the building itself is drawn', () => {
+    // A bucket whose rule is ALWAYS_DRAWN belongs to no checkbox, so a floor of naked walls
+    // has nine layers with nothing to draw — which is precisely what naked walls means.
+    expect(drawingLayers(layoutWithOnly(ALWAYS_DRAWN_KEY))).toStrictEqual([]);
   });
 });

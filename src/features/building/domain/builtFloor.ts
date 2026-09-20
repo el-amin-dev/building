@@ -4,7 +4,8 @@
  * Part 2 models the floor module by module — the plan (ADR-005), the ports
  * (ADR-006), the windows, the walls, the slabs, the railings, the stairs and the
  * television panel — and, since Part 4, the fixtures standing in the rooms
- * (`fixtures.ts`). Each of those is a pure function of the plan and the vertical
+ * (`fixtures.ts`) and, since Part 5, the service runs threading it
+ * (`services.ts`). Each of those is a pure function of the plan and the vertical
  * sizes, and each is independent of the others except for one ordering: the wall
  * generator needs the holes before it can leave them out, so the ports and the
  * windows must be resolved first and handed to it.
@@ -45,6 +46,8 @@ import { PORT_SCHEDULE, getPortOpening, validatePorts } from './ports/index.ts';
 import type { Port } from './ports/index.ts';
 import { getRailings } from './railings.ts';
 import type { Railing } from './railings.ts';
+import { getServiceRuns } from './services.ts';
+import type { BuiltServiceRun } from './services.ts';
 import { getSlabs } from './slabs.ts';
 import type { FloorSlab } from './slabs.ts';
 import { getStairsLayout } from './stairs.ts';
@@ -105,6 +108,27 @@ export interface BuiltFloor {
    */
   readonly fixtures: readonly BuiltFixture[];
   /**
+   * The service runs of the floor, each with the boxes it is drawn as, the boxing
+   * built over it and the plugs stopping it (`services.ts`, Part 5).
+   *
+   * On the built floor for the reason the fixtures are: a run is a thing the floor
+   * is made of, so the volume checks, the tests of this file and anything else that
+   * asks what the building contains can see it. A run kept beside the renderer would
+   * be a pipe nobody could measure.
+   *
+   * Like the fixtures, service runs are deliberately NOT collision blockers: they
+   * are absent from `getWalkField`, which sweeps `slabs`, `walls` and `railings`
+   * only. A waste pipe buried in the floor build-up or a riser boxed into a corner
+   * is not something a walker can be stopped by without the boxing that hides it
+   * already stopping them.
+   *
+   * They take neither the plan nor the heights: every level a run is at is already
+   * in its own declared points, measured from the finished floor of the storey
+   * (`sourceOfTruth/plan.ts`, `services.ts`), so injecting other heights moves the
+   * walls, the slabs and the stairs and leaves the runs where the plan put them.
+   */
+  readonly services: readonly BuiltServiceRun[];
+  /**
    * Every hole fed to the wall generator: the port openings in schedule order,
    * then the window openings in window order. Doors run from the finished floor
    * to `heights.door`; each window carries its own sill and head, because they
@@ -127,7 +151,8 @@ export interface BuiltFloor {
  * the slabs, the railings, the stairs and the television panel depend on the plan
  * and the heights alone and are read straight from their modules. The fixtures
  * take the plan alone: a basin rim is a fitting's own size, not a floor height
- * (`heights.ts`, `fixtures.ts`), so no injected set of heights moves one.
+ * (`heights.ts`, `fixtures.ts`), so no injected set of heights moves one, and the
+ * service runs take neither: their levels are declared point by point.
  *
  * @param plan - The floor plan to build; defaults to `FLOOR_PLAN`. Not mutated.
  * @param ports - The port schedule of that plan; defaults to `PORT_SCHEDULE`.
@@ -163,6 +188,7 @@ export function getBuiltFloor(
     stairs: getStairsLayout(plan, heights),
     tvPanel: getTvPanel(plan, heights),
     fixtures: getFixtures(plan),
+    services: getServiceRuns(),
     openings,
   });
 }

@@ -28,3 +28,30 @@
 #leva__root {
   opacity: 0 !important;
 }
+
+/*
+ * The 3D view region's own focus indicator, which is not inside the overlay and so is not
+ * covered by the rule above.
+ *
+ * `BuildingScene` draws it as an `::after` pseudo-element over the whole region — an amber
+ * outline and a dark inset ring around the canvas edges — and it appears whenever the region
+ * holds focus, which every HUD control hands it after a POINTER press (ADR-013: the
+ * navigation keys and the pad have to keep working while a panel is read). So any capture
+ * taken after a click on a HUD button has a frame painted round it, and that frame is not
+ * the rendered scene. It is affordance, exactly like the panels above.
+ *
+ * It was not a theory. Both committed baselines carried the ring, and
+ * `navigation.spec.ts` had to route around it in prose — "the region's focus indicator,
+ * drawn over the canvas edges, is off from here on" — rather than in the fixture. Worse, it
+ * made two baselines of the same scene incomparable by construction: the naked exterior is
+ * captured after a plain `goto` and has no ring, while the furnished one is captured after
+ * ticking two boxes with a pointer and had one, so the very comparison the second baseline
+ * exists for — that the layered floor still draws the v1.0.0 floor pixel for pixel — would
+ * have been decided by which fixture clicked what.
+ *
+ * `opacity` for the reason above, and on the pseudo-element rather than the region, because
+ * the region IS the canvas's container: hiding the region would hide the scene.
+ */
+#interior-3d-view::after {
+  opacity: 0 !important;
+}

@@ -1,6 +1,13 @@
 import { AxeBuilder } from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { EXTERIOR_STATUS, FIRST_PERSON_STATUS, VIEW_TOGGLE_NAME } from './constants.ts';
+import {
+  getLayerCheckbox,
+  getLayerPanel,
+  getLayerTrigger,
+  LAYER_NAMES,
+  layerTriggerName,
+} from './layerSwitcher.ts';
 import { expectCameraIdle, expectCanvasVisible } from './sceneCapture.ts';
 
 /**
@@ -20,14 +27,16 @@ import { expectCameraIdle, expectCanvasVisible } from './sceneCapture.ts';
  * **No axe rule is disabled here.** A violation is a finding to report and fix in the HUD,
  * not something to narrow the audit until it disappears.
  *
- * ## Why four runs
+ * ## Why five runs
  *
  * The HUD is not one DOM. The exterior view renders the camera pad and no interior panel; the
  * interior renders the readout, the room menu, the minimap and the remote control; opening the
  * room list adds nineteen buttons and the `aria-expanded`/`aria-controls` pair, which is where
- * most of the new ARIA of this part lives; and below the `sm` breakpoint the minimap is gone,
- * the hint is the short one and the pad is anchored to the bottom of the screen outside the
- * HUD band. An audit of one of those says nothing about the other three.
+ * most of the new ARIA of that part lives; opening the layer panel adds a `<fieldset>`, a
+ * `<legend>`, an `aria-live` reading and nine native checkboxes, which is where the new ARIA of
+ * **this** part lives; and below the `sm` breakpoint the minimap is gone, the hint is the short
+ * one and the pad is anchored to the bottom of the screen outside the HUD band. An audit of one
+ * of those says nothing about the other four.
  */
 
 /** The HUD DOM: everything the app renders, canvas aside. */
@@ -51,6 +60,12 @@ const KITCHEN_ITEM_NAME = 'R11/KIT · Kitchen';
 const ROOM_READOUT_SELECTOR = '#current-room';
 /** What the readout says at the start pose: the stair arrival landing. */
 const STAIRWELL_LINE = 'Room: F1-R06/STR · Stairwell';
+
+/**
+ * The layer a box is ticked on before the audit, so the panel is audited holding a checked
+ * control and a changed live reading, not nine identical empty ones.
+ */
+const AUDITED_LAYER = LAYER_NAMES[1];
 
 /** A narrow phone viewport: a different set of HUD elements renders at this width. */
 const PHONE_VIEWPORT = Object.freeze({ width: 400, height: 800 });
@@ -122,6 +137,38 @@ test.describe('accessibility', () => {
     await trigger.click();
     await expect(trigger).toHaveAttribute('aria-expanded', 'true');
     await expect(page.getByRole('button', { name: KITCHEN_ITEM_NAME })).toBeVisible();
+
+    expect(await analyzeHud(page)).toEqual([]);
+    expect(pageErrors).toEqual([]);
+  });
+
+  test('has no axe violations with the layer panel open', async ({ page }) => {
+    const pageErrors: Error[] = [];
+    page.on('pageerror', (error) => pageErrors.push(error));
+
+    await page.goto('/');
+    await expectCanvasVisible(page);
+    // The exterior is the default view and the switcher is mounted in both, so this audits the
+    // panel in the layout the app actually opens on — naked walls, with the switcher the only
+    // panel on the HUD's second row.
+    await expect(page.getByRole('status')).toHaveText(EXTERIOR_STATUS);
+    await expectCameraIdle(page);
+
+    // State 3's two-step readiness, exactly: the trigger says the panel is open, and then an
+    // element inside it is really on screen. The first alone would let the audit run against a
+    // panel that has not mounted, which is the one way this test could pass while seeing
+    // nothing — nine checkboxes, a `<fieldset>`, a `<legend>` and an `aria-live` reading are
+    // precisely what it is here to look at.
+    const trigger = getLayerTrigger(page);
+    await trigger.click();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    await expect(getLayerCheckbox(page, LAYER_NAMES[0])).toBeVisible();
+    await expect(getLayerPanel(page).getByRole('checkbox')).toHaveCount(LAYER_NAMES.length);
+
+    // A ticked box and a changed reading, so the audit covers the checked state and the live
+    // region with something in it rather than nine boxes in one state.
+    await getLayerCheckbox(page, AUDITED_LAYER).check();
+    await expect(trigger).toHaveAccessibleName(layerTriggerName(1));
 
     expect(await analyzeHud(page)).toEqual([]);
     expect(pageErrors).toEqual([]);

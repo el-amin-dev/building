@@ -8,6 +8,11 @@
  * (`mergeBoxes.ts`, `MergedBoxesMesh.tsx`). This module is that transposition and nothing
  * more: it invents no coordinate, so a geometry rule still changes only in the domain.
  *
+ * Since Part 5 the same transposition covers the service runs, which arrive on the built
+ * floor exactly as the walls and the fixtures do ({@link BuiltServiceRun}): a run names a
+ * FAMILY and never a palette key, and {@link SERVICE_FAMILY_MATERIAL} is the one place a
+ * family becomes a hue.
+ *
  * Three functions, because the three groups have different sources and different lifetimes:
  *
  * - {@link getFloorLayout} buckets the solids that are always drawn. They all come from a
@@ -40,7 +45,7 @@
  */
 
 import type { BuiltFloor } from '../domain/builtFloor.ts';
-import { isServicedSpace } from '../domain/fixtures.ts';
+import { FABRIC_FIXTURE_KINDS, isServicedSpace } from '../domain/fixtures.ts';
 import type { FixtureSurface } from '../domain/fixtures.ts';
 import { FLOOR_PLAN, getSpace } from '../domain/floorPlan/index.ts';
 import type { FloorPlan, Space, SpaceId } from '../domain/floorPlan/index.ts';
@@ -50,6 +55,10 @@ import { makeBox } from '../domain/planBox.ts';
 import type { PlanBox } from '../domain/planBox.ts';
 import { makeRect, rectArea, rectDepth, rectWidth } from '../domain/planGeometry.ts';
 import type { PlanRect } from '../domain/planGeometry.ts';
+import type { ShownLayers } from '../application/layerStore.ts';
+import type { BuiltServiceRun } from '../domain/services.ts';
+import { SERVICE_LAYERS } from '../domain/sourceOfTruth/plan.ts';
+import type { PlanServiceFamily, PlanServiceLayerKey } from '../domain/sourceOfTruth/plan.ts';
 import { getSlabMaterialKey, MATERIAL_PALETTE } from './floorMaterials.ts';
 import type { FloorMaterialKey } from './floorMaterials.ts';
 
@@ -115,7 +124,207 @@ const FIXTURE_SURFACE_MATERIAL: Readonly<Record<FixtureSurface, FloorMaterialKey
   worktop: 'worktop',
   softFurnishing: 'softFurnishing',
   artwork: 'artwork',
+  serviceChamber: 'serviceChamber',
 });
+
+/**
+ * Where a part of a BUILDING-FABRIC fitting goes instead.
+ *
+ * `FABRIC_FIXTURE_KINDS` names the fittings that are not a room's contents but the
+ * building itself, built as a fitting because that is how they are made: the food-pass
+ * counter is half a wall with a hole in it, and the control-center chambers are the
+ * floor's own plant. The `furniture` checkbox exists to clear a room, and neither of
+ * these would be cleared by hiding it — the pass counter would take a 0.30 m slot from
+ * the guest room into the kitchen with it, and the chambers would leave the plant of the
+ * floor standing in open air (`fixtures.ts`, `FABRIC_FIXTURE_KINDS`).
+ *
+ * So a fabric fitting's parts are bucketed apart from the furniture, and only the
+ * bucket changes: `fabricJoinery` is the same oak as `joinery`, at the same roughness,
+ * because it IS the same oak (`floorMaterials.ts`). A `serviceChamber` surface already
+ * has a bucket of its own and keeps it — that key was split out for this very reason
+ * when the meter cupboard became the two compartments of the control center (ADR-022) —
+ * so only the surfaces that would otherwise land among the furniture are redirected.
+ *
+ * Total over {@link FixtureSurface} for the reason the map above is: a surface family
+ * added to the domain cannot reach a fabric fitting without somebody deciding where it
+ * goes when the furniture is hidden.
+ */
+const FABRIC_SURFACE_MATERIAL: Readonly<Record<FixtureSurface, FloorMaterialKey>> = Object.freeze({
+  sanitaryWare: 'fabricJoinery',
+  appliance: 'fabricJoinery',
+  joinery: 'fabricJoinery',
+  // The pass counter's ledge, which is a worktop by shape and fabric by function: it is
+  // the sill of the food-pass bore, and hiding it would leave that bore's mouth open.
+  worktop: 'fabricJoinery',
+  softFurnishing: 'fabricJoinery',
+  artwork: 'fabricJoinery',
+  serviceChamber: 'serviceChamber',
+});
+
+/**
+ * What each service family is drawn with.
+ *
+ * The domain names a family — a run carries soil, or cold water, or data — and the
+ * palette decides the hue, the same seam `FIXTURE_SURFACE_MATERIAL` sits on. Several
+ * families deliberately share a bucket, because the question a services view answers is
+ * "which service is this", not "which of two pipe sizes": the four drainage families are
+ * one grey, power and lighting are one orange, and the chamber vents are drawn with the
+ * gas they vent.
+ *
+ * Total over {@link PlanServiceFamily}, so a family declared in the plan tomorrow is a
+ * compile error here rather than a run that silently vanishes from every layer.
+ */
+const SERVICE_FAMILY_MATERIAL: Readonly<Record<PlanServiceFamily, FloorMaterialKey>> =
+  Object.freeze({
+    soil: 'serviceDrainage',
+    waste: 'serviceDrainage',
+    gully: 'serviceDrainage',
+    vent: 'serviceDrainage',
+    cold: 'serviceWaterCold',
+    hot: 'serviceWaterHot',
+    gas: 'serviceGas',
+    // A chamber vent is a gas-safety duct and is read with the gas it vents: telling it
+    // apart from the bottle it protects would be a distinction with nothing behind it.
+    chamberVent: 'serviceGas',
+    power: 'serviceElectricity',
+    lighting: 'serviceElectricity',
+    data: 'serviceLowVoltage',
+    cooling: 'serviceClimateCool',
+    heating: 'serviceClimateHeat',
+  });
+
+/** No checkbox hides this bucket: it is the building, and the building is always there. */
+const ALWAYS_DRAWN = null;
+
+/** How one bucket answers to the checkboxes. */
+export interface BucketRule {
+  /**
+   * The layer whose checkbox hides this bucket, or {@link ALWAYS_DRAWN} for a bucket that
+   * is the building itself. Exactly one layer, because a bucket a viewer cannot attribute
+   * to a single checkbox is a pixel nobody can explain.
+   */
+  readonly hiddenBy: PlanServiceLayerKey | null;
+  /**
+   * Whether unticking `finishing` re-surfaces this bucket with `plainSurface`.
+   *
+   * Re-surfaced, never removed: `finishing` adds and takes away no box (`SERVICE_LAYERS`).
+   * True exactly of the buckets the decorative scheme reaches, which are the buckets that
+   * carry a texture (`FAMILY_TEXTURE`, `FloorModel.tsx`) — a surface with a grain on it is
+   * a finished surface, and leaving the grain on with the finish off would be the checkbox
+   * doing nothing at all.
+   */
+  readonly finish: boolean;
+}
+
+/**
+ * **Which checkbox is responsible for every pixel of the building.**
+ *
+ * One table, read by {@link isBucketShown} and {@link isBucketPlain} and by nothing else, so
+ * the answer to "why is that there" is a row here rather than a condition spelled out at the
+ * point it happens to be drawn. It lives beside the other bucket tables of this module
+ * rather than in `FloorModel.tsx`, where it is consumed: those tables answer WHICH bucket a
+ * solid goes into and this one answers what that bucket then answers to, which is the same
+ * question asked twice, and a component file may export nothing but components anyway. Total over {@link FloorMaterialKey}: a palette key added
+ * without a rule is a compile error, not a bucket that quietly ignores every checkbox.
+ *
+ * Three groups, and the whole design of Part 5 is in which group a bucket lands in:
+ *
+ * 1. **The building** (`hiddenBy: ALWAYS_DRAWN`). Nothing ticked is NAKED WALLS — structure,
+ *    slabs, ceilings, railings, the stairs, the television panel — and naked walls are still
+ *    a building. `fabricJoinery` and `serviceChamber` are here although they are built as
+ *    fittings: the food-pass counter is half a wall with a hole in it and the control-center
+ *    chambers are the floor's own plant, so hiding either opens a hole rather than clearing
+ *    a room (`FABRIC_FIXTURE_KINDS`, ADR-022).
+ * 2. **The furniture** (`hiddenBy: 'furniture'`). What a remover could carry out: the ware,
+ *    the white goods, the millwork, the tops and the upholstery. Five buckets, and the two
+ *    fabric ones above are deliberately not among them.
+ * 3. **The services** (`hiddenBy:` a service layer). One bucket per hue, mapped back to the
+ *    layer it belongs to — the two water families to `water`, the two climate families to
+ *    `climate` — plus `serviceCover`, whose checkbox is `covers` and not the service it
+ *    boxes in, because seeing the boxing without the pipe is the whole point of it.
+ *
+ * `finishing` cuts across all three and is the one checkbox that is not a set of boxes.
+ * `artwork` is the single exception it makes: a canvas hung on a wall is a finish with no
+ * unfinished state — plain screed over a painting is not what an unfinished flat looks like,
+ * an empty wall is — so it is HIDDEN by `finishing` rather than re-surfaced by it, and it is
+ * the only bucket whose `hiddenBy` is `finishing`.
+ */
+export const BUCKET_RULES: Readonly<Record<FloorMaterialKey, BucketRule>> = Object.freeze({
+  // ── The building ────────────────────────────────────────────────────────────────────
+  // Plaster and paint. Already the plain finish: a matte white wall is what the building
+  // is handed over as, so `finishing` has nothing to strip off it.
+  wall: { hiddenBy: ALWAYS_DRAWN, finish: false },
+  parapet: { hiddenBy: ALWAYS_DRAWN, finish: false },
+  // The slabs carry the scheme underfoot — carpet, oak boards, marble — so all three of
+  // those go back to screed. The terrace is paved rather than decorated and stays put.
+  slabRoom: { hiddenBy: ALWAYS_DRAWN, finish: true },
+  slabCirculation: { hiddenBy: ALWAYS_DRAWN, finish: true },
+  slabOpenAir: { hiddenBy: ALWAYS_DRAWN, finish: false },
+  slabServiced: { hiddenBy: ALWAYS_DRAWN, finish: true },
+  // Painted plaster, like the walls, and the luminaire that is a fitting and not a finish.
+  ceiling: { hiddenBy: ALWAYS_DRAWN, finish: false },
+  lightPanel: { hiddenBy: ALWAYS_DRAWN, finish: false },
+  // A balustrade is there to stop a fall, at every state of the build.
+  railing: { hiddenBy: ALWAYS_DRAWN, finish: false },
+  // The flight is structure; its oak treads are the finish on it.
+  stairs: { hiddenBy: ALWAYS_DRAWN, finish: true },
+  // ── The furniture ───────────────────────────────────────────────────────────────────
+  // The television is furniture (owner, 2026-09-20). It had been drawn always, with the
+  // building, because it is derived from `tvPanel.ts` rather than declared as a fixture like
+  // the sofa in front of it - and being derived somewhere else is a fact about this code,
+  // not about the thing. A television is something you carry in, so it goes when the
+  // furniture goes.
+  tvPanel: { hiddenBy: 'furniture', finish: false },
+  sanitaryWare: { hiddenBy: 'furniture', finish: false },
+  appliance: { hiddenBy: 'furniture', finish: false },
+  joinery: { hiddenBy: 'furniture', finish: true },
+  worktop: { hiddenBy: 'furniture', finish: true },
+  softFurnishing: { hiddenBy: 'furniture', finish: true },
+  // The one bucket `finishing` removes instead of re-surfacing; see the note above.
+  artwork: { hiddenBy: 'finishing', finish: false },
+  // Millwork that is the building: the pass counter stays whatever the furniture does, and
+  // is re-surfaced with the rest of the oak when the finish comes off.
+  fabricJoinery: { hiddenBy: ALWAYS_DRAWN, finish: true },
+  // The plain finish itself owns no box ({@link emptyLayout}), so its row can only be the
+  // vacuous one: always drawn, never re-surfaced, and never actually rendered.
+  plainSurface: { hiddenBy: ALWAYS_DRAWN, finish: false },
+  // ── The services ────────────────────────────────────────────────────────────────────
+  // Flat hues, read by colour and never by texture, so none of them is a finish.
+  serviceDrainage: { hiddenBy: 'drainage', finish: false },
+  serviceWaterCold: { hiddenBy: 'water', finish: false },
+  serviceWaterHot: { hiddenBy: 'water', finish: false },
+  serviceGas: { hiddenBy: 'gas', finish: false },
+  serviceElectricity: { hiddenBy: 'electricity', finish: false },
+  serviceLowVoltage: { hiddenBy: 'lowVoltage', finish: false },
+  serviceClimateCool: { hiddenBy: 'climate', finish: false },
+  serviceClimateHeat: { hiddenBy: 'climate', finish: false },
+  serviceCover: { hiddenBy: 'covers', finish: false },
+  // The sealed control-center compartments: the floor's own plant, not its contents.
+  serviceChamber: { hiddenBy: ALWAYS_DRAWN, finish: false },
+});
+
+/**
+ * Whether a bucket's meshes are drawn at all.
+ *
+ * @param materialKey - The bucket asked about.
+ * @param shown - Which layers are currently ticked.
+ * @returns `true` unless the bucket's own checkbox is unticked.
+ */
+export function isBucketShown(materialKey: FloorMaterialKey, shown: ShownLayers): boolean {
+  const { hiddenBy } = BUCKET_RULES[materialKey];
+  return hiddenBy === ALWAYS_DRAWN || shown[hiddenBy];
+}
+
+/**
+ * Whether a bucket is drawn in the building's plain finish rather than its own.
+ *
+ * @param materialKey - The bucket asked about.
+ * @param shown - Which layers are currently ticked.
+ * @returns `true` when the bucket carries a finish and `finishing` is unticked.
+ */
+export function isBucketPlain(materialKey: FloorMaterialKey, shown: ShownLayers): boolean {
+  return BUCKET_RULES[materialKey].finish && !shown.finishing;
+}
 
 /**
  * Every material key, in palette order.
@@ -127,6 +336,81 @@ export const FLOOR_MATERIAL_KEYS: readonly FloorMaterialKey[] = Object.freeze(
   // Every key of the palette is a `FloorMaterialKey` by the palette's own type.
   Object.keys(MATERIAL_PALETTE) as readonly FloorMaterialKey[],
 );
+
+/**
+ * The one layer that answers to {@link BucketRule.finish} rather than to `hiddenBy`.
+ *
+ * Named here because {@link LAYER_BUCKETS} has to read the second column of
+ * {@link BUCKET_RULES} as well as the first: `finishing` is the checkbox that is not a set
+ * of boxes, and the boxes it speaks for are the ones it RE-SURFACES, plus the one bucket it
+ * genuinely hides (`artwork`). Inverting `hiddenBy` alone would say `finishing` has nothing
+ * to draw whenever the floor hangs no picture, while ticking it would still lay carpet,
+ * marble and oak across the whole storey.
+ */
+const FINISHING_LAYER: PlanServiceLayerKey = 'finishing';
+
+/**
+ * Builds which buckets each checkbox speaks for: {@link BUCKET_RULES}, inverted.
+ *
+ * Derived from that table and never written out again, for the reason the table exists at
+ * all — a second hand-written list of "what gas draws" would drift from the rows the
+ * renderer actually obeys, and the drift would show up as a layer reporting itself empty
+ * while its pipes are on screen. A bucket whose `hiddenBy` is {@link ALWAYS_DRAWN} belongs
+ * to no layer and appears in no entry here: it is the building, and no checkbox speaks for
+ * it.
+ *
+ * Total over {@link PlanServiceLayerKey} because it starts from `SERVICE_LAYERS`: a tenth
+ * layer declared in the plan gets an entry the day it is declared, empty until a bucket
+ * names it, which is exactly the state {@link isLayerEmpty} exists to make visible.
+ *
+ * @returns One frozen list of material keys per layer, in palette order.
+ */
+function buildLayerBuckets(): Readonly<Record<PlanServiceLayerKey, readonly FloorMaterialKey[]>> {
+  const buckets = Object.fromEntries(
+    SERVICE_LAYERS.map((layer) => [layer.key, [] as FloorMaterialKey[]]),
+  ) as Record<PlanServiceLayerKey, FloorMaterialKey[]>;
+  for (const materialKey of FLOOR_MATERIAL_KEYS) {
+    const rule = BUCKET_RULES[materialKey];
+    if (rule.hiddenBy !== ALWAYS_DRAWN) {
+      buckets[rule.hiddenBy].push(materialKey);
+    }
+    if (rule.finish) {
+      buckets[FINISHING_LAYER].push(materialKey);
+    }
+  }
+  for (const layer of SERVICE_LAYERS) {
+    Object.freeze(buckets[layer.key]);
+  }
+  return Object.freeze(buckets);
+}
+
+/** {@link buildLayerBuckets}, run once: the table is as constant as the one it inverts. */
+const LAYER_BUCKETS: Readonly<Record<PlanServiceLayerKey, readonly FloorMaterialKey[]>> =
+  buildLayerBuckets();
+
+/**
+ * Whether a layer has nothing at all to draw on this floor.
+ *
+ * The question behind the HUD's empty state: with the box ticked and the layer still
+ * showing nothing, "this floor has no gas" and "the gas layer is broken" are the same
+ * picture, and only one of them is worth shipping. A layer is empty when EVERY bucket it
+ * speaks for is empty ({@link LAYER_BUCKETS}) — one box anywhere is something to look at.
+ *
+ * **Unreachable on the current plan, and deliberately kept anyway.** All nine layers of
+ * `SERVICE_LAYERS` have geometry on this floor, and `floorLayout.test.ts` pins that: no
+ * argument built from `FLOOR_PLAN` makes this function return `true`. It becomes reachable
+ * the day the plan declares a layer no run carries — the shape `vent` already has among the
+ * service FAMILIES — or the day a storey is built that holds none of a layer's runs. Until
+ * then it is exercised against constructed layouts, and the HUD sentence it drives is
+ * untestable against the real floor on purpose rather than by oversight.
+ *
+ * @param layout - The buckets to look in, from {@link getFloorLayout}. Not mutated.
+ * @param layerKey - The layer asked about.
+ * @returns `true` when no bucket the layer speaks for holds a single box.
+ */
+export function isLayerEmpty(layout: FloorLayout, layerKey: PlanServiceLayerKey): boolean {
+  return LAYER_BUCKETS[layerKey].every((materialKey) => layout[materialKey].length === 0);
+}
 
 /** The buckets of a layout while it is still being filled. */
 type MutableLayout = Record<FloorMaterialKey, PlanBox[]>;
@@ -158,6 +442,24 @@ function emptyLayout(): MutableLayout {
     worktop: [],
     softFurnishing: [],
     artwork: [],
+    // The parts of a fitting that are the building rather than its contents.
+    fabricJoinery: [],
+    // Always empty, and deliberately so: `plainSurface` is a MATERIAL the `finishing`
+    // checkbox re-surfaces other buckets with, not a group of solids of its own
+    // (`floorMaterials.ts`). It is listed because every palette key needs a bucket, and
+    // an empty one is the honest answer for a key that owns no box.
+    plainSurface: [],
+    // The service layers of Part 5, one bucket per run, its boxing and the chambers.
+    serviceDrainage: [],
+    serviceWaterCold: [],
+    serviceWaterHot: [],
+    serviceGas: [],
+    serviceElectricity: [],
+    serviceLowVoltage: [],
+    serviceClimateCool: [],
+    serviceClimateHeat: [],
+    serviceCover: [],
+    serviceChamber: [],
   };
 }
 
@@ -172,6 +474,38 @@ function freezeLayout(layout: MutableLayout): FloorLayout {
     Object.freeze(layout[key]);
   }
   return Object.freeze(layout);
+}
+
+/**
+ * Buckets one service run: its legs, its boxing and its stop-ends.
+ *
+ * Three destinations, and they are not the same one:
+ *
+ * - the **segments** and the **caps** go to the run's own family bucket. A cap is the
+ *   plug on the end of a pipe, so it is that pipe — drawn in the gas yellow when it
+ *   stops a gas riser and the drainage grey when it stops a stack — and putting the
+ *   caps somewhere else would leave every stack on the floor ending in a bead of a
+ *   colour that belongs to no service;
+ * - the **cover** goes to `serviceCover`, whatever it covers. That is the whole point
+ *   of it having its own checkbox: with the covers on and the runs off a viewer sees
+ *   the finished room, and with both on they see what is inside the boxing
+ *   (`SERVICE_LAYERS`, `covers`). Boxing drawn in the colour of what it hides would
+ *   answer neither question.
+ *
+ * @param layout - The buckets being filled; mutated.
+ * @param run - The built run to place. Not mutated; its boxes are pushed by reference.
+ */
+function bucketServiceRun(layout: MutableLayout, run: BuiltServiceRun): void {
+  const familyKey = SERVICE_FAMILY_MATERIAL[run.family];
+  for (const segment of run.segments) {
+    layout[familyKey].push(segment.box);
+  }
+  for (const box of run.cover) {
+    layout.serviceCover.push(box);
+  }
+  for (const box of run.caps) {
+    layout[familyKey].push(box);
+  }
 }
 
 /**
@@ -197,7 +531,14 @@ function freezeLayout(layout: MutableLayout): FloorLayout {
  * - the television panel into `tvPanel`;
  * - and every part of every fixture into the bucket its surface family names. A fixture is
  *   one to three boxes, so a furnished room costs no more draw calls than an empty one: the
- *   parts merge into the same geometry per material as everything else.
+ *   parts merge into the same geometry per material as everything else. A fitting that is
+ *   the BUILDING rather than a room's contents is bucketed through
+ *   {@link FABRIC_SURFACE_MATERIAL} instead, so that hiding the furniture clears a room
+ *   without opening a hole in the floor;
+ * - and every service run into the bucket its family names, its boxing into `serviceCover`
+ *   and its stop-ends in with its own legs ({@link bucketServiceRun}). Thirteen families
+ *   share the eight run buckets, because a services view is read by hue and a hue per
+ *   family would be thirteen colours nobody can hold in their head.
  *
  * The boxes of a bucket keep the order of the built floor, and every box that is already a
  * {@link PlanBox} is passed through by reference rather than copied. The `ceiling` and
@@ -234,8 +575,13 @@ export function getFloorLayout(builtFloor: BuiltFloor, plan: FloorPlan = FLOOR_P
     layout[slabKey].push(slab);
   }
   for (const fixture of builtFloor.fixtures) {
+    // The building's own fabric, or a room's contents: one table or the other, chosen per
+    // FIXTURE and applied to every part of it, so a fitting is never half hidden.
+    const surfaceMaterial = FABRIC_FIXTURE_KINDS.includes(fixture.kind)
+      ? FABRIC_SURFACE_MATERIAL
+      : FIXTURE_SURFACE_MATERIAL;
     for (const part of fixture.parts) {
-      layout[FIXTURE_SURFACE_MATERIAL[part.surface]].push(part.box);
+      layout[surfaceMaterial[part.surface]].push(part.box);
     }
   }
   for (const step of builtFloor.stairs.steps) {
@@ -245,6 +591,9 @@ export function getFloorLayout(builtFloor: BuiltFloor, plan: FloorPlan = FLOOR_P
     layout.railing.push(makeBox(railing.rect, FINISHED_FLOOR_LEVEL, railing.top));
   }
   layout.tvPanel.push(builtFloor.tvPanel);
+  for (const run of builtFloor.services) {
+    bucketServiceRun(layout, run);
+  }
   return freezeLayout(layout);
 }
 

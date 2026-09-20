@@ -55,6 +55,27 @@
  * because a room can genuinely run out of floor to write on — and when it is,
  * it is named in {@link PlanPage.droppedLabels} rather than lost.
  *
+ * ## The services, and the dimension this page does not have
+ *
+ * Since Part 5 the plan also carries the runs — drainage, water, gas,
+ * electricity, low voltage and climate — as a polyline apiece in the layer's own
+ * colour, read out of the app's palette so the drawing and the screen cannot
+ * disagree about which blue is cold water. They sit above the room fills and the
+ * wall fabric, which a run crosses constantly and would otherwise be chopped up
+ * by, and below the port and window bars and every matricule, which are what the
+ * owner marks up against.
+ *
+ * The hard part is not the drawing, it is the honesty. A plan view throws `y`
+ * away, and `y` is the whole question for a service: the drainage runs below zero
+ * inside the floor build-up and the spine runs at 2.20–2.65 over every door head,
+ * so flattened onto one page they are drawn crossing each other and everything
+ * else. A reader would see a floor full of clashes that do not exist. So the
+ * height band is drawn as the LINE STYLE — dashed under the floor, dotted at wall
+ * level, solid overhead — by the same classifier the Registers page prints in
+ * words, and the key under the plan says so. A run with no length in plan at all,
+ * which is every riser, is drawn as the square a riser has always been drawn as,
+ * because a point rendered as a line is rendered as nothing.
+ *
  * Cell ids are `v2-<counter>` in emission order, so two runs over the same spec
  * produce byte-identical XML and the committed HTML only changes when the
  * geometry does.
@@ -62,7 +83,37 @@
  * Node built-ins only, ES modules.
  */
 
+/**
+ * The three things this page does not compute for itself.
+ *
+ * - `getServiceRuns` numbers a run — `F1-DRN-S4`, per layer, in declaration
+ *   order. That rule belongs to the domain, and a second copy of it here would be
+ *   free to disagree with the model and with the Registers page the moment a run
+ *   is inserted rather than appended.
+ * - `MATERIAL_PALETTE` holds the hue each service is drawn in on screen. Re-typing
+ *   `#2f6fd0` into this file would make the drawing and the app agree by
+ *   coincidence; reading it makes them agree by construction, which is the whole
+ *   of ADR-010 applied to colour.
+ * - `serviceHeightBand` decides whether a stretch of pipe is under the floor, at
+ *   wall level or overhead. This page draws that as a line style and the register
+ *   prints it as a column, and the two must be the same judgement — see the
+ *   services section of {@link renderPlanPage}.
+ *
+ * Each takes its data as an argument or is a pure classifier, so this module is
+ * still a function of the `spec` and `walls` it is handed.
+ */
+import { getServiceRuns } from '../../src/features/building/domain/services.ts';
+import { MATERIAL_PALETTE } from '../../src/features/building/ui/floorMaterials.ts';
+import { SERVICE_BAND_NAMES, serviceHeightBand } from './render-table.mjs';
+
 /** @import { Axis, Contact, PlanSpec, Wall } from './walls.mjs' */
+
+/**
+ * @import { PlanServiceFamily }
+ *   from '../../src/features/building/domain/sourceOfTruth/plan.ts'
+ */
+
+/** @import { FloorMaterialKey } from '../../src/features/building/ui/floorMaterials.ts' */
 
 /**
  * @import { InsulatedWall, PlanFixture, PlanRectCoordinates, PlanRoom, PlanRoomType,
@@ -119,10 +170,23 @@
  * page is one value with the misses attached, so a caller cannot read the first
  * without being handed the second.
  *
+ * Since the services arrived, the same channel carries a second kind of miss and
+ * for a second reason. A fixture label is dropped because the room ran out of
+ * floor; a service run is not named because the PAGE has run out of lattice —
+ * 116 runs cannot all carry a matricule on top of the hundred wall, port and
+ * window labels already packed between the rooms, so the drawing names the
+ * trunks and the risers and the SERVICES register carries the rest (see
+ * {@link TRUNK_PLAN_LENGTH}). Both are the same fact to a caller — a thing that
+ * is drawn and not named — so both come out of the same list rather than out of a
+ * second one nobody would remember to read.
+ *
  * @typedef {object} PlanPage
  * @property {string} xml The `<mxGraphModel>…</mxGraphModel>` XML of the page.
- * @property {number} fixtureLabels How many fixture labels the page tried to place.
- * @property {string[]} droppedLabels The text of each one that found nowhere free.
+ * @property {number} fixtureLabels How many labels the page weighed placing:
+ *   every fixture, and every service run. The denominator of `droppedLabels`.
+ * @property {string[]} droppedLabels Each label the page does not carry — a
+ *   fixture label with nowhere to sit, by its text, and a service run the trunk
+ *   rule did not name, by its matricule.
  */
 
 /**
@@ -263,6 +327,161 @@ const FIXTURE_COLORS = Object.freeze({ fill: '#cfd8dc', stroke: '#455a64', text:
  * the fitting blue-grey would read as furniture you could walk round.
  */
 const PARTITION_FILL = '#8c8c8c';
+
+/**
+ * What each service family is drawn in.
+ *
+ * The hex never appears here: the key is looked up in `MATERIAL_PALETTE`, so the
+ * drawing is painted out of the same table the screen is, and a hue changed in
+ * the app changes here on the next build. Several families deliberately share a
+ * bucket — the four drainage families are one grey, power and lighting are one
+ * orange, a chamber vent is read with the gas it vents — because the question a
+ * services drawing answers is "which service is this", not "which of two pipe
+ * sizes".
+ *
+ * This map mirrors `SERVICE_FAMILY_MATERIAL` in `src/features/building/ui/
+ * floorLayout.ts`, which is not exported. It is the one thing in this section
+ * that can drift, and it is the cheap half: a family added to the plan and
+ * missed here draws in {@link SERVICE_UNKNOWN} — a black line nobody will
+ * mistake for a service — rather than vanishing.
+ *
+ * @type {Readonly<Record<PlanServiceFamily, FloorMaterialKey>>}
+ */
+const SERVICE_FAMILY_MATERIAL = Object.freeze({
+  soil: 'serviceDrainage',
+  waste: 'serviceDrainage',
+  gully: 'serviceDrainage',
+  vent: 'serviceDrainage',
+  chamberVent: 'serviceGas',
+  cold: 'serviceWaterCold',
+  hot: 'serviceWaterHot',
+  gas: 'serviceGas',
+  power: 'serviceElectricity',
+  lighting: 'serviceElectricity',
+  data: 'serviceLowVoltage',
+  cooling: 'serviceClimateCool',
+  heating: 'serviceClimateHeat',
+});
+
+/** Drawn for a family this file has no colour for: loud, and obviously not a service. */
+const SERVICE_UNKNOWN = '#000000';
+
+/**
+ * The service key, in the order it is printed under the plan.
+ *
+ * One entry per distinct hue rather than per family, because that is what the
+ * eye can actually use: eight colours are a legend, thirteen are a puzzle.
+ *
+ * @type {readonly (readonly [string, FloorMaterialKey])[]}
+ */
+const SERVICE_KEY = Object.freeze([
+  /** @type {readonly [string, FloorMaterialKey]} */ (['Drainage', 'serviceDrainage']),
+  /** @type {readonly [string, FloorMaterialKey]} */ (['Cold water', 'serviceWaterCold']),
+  /** @type {readonly [string, FloorMaterialKey]} */ (['Hot water', 'serviceWaterHot']),
+  /** @type {readonly [string, FloorMaterialKey]} */ (['Gas', 'serviceGas']),
+  /** @type {readonly [string, FloorMaterialKey]} */ (['Electricity', 'serviceElectricity']),
+  /** @type {readonly [string, FloorMaterialKey]} */ (['Low voltage', 'serviceLowVoltage']),
+  /** @type {readonly [string, FloorMaterialKey]} */ (['Cooling', 'serviceClimateCool']),
+  /** @type {readonly [string, FloorMaterialKey]} */ (['Heating', 'serviceClimateHeat']),
+]);
+
+/**
+ * How a leg is stroked, by the height band it lies in.
+ *
+ * **This is the whole reason a services drawing is hard.** A plan view flattens
+ * `y`, and `y` is the one dimension that decides whether two runs drawn crossing
+ * are a clash or two pipes 2.50 m apart. Drainage runs at NEGATIVE height, inside
+ * the floor build-up; the spine runs at 2.20–2.65 m, over every head and every
+ * door. Drawn in one style they read as a floor-wide collision, which is a
+ * drawing that actively misleads the man marking it up — worse than no drawing.
+ *
+ * So the band is the stroke. Dashes read as "not here, under you" the way a
+ * buried service is dashed on every survey drawing there has ever been; the solid
+ * line is the one overhead, unbroken because it is the one you can point at; and
+ * the run at wall level — between the floor and the top of a door, the only band
+ * where a crossing on this page might be a real fight over the same space — is
+ * dotted, tight and busy, so it reads as the one to look at twice. `rises` is a
+ * leg that changes band as it goes, dash-dot, which is the convention for a line
+ * that is doing two things.
+ *
+ * Keyed by exactly what {@link serviceHeightBand} returns, so a band added to the
+ * classifier fails here rather than falling back to a silent solid line.
+ *
+ * @type {Readonly<Record<'under' | 'wall' | 'overhead' | 'rises', string>>}
+ */
+const SERVICE_DASH = Object.freeze({
+  under: 'dashed=1;dashPattern=8 4;',
+  wall: 'dashed=1;dashPattern=1 3;',
+  overhead: '',
+  rises: 'dashed=1;dashPattern=10 3 2 3;',
+});
+
+/**
+ * Stroke width of a run, px.
+ *
+ * Not the bore: a 110 mm soil pipe is 6.6 px at this scale and a 20 mm branch is
+ * 1.2, and drawing them to size would make two thirds of the installation a hair
+ * that disappears against a wall fill. The bore is a column on the Registers
+ * page, where a number beats a thickness the eye has to judge. 1.5 is heavy
+ * enough to hold a dash pattern and light enough that a run crossing a port bar
+ * does not hide it.
+ */
+const SERVICE_STROKE = 1.5;
+
+/**
+ * Height of the box a leg's line is drawn inside, px.
+ *
+ * Every leg of every run is axis-aligned — `assertRunAxis` rejects a pipe cut
+ * corner to corner — so a leg is drawn as draw.io's `line` shape, which strokes
+ * the centreline of its own box, turned by `rotation=-90` where the leg runs in
+ * z. That keeps every run a VERTEX like everything else on this page, which is
+ * what makes the z-order of the services section a fact about the order the
+ * cells are written in rather than a hope about how draw.io paints edges. The box
+ * itself is invisible; 8 px only gives the line something to be selected by when
+ * the owner opens the drawing to mark it up.
+ */
+const SERVICE_LINE_BOX = 8;
+
+/**
+ * Side of the square marking a riser, px.
+ *
+ * A run that only changes height has no length in plan — the three soil stacks,
+ * the four dry risers — so in a plan view it is a point, and a point drawn as a
+ * line is drawn as nothing. Left to the polyline code they would be the most
+ * important runs on the floor and the only invisible ones. 7 px is about a
+ * 0.12 m box: big enough to find, small enough not to claim floor the stack does
+ * not occupy.
+ */
+const RISER_MARKER = 7;
+
+/**
+ * Plan length at or above which a run is named on the drawing, in metres.
+ *
+ * 116 runs cannot all carry a matricule here. The lattice between the rooms is
+ * already packing about a hundred wall, port and window labels at six lanes (see
+ * {@link BAND_ROWS}); a hundred more would bury the floor plan under its own
+ * services and cost the drawing the thing it is for. So the page names what a
+ * reader traces — the trunks that cross the floor and the risers that feed them —
+ * and the SERVICES register carries every run with its bore, its ends, its length
+ * and its height.
+ *
+ * 8.00 m is where the data breaks, not a round number chosen first: the runs
+ * sort into thirteen distribution mains of 9.18 m and up and then a gap to 6.50,
+ * below which everything is a branch to one fitting in one room. Those thirteen
+ * plus the eight risers are twenty-one labels, which the lattice absorbs.
+ * Every run NOT named is reported through {@link PlanPage.droppedLabels}, so the
+ * drawing says out loud which names it is not carrying.
+ */
+const TRUNK_PLAN_LENGTH = 8;
+
+/**
+ * Plan movement below which a leg is a riser rather than a line, in metres.
+ *
+ * A tenth of a millimetre: the plan is encoded on the centimetre grid, so this
+ * separates "does not move across the floor" from "moves", and nothing real can
+ * land between the two.
+ */
+const RISER_EPSILON = 1e-4;
 
 /**
  * Every wall is drawn as one of two kinds: red if it is built for isolation,
@@ -433,8 +652,17 @@ export function renderPlanPage({ spec, walls }) {
    */
   const placedLabels = [];
 
-  /** How many fixture labels this page tried to place. */
-  let fixtureLabels = 0;
+  /**
+   * How many labels this page weighed placing, whether or not one was drawn.
+   *
+   * Fixtures, and since the services arrived every service run as well. Kept as
+   * one number because it is one number the caller wants: the denominator of
+   * "how much of this drawing is named", against `droppedLabels` as the
+   * numerator of what is not. The two must be counted in the same units or the
+   * arithmetic the caller does on them is meaningless, which is why a run is
+   * weighed here even when the trunk rule was never going to name it.
+   */
+  let labelsWeighed = 0;
   /**
    * The text of every fixture label that found nowhere free to sit.
    *
@@ -625,7 +853,7 @@ export function renderPlanPage({ spec, walls }) {
       // matricule-only rule the rest of the plan follows. A small rectangle is
       // the one shape here that does not say what it is on sight.
       const label = `${base}-X${index + 1} ${fixture.kind}`;
-      fixtureLabels += 1;
+      labelsWeighed += 1;
       const spot = placeLabelBox(label, box, roomBoxes, placedLabels);
       if (!spot) {
         // NOT a silent return. With seven fixtures a label that found nowhere to
@@ -723,6 +951,138 @@ export function renderPlanPage({ spec, walls }) {
         }),
       );
     }
+  }
+
+  // -------------------------------------------------------- the service runs
+  // WHERE THIS SECTION SITS, AND WHY IT SITS HERE.
+  //
+  // Directly after the wall fabric is painted and directly before the opening
+  // bars and `emitBands`. Both edges of that window are load-bearing:
+  //
+  // - AFTER the room fills, the fixtures and the wall rectangles, because all
+  //   three are opaque. A run crosses a wall every few metres — that is what a
+  //   service does — and drawn underneath, every run on the floor would be
+  //   chopped into disconnected fragments at each wall it passes through, which
+  //   is the one thing a route drawing must not do. Over them, a run reads end to
+  //   end.
+  // - BEFORE the port and window bars and before every band label, because those
+  //   are the page's identity layer. The owner marks up this drawing against
+  //   matricules; a 1.5 px line laid over `F1-R11-KIT-W3` would cost him the
+  //   thing he navigates by, to save a service that is fully described on the
+  //   Registers page. So the last things written to `cells` are still the bars
+  //   and the names, and they are still on top.
+  //
+  // What is registered where follows from that. Every line and every riser marker
+  // goes into `boxes` (through `cell`), so the side labels and the captions are
+  // measured against the services too. None of them goes into `placedLabels`: a
+  // hairline crossing a 6 px label leaves both readable, whereas 120 more
+  // obstacles in the lattice would push wall matricules off the walls they name,
+  // and an unlabelled wall is the one outcome this renderer must never produce.
+  // The run LABELS do go in, through `queueBand`, which is what keeps them off
+  // the wall labels they share a band with.
+  //
+  // AND THE THING THAT WOULD OTHERWISE MISLEAD. A plan view has no `y`. Drainage
+  // runs below zero, inside the floor build-up; the spine runs at 2.20–2.65,
+  // over every door head. Flattened onto one page they are drawn crossing each
+  // other and crossing everything else, and a reader would see a floor full of
+  // clashes that do not exist. So the height band is drawn as the line style —
+  // see {@link SERVICE_DASH} — and the key under the plan says so in words.
+  for (const built of getServiceRuns(spec.SERVICE_RUNS)) {
+    const { points } = built.run;
+    const color = serviceColor(built.family);
+    let planLength = 0;
+    /**
+     * The longest leg the run has in plan, which is where its name belongs: the
+     * stretch a reader's eye follows is the stretch that can carry a label.
+     *
+     * @type {{ axis: Axis, at: number, centre: number, length: number } | null}
+     */
+    let longest = null;
+
+    for (let leg = 1; leg < points.length; leg += 1) {
+      const [fromX, fromZ] = points[leg - 1];
+      const [toX, toZ] = points[leg];
+      const length = Math.hypot(toX - fromX, toZ - fromZ);
+      // A leg that only changes height is a riser: in plan it is a point, and a
+      // point drawn as a line is drawn as nothing. Skipped here and picked up
+      // below, where a run that is ALL riser gets a marker instead.
+      if (length <= RISER_EPSILON) continue;
+      planLength += length;
+      const axis = /** @type {Axis} */ (Math.abs(toX - fromX) > Math.abs(toZ - fromZ) ? 'x' : 'z');
+      const at = axis === 'x' ? fromZ : fromX;
+      const along = SCALE * length;
+      // Always laid out as a HORIZONTAL box and turned by `rotation=-90` when the
+      // leg runs in z, rather than by the `line` shape's own `direction=north`.
+      // Both would draw the same line, but rotation is the mechanism this page
+      // already runs every rotated wall label through, and `cell` knows to record
+      // the VISUAL box of a rotated cell — so the bounds the side labels and the
+      // captions are measured against stay right without a second special case.
+      const centreX = axis === 'x' ? px((fromX + toX) / 2) : px(at);
+      const centreY = axis === 'x' ? py(at) : py((fromZ + toZ) / 2);
+      cells.push(
+        shape({
+          style:
+            `shape=line;html=1;rounded=0;fillColor=none;strokeColor=${color};` +
+            `strokeWidth=${SERVICE_STROKE};${axis === 'z' ? 'rotation=-90;' : ''}` +
+            // The band of THIS leg, not of the whole run: a branch that leaves a
+            // chamber at 1.20 and joins the spine at 2.35 is dotted where it is
+            // still at wall level and solid where it is overhead, which is what
+            // the run actually does.
+            SERVICE_DASH[serviceHeightBand([points[leg - 1], points[leg]])],
+          value: '',
+          x: centreX - along / 2,
+          y: centreY - SERVICE_LINE_BOX / 2,
+          w: along,
+          h: SERVICE_LINE_BOX,
+        }),
+      );
+      if (longest === null || length > longest.length) {
+        longest = {
+          axis,
+          at,
+          centre: axis === 'x' ? px((fromX + toX) / 2) : py((fromZ + toZ) / 2),
+          length,
+        };
+      }
+    }
+
+    // A run with no length in plan at all — the three soil stacks and the dry
+    // risers — is the floor's spine and would be its only invisible service.
+    // Drawn as the square a riser is drawn as on every plan there has ever been.
+    const isRiser = longest === null;
+    if (isRiser) {
+      const [atX, atZ] = points[0];
+      cells.push(
+        shape({
+          style: `rounded=0;whiteSpace=wrap;html=1;fillColor=${color};strokeColor=${color};`,
+          value: '',
+          x: px(atX) - RISER_MARKER / 2,
+          y: py(atZ) - RISER_MARKER / 2,
+          w: RISER_MARKER,
+          h: RISER_MARKER,
+        }),
+      );
+    }
+
+    // Named or reported, never silently anonymous. See {@link TRUNK_PLAN_LENGTH}:
+    // the trunks and the risers carry a matricule here, every other run carries
+    // one on the Registers page and is listed as unnamed on the way out.
+    labelsWeighed += 1;
+    if (!isRiser && planLength < TRUNK_PLAN_LENGTH) {
+      droppedLabels.push(built.matricule);
+      continue;
+    }
+    // Matricule only, like every other label on this page, and in the run's own
+    // colour so the name and the line it names are matched by hue before they
+    // are matched by position — which is what lets a label sit a lane or two off
+    // the run without becoming ambiguous.
+    queueBand({
+      axis: longest === null ? 'x' : longest.axis,
+      at: longest === null ? points[0][1] : longest.at,
+      centre: longest === null ? px(points[0][0]) : longest.centre,
+      text: built.matricule,
+      color,
+    });
   }
 
   // ----------------------------------------- walls, and the openings in them
@@ -872,6 +1232,25 @@ export function renderPlanPage({ spec, walls }) {
     26,
   );
 
+  // The services key. It is two lines and neither is optional. The first is the
+  // hues, written in their own colours so a word is matched to a line by looking
+  // rather than by counting swatches. The second is the one the drawing cannot
+  // do without: a plan view has thrown `y` away, so it has to say out loud that a
+  // crossing on this page is usually two pipes metres apart, and give the reader
+  // the rule for telling which.
+  caption(
+    'text;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fontSize=9;fontColor=#333333;',
+    `${serviceKeyText()}\n` +
+      `A plan view has no height, so most crossings here are not clashes — the line says which band a run is in: ` +
+      `— — dashed = ${SERVICE_BAND_NAMES.under} (below 0.00, inside the floor build-up, where the drainage is) · ` +
+      `· · · · dotted = ${SERVICE_BAND_NAMES.wall} (0.00 to 2.10, the one band where a crossing may be real) · ` +
+      `solid = ${SERVICE_BAND_NAMES.overhead} (2.10 and up, the spine, over every door head) · ` +
+      `dash-dot = the leg ${SERVICE_BAND_NAMES.rises} from one band into the next · ` +
+      `a filled square is a riser, which is a point in plan and would otherwise be drawn as nothing.\n` +
+      `Only the trunks and the risers are named here. Every run's matricule, bore, ends, length and height band is on the Registers page.`,
+    38,
+  );
+
   caption(
     noteStyle,
     `Scale ${SCALE} px = 1 m · origin = the outer corner of sides A and C · x runs A→D, z runs C→B · ` +
@@ -890,7 +1269,7 @@ export function renderPlanPage({ spec, walls }) {
       '<mxGraphModel dx="669" dy="364" grid="1" gridSize="10" guides="1" tooltips="1" connect="1"' +
       ' arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">' +
       `<root><mxCell id="0"/><mxCell id="1" parent="0"/>${cells.join('')}</root></mxGraphModel>`,
-    fixtureLabels,
+    fixtureLabels: labelsWeighed,
     droppedLabels,
   };
 
@@ -1801,6 +2180,37 @@ function fitsBox(lines, fontSize, wPx, hPx) {
   let rows = 0;
   for (const line of lines) rows += line === '' ? 1 : Math.ceil(line.length / perLine);
   return rows * fontSize * 1.45 <= hPx - 4;
+}
+
+/**
+ * The hue a run of this family is drawn in.
+ *
+ * @param {string} family A `PlanServiceFamily`, or anything the plan may grow.
+ * @returns {string} A hex colour from `MATERIAL_PALETTE`, or
+ *   {@link SERVICE_UNKNOWN} for a family this file has no bucket for.
+ */
+function serviceColor(family) {
+  const key = SERVICE_FAMILY_MATERIAL[/** @type {PlanServiceFamily} */ (family)];
+  return key === undefined ? SERVICE_UNKNOWN : MATERIAL_PALETTE[key].color;
+}
+
+/**
+ * The service key, as one line of draw.io's HTML label markup.
+ *
+ * Each service is written in its own colour, which is the only form of key worth
+ * printing here: a row of named swatches in the margin would have to be read
+ * twice — once to find the swatch, once to find the run — where a coloured word
+ * is matched against a coloured line at a glance. draw.io stores a label's HTML
+ * in the `value` attribute, so the tags go through {@link escapeXml} like any
+ * other text and come back out as markup on the page.
+ *
+ * @returns {string} e.g. `<b>SERVICES</b> <font color="#5a6470">Drainage</font> · …`.
+ */
+function serviceKeyText() {
+  const swatches = SERVICE_KEY.map(
+    ([name, key]) => `<b><font color="${MATERIAL_PALETTE[key].color}">${name}</font></b>`,
+  );
+  return `SERVICES — ${swatches.join(' · ')}`;
 }
 
 /**

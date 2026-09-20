@@ -8,7 +8,7 @@ import type { SpaceKind } from '../domain/floorPlan/index.ts';
 import type { PlanRect } from '../domain/planGeometry.ts';
 import { PORT_SCHEDULE } from '../domain/ports/index.ts';
 import { getRoomInfo, NO_DAYLIGHT_NOTE } from '../domain/roomInfo.ts';
-import type { RoomDoor, RoomInfo } from '../domain/roomInfo.ts';
+import type { RoomDoor, RoomInfo, RoomService } from '../domain/roomInfo.ts';
 import type { FloorWindow } from '../domain/windows.ts';
 import { BUILT_FLOOR } from './floorInstance.ts';
 import { INTERIOR_REGION_ID } from './hudIds.ts';
@@ -51,10 +51,11 @@ const KEYBOARD_CLICK_DETAIL = 0;
 /** Decimal places every length and area is printed to: the plan is drawn on a centimetre grid. */
 const DECIMALS = 2;
 
-/** An empty list, said in words; see the four constants below. */
+/** An empty list, said in words; see the five constants below. */
 const NO_DOORS = 'Nothing opens into it';
 const NO_WINDOWS = 'No windows';
 const NO_FIXTURES = 'Nothing stands in it';
+const NO_SERVICES = 'No service reaches it';
 const NO_OPEN_ITEMS = 'Nothing open';
 
 /** What the panel calls each thing it lists. */
@@ -65,6 +66,7 @@ const DOORS_TERM = 'Doors and openings';
 const WINDOWS_TERM = 'Windows';
 const FIXTURES_TERM = 'Fixtures';
 const OPEN_ITEMS_TERM = 'Open items';
+const SERVICES_TERM = 'Services';
 
 /**
  * The kinds of space that are under the open sky.
@@ -158,6 +160,39 @@ function formatFixture(fixture: BuiltFixture): string {
 }
 
 /**
+ * Joins the fittings a service lands on, where it lands on any.
+ *
+ * The one place the panel puts the model's two answers into one line, and the
+ * separator is the `formatFixture` em dash it already uses for "and what the plan says
+ * about it" — because that is the same relation: the layer, then what it does here.
+ */
+const FITTING_SEPARATOR = ', ';
+
+/**
+ * Describes one service reaching the room, and what it lands on in it.
+ *
+ * **The bare layer name is the whole message when the list is empty**, and that is the
+ * distinction the model draws rather than one invented here: a service with no fitting
+ * REACHES the room — a cable dropped into it, a stack standing in the void — while a
+ * service with fittings lands on them. `Water` and `Water — sink` are therefore two
+ * different statements and read as two different statements, with no "(reaches only)"
+ * hedge needed to say the first one.
+ *
+ * The layer name is `getRoomInfo`'s, which is `SERVICE_LAYERS`' own, which is what the
+ * layer switcher's checkbox is captioned with: the viewer reads `Low voltage` here and
+ * ticks `Low voltage` there. Nothing in this file spells a layer.
+ *
+ * @param service - The service, as `getRoomInfo` lists it.
+ * @returns e.g. `Water — sink`, or `Electricity`.
+ */
+function formatService(service: RoomService): string {
+  if (service.fittings.length === 0) {
+    return service.name;
+  }
+  return `${service.name} — ${service.fittings.join(FITTING_SEPARATOR)}`;
+}
+
+/**
  * The open items as the panel prints them, with the balcony sentence taken out.
  *
  * @param info - Everything known about the room.
@@ -220,7 +255,8 @@ function Lines({ items, empty }: { readonly items: readonly string[]; readonly e
  *
  * A trigger naming the current room and a panel holding everything the model knows about
  * it: its matricule, its clear size rectangle by rectangle, its area, what opens into it,
- * its windows, what stands in it, and what is still unsettled about it. The disclosure is
+ * its windows, what stands in it, what is still unsettled about it, and which services
+ * reach it. The disclosure is
  * `RoomMenu`'s, down to the offsets on the open panel and the way focus is handed back;
  * the content is `getRoomInfo`'s, verbatim. **This component derives nothing.** The two
  * subtractions it does — a rectangle's width from its own two x's, its depth from its two
@@ -354,6 +390,9 @@ export function RoomInfoPanel() {
             </Field>
             <Field term={OPEN_ITEMS_TERM}>
               <Lines items={getShownOpenItems(info)} empty={NO_OPEN_ITEMS} />
+            </Field>
+            <Field term={SERVICES_TERM}>
+              <Lines items={info.services.map(formatService)} empty={NO_SERVICES} />
             </Field>
           </dl>
         </section>

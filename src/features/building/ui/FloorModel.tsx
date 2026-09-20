@@ -1,6 +1,13 @@
+import { useLayerStore } from '../application/layerStore.ts';
 import type { PlanBox } from '../domain/planBox.ts';
 import { BUILT_FLOOR } from './floorInstance.ts';
-import { FLOOR_MATERIAL_KEYS, getCeilingLayout, getFloorLayout } from './floorLayout.ts';
+import {
+  FLOOR_MATERIAL_KEYS,
+  getCeilingLayout,
+  getFloorLayout,
+  isBucketPlain,
+  isBucketShown,
+} from './floorLayout.ts';
 import type { CeilingLayout, FloorLayout } from './floorLayout.ts';
 import { MATERIAL_PALETTE } from './floorMaterials.ts';
 import {
@@ -61,6 +68,11 @@ const FAMILY_TEXTURE: Partial<Record<FloorMaterialKey, ReturnType<typeof createO
     slabServiced: createMarbleTexture(MARBLE_FLOOR_REPEAT),
     stairs: createOakTexture(),
     joinery: createOakTexture(),
+    // The pass counter is the same oak as the wardrobes and must keep the same grain: it
+    // is bucketed apart from them so the `furniture` checkbox cannot take a hole in the
+    // kitchen wall away with the furniture (`floorLayout.ts`), not because it looks
+    // different. A missing entry here would be the split leaking into the surface.
+    fabricJoinery: createOakTexture(),
     worktop: createMarbleTexture(),
     softFurnishing: createBoucleTexture(),
   });
@@ -112,6 +124,9 @@ const TOP_STOREY_ONLY_KEY: keyof CeilingLayout = 'ceiling';
 /** An empty bucket: nothing of that material is on the floor, so no mesh is rendered. */
 const NO_BOXES = 0;
 
+/** The bucket that is not a family of solids but the state `finishing` puts others into. */
+const PLAIN_MATERIAL_KEY: FloorMaterialKey = 'plainSurface';
+
 /** Props of {@link MaterialMesh}. */
 interface MaterialMeshProps {
   /** Which surface family is drawn: it picks the material out of the palette. */
@@ -120,6 +135,18 @@ interface MaterialMeshProps {
   readonly boxes: readonly PlanBox[];
   /** The storey levels to draw them at. Must keep its identity across renders. */
   readonly levels: readonly number[];
+  /**
+   * Whether the family is on screen. Passed down as a flag and never used to decide
+   * whether to render the component: unmounting it would dispose the merged geometry, so a
+   * checkbox flipped twice would re-merge and re-upload the whole bucket
+   * (`MergedBoxesMesh.tsx`).
+   */
+  readonly visible: boolean;
+  /**
+   * Whether it is drawn in the plain finish instead of its own: the same geometry, the
+   * `plainSurface` spec, and no texture looked up for it.
+   */
+  readonly plain: boolean;
 }
 
 /**
@@ -127,18 +154,49 @@ interface MaterialMeshProps {
  *
  * The material props come straight from {@link MATERIAL_PALETTE}, whose specs are exactly the
  * `meshStandardMaterial` settings of the family — colour, roughness, metalness, dithering,
- * and the emission of the light panels — so no colour is written into the scene layer.
+ * and the emission of the light panels — so no colour is written into the scene layer. With
+ * `plain` set it is the `plainSurface` spec instead, and {@link FAMILY_TEXTURE} is not
+ * consulted at all: the grain is part of the finish, not of the geometry under it.
+ *
+ * THE `key` ON THE MATERIAL IS LOAD-BEARING AND LOOKS REMOVABLE. Whether a material has a
+ * `map` is a SHADER DEFINE, not a uniform: three.js compiles `USE_MAP` in or out when the
+ * material is built, and assigning `material.map` afterwards changes nothing on screen
+ * unless `needsUpdate` is set. React Three Fiber sets the prop and does not set the flag.
+ *
+ * That never mattered before Part 5, because every textured bucket had its map at first
+ * compile. It matters now: the app opens on NAKED WALLS, so every material compiles with no
+ * map, and ticking `finishing` used to assign a texture that was never sampled — the oak
+ * grain, the carpet weave, the marble vein and the bouclé simply did not appear, while the
+ * geometry and the colours looked right. Changing the key when a map appears or disappears
+ * makes React build a new material, which compiles the right shader.
+ *
+ * The key is the map's PRESENCE, not `plain`, so a bucket that never carries a texture is
+ * never rebuilt. Found by measuring a screenshot against the pre-layer baseline: 23 914
+ * pixels differed, and adding a storey and removing it again — which rebuilds the materials
+ * — brought it down to 3 967. A regenerated baseline would have pinned the defect forever
+ * (ADR-019).
+ *
+ * The material carries the bucket's key as its `name`, which is what a debugger — and the
+ * test suite — reads to say which checkbox a given mesh answers to. It has to be the key and
+ * not the settings, because two buckets may share a finish on purpose (`fabricJoinery` is the
+ * same oak as `joinery`) and because a re-surfaced bucket wears a spec that is not its own.
  *
  * @param props - {@link MaterialMeshProps}
- * @returns One mesh per level, or `null` when the family has no box to draw.
+ * @returns One mesh per level, drawn or hidden, or `null` when the family has no box at all.
  */
-function MaterialMesh({ materialKey, boxes, levels }: MaterialMeshProps) {
+function MaterialMesh({ materialKey, boxes, levels, visible, plain }: MaterialMeshProps) {
   if (boxes.length === NO_BOXES) {
     return null;
   }
+  const texture = plain ? undefined : FAMILY_TEXTURE[materialKey];
   return (
-    <MergedBoxesMesh boxes={boxes} levels={levels}>
-      <meshStandardMaterial {...MATERIAL_PALETTE[materialKey]} map={FAMILY_TEXTURE[materialKey]} />
+    <MergedBoxesMesh boxes={boxes} levels={levels} visible={visible}>
+      <meshStandardMaterial
+        key={texture === undefined ? 'flat' : 'mapped'}
+        name={materialKey}
+        {...MATERIAL_PALETTE[plain ? PLAIN_MATERIAL_KEY : materialKey]}
+        map={texture}
+      />
     </MergedBoxesMesh>
   );
 }
@@ -177,6 +235,20 @@ export interface FloorModelProps {
  * down (`storeyLevels.ts`). The single exception is {@link TOP_STOREY_ONLY_KEY}, drawn at
  * the top storey alone for the reason given there.
  *
+ * **The checkboxes of Part 5 are applied here, and only through `BUCKET_RULES`.** Which
+ * layers are ticked is read from `layerStore.ts` with one selector subscription to the whole
+ * `shown` record — the shape `BuildingScene`'s `SceneContent` already uses for the storey
+ * count, and one subscription rather than nine because the store replaces that record whole
+ * and compares it by identity. The count stays a prop because it is the subject of what this
+ * component draws and a test has to be able to hand it one; the layer record is not: it is
+ * consumed entirely by the table above, which lives here.
+ *
+ * Nothing is unmounted by a checkbox. A hidden bucket is a mesh with `visible={false}`, so
+ * its baked geometry survives the tick — see `MergedBoxesMesh.tsx` for what unmounting it
+ * would cost with nine checkboxes being flipped. The one thing that is still mounted
+ * conditionally is the pair of ceiling buckets, and that is the VIEW and not a layer: outside
+ * the building there is genuinely no ceiling to hold.
+ *
  * It adds nothing else to the scene. There is no light here — the three lights of the scene
  * live in `SceneLighting`, and a room's own light is the emissive panel of its ceiling, not a
  * point light — no camera work, and no component per space: a floor of this many boxes is
@@ -186,6 +258,7 @@ export interface FloorModelProps {
  * @returns The meshes of every storey, and of the top storey's ceilings when they are shown.
  */
 export function FloorModel({ showCeilings, floorCount }: FloorModelProps) {
+  const shown = useLayerStore((state) => state.shown);
   const storeyLevels = getStoreyLevelsFor(floorCount);
   const topStoreyLevel = getTopStoreyLevelFor(floorCount);
 
@@ -197,6 +270,8 @@ export function FloorModel({ showCeilings, floorCount }: FloorModelProps) {
           materialKey={materialKey}
           boxes={ALWAYS_DRAWN_LAYOUT[materialKey]}
           levels={storeyLevels}
+          visible={isBucketShown(materialKey, shown)}
+          plain={isBucketPlain(materialKey, shown)}
         />
       ))}
       {showCeilings &&
@@ -206,6 +281,8 @@ export function FloorModel({ showCeilings, floorCount }: FloorModelProps) {
             materialKey={materialKey}
             boxes={CEILING_LAYOUT[materialKey]}
             levels={materialKey === TOP_STOREY_ONLY_KEY ? topStoreyLevel : storeyLevels}
+            visible={isBucketShown(materialKey, shown)}
+            plain={isBucketPlain(materialKey, shown)}
           />
         ))}
     </>

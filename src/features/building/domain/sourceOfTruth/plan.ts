@@ -340,10 +340,7 @@ export const ROOMS = deepFreeze([
     type: 'CTR',
     kind: 'room',
     rects: [[1.6, 3.8, 7.2, 9.7]],
-    note: 'entered from the guest-room strip above it',
-    open: [
-      'The mandatory split into two isolated compartments — gas and water in one, electricity and the low-voltage side in the other — is deferred, so the room stays one volume in the current drawing and is divided internally afterwards (brief §7.4).',
-    ],
+    note: 'entered from the guest-room strip above it; holds the two sealed service chambers and the central water heater',
   },
   // The north strip now runs the full width from the side-A balcony at x 1.60 to
   // x 9.70, passing over the control center (owner). That strip is what gives the
@@ -895,7 +892,7 @@ export type PlanFixtureKind =
   | 'fridge'
   | 'nightstand'
   | 'passCounter'
-  | 'servicesCabinet'
+  | 'serviceChamber'
   | 'shower'
   | 'sideboard'
   | 'sink'
@@ -1066,7 +1063,7 @@ export const FIXTURE_ROLES = deepFreeze({
   sideboard: 'furniture',
   storageUnit: 'furniture',
   // The building's own equipment.
-  servicesCabinet: 'services',
+  serviceChamber: 'services',
 } as const satisfies Readonly<Record<PlanFixtureKind, PlanFixtureRole>>);
 
 /**
@@ -1280,18 +1277,39 @@ export const FIXTURES = deepFreeze([
   },
   { kind: 'desk', room: 'bedroomFemaleKids', rect: [20.35, 21.75, 3.2, 3.8], mount: 'standing' },
 
-  // R08 control center x 1.60–3.80 · z 7.20–9.70. ONE volume holding electricity,
-  // ethernet, gas, water, the heater and the air conditioning, and one rather than
-  // six on purpose: brief §7.4 defers the mandatory split into a wet-and-gas
-  // compartment and an electrical one, and a single object is what there is to
-  // divide when that happens. It is wider than the 1.20 m leaf that serves this
-  // room, so it goes in as parts — which is what that unusually wide door is for.
-  // The south face is the only run clear of both leaves.
+  // R08 control center x 1.60–3.80 · z 7.20–9.70. TWO sealed chambers where
+  // there used to be one cabinet, which is what that cabinet was declared as one
+  // box for: brief §7.4's mandatory split is paid off here (ADR-022).
+  //
+  // The room now holds the CENTRAL WATER HEATER as well (owner, 2026-09-19), so
+  // the full combination — heater, gas, electricity, water — stands in one
+  // 5.50 m² room. The owner's instruction was "serious separation": each chamber
+  // is a CLOSED box, not a volume, and each breathes to outside on its own duct.
+  // BOTH leave EAST through the 0.30 wall at x 3.80–4.10 and cap over the
+  // control-center balcony — "everything starts from CC and out from CC balcony,
+  // except the drainage" (owner, 2026-09-20). The wet-and-gas duct runs OVER both
+  // boxes at y 2.50, clearing their 2.20 tops by 0.2375; the electrical one is at
+  // z 9.35, y 2.35. Crossing above a sealed box is not the hazard it was twice
+  // routed around: these are closed ducts, and what keeps them apart is where
+  // they DISCHARGE — 0.20 apart in z and 0.15 in y at the mouths.
+  //
+  // 0.10 m of air between them. They keep the 0.60 depth and the 1.40 combined
+  // width of the cabinet they replace, so nothing that passed check 9 stops
+  // passing it: the south face is still the only run clear of both door leaves,
+  // and the 1.20 m north leaf is still what a heater is carried in through.
   {
-    kind: 'servicesCabinet',
+    kind: 'serviceChamber',
     room: 'controlCenter',
-    rect: [1.65, 3.05, 9.05, 9.65],
+    rect: [1.65, 2.3, 9.05, 9.65],
     mount: 'standing',
+    note: 'wet and gas: the water heater, the gas cock, the cold and hot manifolds',
+  },
+  {
+    kind: 'serviceChamber',
+    room: 'controlCenter',
+    rect: [2.4, 3.05, 9.05, 9.65],
+    mount: 'standing',
+    note: 'electrical: the consumer unit, the meters and the low-voltage patch',
   },
 
   // R09 guest room, lower leg x 4.10–7.90 · z 7.05–8.60 — a SITTING room now, not a
@@ -1359,7 +1377,21 @@ export const FIXTURES = deepFreeze([
   // whole purpose is handing food through to the guest room — a 0.90 m counter top
   // passes under it, and the cooker is kept south of it, because a hob does not
   // belong beneath a serving hatch.
-  { kind: 'counter', room: 'kitchen', rect: [10.05, 10.65, 6.35, 7.85], mount: 'standing' },
+  // THE KITCHEN HAD NO SINK. Found while routing Part 5's water and waste: the
+  // kitchen held two counters, a cooker and a fridge and nothing to connect
+  // either service to. The floor-finish pin found the same hole from the other
+  // side — the kitchen reads as a serviced room only because of the cooker and
+  // the fridge, never because of a basin. Brief §7.2 assumes one, and a kitchen
+  // without one is not a kitchen. The west counter run gave up its south 0.65 m
+  // for it, which is a 600 mm sink unit with its worktop margins.
+  { kind: 'counter', room: 'kitchen', rect: [10.05, 10.65, 6.35, 7.2], mount: 'standing' },
+  {
+    kind: 'sink',
+    room: 'kitchen',
+    rect: [10.05, 10.65, 7.2, 7.85],
+    mount: 'standing',
+    note: 'found missing in Part 5; the west counter run was shortened for it',
+  },
   { kind: 'cooker', room: 'kitchen', rect: [10.05, 10.65, 7.9, 8.5], mount: 'standing' },
   { kind: 'counter', room: 'kitchen', rect: [11.3, 12.15, 7.95, 8.55], mount: 'standing' },
   // The fridge is the tightest thing on the floor. Its rect is set by the two 0.90 m
@@ -1611,3 +1643,2056 @@ export const SIDES = deepFreeze({
   C: 'SIDE C — blocked, exterior wall 0.30',
   D: 'SIDE D — blocked, exterior wall 0.30',
 } as const satisfies PlanSides);
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Building services (Part 5)
+ *
+ * The floor already says what is BUILT. This section says what RUNS through it:
+ * the water, the waste, the gas, the electricity, the low-voltage side and the
+ * climate circuit, declared here so that `pnpm verify:plan` can check a pipe the
+ * same way it checks a door.
+ *
+ * One constraint governs the whole section, and it was paid for once already:
+ * **a wall is ONE thickness for its whole height** (ADR-021). "0.30 of masonry
+ * with a 0.05 chase in it up to 1.20" cannot be declared in this plan, and
+ * widening a room's gap builds the wider wall to the ceiling. That is why the
+ * food-pass tunnel had to be built as a fixture, and it is why a run here is its
+ * own declared solid STANDING ON the wall face rather than a modification of the
+ * wall — which is also what the owner asked for ("anything selected is top of
+ * the wall"). Do not reopen per-height wall thickness for services.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** One build layer: a checkbox in the viewer, and a step in the build order. */
+export interface PlanServiceLayer {
+  /** Stable key; the store, the palette and the checkbox all use it. */
+  readonly key: string;
+  /** The label on the checkbox. */
+  readonly name: string;
+  /**
+   * Whether this layer is a building service.
+   *
+   * `covers`, `furniture` and `finishing` are not: they are the boxing over the
+   * runs, the equipment standing in the rooms, and the decorative scheme. They
+   * are in this list because the owner asked for one checkbox per build level,
+   * not because a sofa is a service.
+   */
+  readonly service: boolean;
+  /** What the layer draws, and why it is where it is in the order. */
+  readonly why: string;
+}
+
+/**
+ * The layers, in the order a building is actually built.
+ *
+ * This array is both the build order and the order the checkboxes appear in, and
+ * that is deliberate: the list reads as a construction sequence from the bottom
+ * up. Nothing ticked is NAKED WALLS — structure, slabs and ceiling, no service
+ * and no finish. `furniture` + `finishing` ticked with EVERY SERVICE OFF is what
+ * reproduces the v1.0.0 floor pixel for pixel — NOT all nine, which was the
+ * original wording and is wrong on its face: ticking a service layer is
+ * precisely what makes that service visible, so the all-on view is v1.0.0 PLUS
+ * the 116 runs drawn over it. Measured in the browser on 2026-09-20. The two
+ * baselines pin the two ENDS of the switcher — nothing ticked, and the
+ * v1.0.0-equivalent — and all-on is a third view, not a restatement of the
+ * second.
+ *
+ * Additive, never exclusive (owner, 2026-09-19): layers are things you combine.
+ * Water over naked walls, then water and gas together, then everything but the
+ * finish, is how the floor is read.
+ */
+export const SERVICE_LAYERS = deepFreeze([
+  {
+    key: 'drainage',
+    name: 'Drainage',
+    service: true,
+    why: 'Waste and soil. First, because it is the only run that cannot be routed for convenience: it falls, so everything else is laid around it. Its own layer rather than half of `water` for exactly that reason — supply and drainage are one service to a viewer and two to a plumber.',
+  },
+  {
+    key: 'water',
+    name: 'Water',
+    service: true,
+    why: 'Cold and hot supply to the fittings. Hot comes from the heater in the control center and reaches the whole floor; cold reaches the water side only. Drawn as two families in two hues, because which of the two a pipe is, is the first thing anyone asks of it.',
+  },
+  {
+    key: 'gas',
+    name: 'Gas',
+    service: true,
+    why: 'Two destinations only: the heater in the control center and the kitchen cooker. Its own layer because the isolation rule the whole control-center split exists for is meaningless unless gas is modelled as its own thing.',
+  },
+  {
+    key: 'electricity',
+    name: 'Electricity',
+    service: true,
+    why: 'Everywhere. Two circuit families — 2.5 mm² for power and plugs, 1.5 mm² for lighting — carried as data rather than as two colours, because they are the same service and a viewer telling gas from water needs the hue more than a viewer telling a socket from a lamp does.',
+  },
+  {
+    key: 'lowVoltage',
+    name: 'Low voltage',
+    service: true,
+    why: 'Ethernet and the rest of the low-voltage side, with an outlet in every room except the three bath and shower cubicles, so a mesh node or a router can be added anywhere a person would put one. Held clear of the electricity runs by a stated separation, because power interferes with the signal — a distance the verifier checks rather than a sentence in a comment.',
+  },
+  {
+    key: 'climate',
+    name: 'Climate',
+    service: true,
+    why: 'Heating and cooling. Cooling reaches the guest room, the corridor, the bedrooms and the living room and nowhere else (owner); heating is wall heaters run off the same heater the hot water comes from. A real heater sits on a flow and a return, and the MODEL DRAWS ONE PIPE FOR THE PAIR: a `heating` run here stands for the whole circuit to one heater, not for one of its two legs. A radiator is not a tap, which is why it is here and not in `water`.',
+  },
+  {
+    key: 'covers',
+    name: 'Covers',
+    service: false,
+    why: 'The boxing built over a run — the casing that makes a pipe disappear into a corner. Its own checkbox because the owner asked to see it: with covers on and the runs off you see what the finished room looks like; with both on you see what is inside the boxing.',
+  },
+  {
+    key: 'furniture',
+    name: 'Furniture',
+    service: false,
+    why: 'The equipment standing in the rooms. NOT the fittings that are part of the building — the food-pass counter is half a wall and the control-center chambers are the building’s own plant, and hiding either opens a hole in the floor rather than clearing a room.',
+  },
+  {
+    key: 'finishing',
+    name: 'Finishing',
+    service: false,
+    why: 'The decorative scheme of ADR-020 — carpet, marble, oak, bouclé and the artwork. Last, because it is the last thing that happens to a building. With it off, the same geometry is drawn in the building’s plain finish; no box is added or removed by this checkbox, only re-surfaced.',
+  },
+] as const satisfies readonly PlanServiceLayer[]);
+
+/** A layer key, as the store, the palette and the checkbox all spell it. */
+export type PlanServiceLayerKey = (typeof SERVICE_LAYERS)[number]['key'];
+
+/**
+ * The sizes every run is built from, in one place.
+ *
+ * No run writes its own diameter, exactly as no fitting writes its own
+ * clearance (`FIXTURE_SPEC`): changing a pipe size here moves every pipe of that
+ * family together. Bores are REAL — the owner asked for what a plumber would
+ * actually specify, not a schematic thickness — and they are outside diameters,
+ * because what a run costs the room is its outside.
+ *
+ * Two of these numbers are not geometry and would be invented if they were not
+ * written down here with their reason:
+ *
+ * - `narrowingAllowance` — a pipe does not keep its bore. Scale closes it from
+ *   the inside over years, and it closes FASTER on hot water, because that is
+ *   where the scale comes out of solution. So a supply pipe is specified one
+ *   allowance above the flow it must carry, and the hot allowance is the larger
+ *   of the two. This is the owner's own instruction ("by the time pipes will get
+ *   narrow so we should use like how plumber advise, and this problem become
+ *   bigger in the hot water").
+ * - `dataToPowerSeparation` — 0.20 m. Mains cable induces noise into an
+ *   unshielded twisted pair laid beside it, and the usual guidance for a
+ *   PARALLEL run is 200 mm of air (or 50 mm with an earthed barrier, which this
+ *   floor does not have). A crossing at right angles is not a parallel run and
+ *   is not what this distance is about. Also the owner's instruction, and it is
+ *   a verifier check rather than a comment because a comment does not fail.
+ */
+export const SERVICE_SPEC = deepFreeze({
+  /** Outside diameters, in metres, by run family. */
+  bore: {
+    /** WC soil. 110 mm is the smallest pipe a WC discharges into. */
+    soil: 0.11,
+    /** Basin, sink, bath and washing-machine waste. */
+    waste: 0.04,
+    /** Shower and floor gully — wider than a basin waste because it takes a flood, not a bowl. */
+    gully: 0.05,
+    /** The stack's own vent to open air, so a trap is not siphoned dry. */
+    vent: 0.075,
+    /**
+     * A control-center chamber's ventilation duct to outside.
+     *
+     * Bigger than a stack vent because it is not venting a pipe, it is venting a
+     * room-within-a-room that holds a burner: a sealed cupboard with a heater in
+     * it has to breathe, and 125 mm is the smallest duct that is honestly doing
+     * that rather than decorating the model.
+     */
+    chamberVent: 0.125,
+    /** Cold supply riser. */
+    coldRiser: 0.025,
+    /** Cold branch to a fitting. */
+    cold: 0.02,
+    /** Hot supply riser from the heater. */
+    hotRiser: 0.025,
+    /** Hot branch to a fitting. */
+    hot: 0.02,
+    /** Gas, heater and cooker only. */
+    gas: 0.02,
+    /** Conduit carrying 2.5 mm² power and plug circuits. */
+    power: 0.025,
+    /** Conduit carrying 1.5 mm² lighting circuits. */
+    lighting: 0.02,
+    /** Conduit carrying ethernet and the rest of the low-voltage side. */
+    data: 0.02,
+    /** Cooling duct from the central unit. */
+    cooling: 0.16,
+    /**
+     * The heating circuit to a wall heater. A real heater is on a flow and a
+     * return; the model draws ONE pipe standing for the pair, so this is the
+     * bore of one leg of it (`SERVICE_LAYERS.climate`).
+     */
+    heating: 0.02,
+  },
+  /**
+   * Minimum fall, as a rise over a run, by drainage family.
+   *
+   * A drain is the one service that cannot be routed as a flat convenience
+   * line. Too shallow and solids stand; too steep and the water outruns them,
+   * which is the failure people do not expect.
+   */
+  fall: {
+    /** 1:80 on 110 mm soil. */
+    soil: 0.0125,
+    /** 1:40 on 40 mm waste. */
+    waste: 0.025,
+    /** 1:40 on a gully. */
+    gully: 0.025,
+  },
+  /** How much a supply pipe is oversized against closing up in service. */
+  narrowingAllowance: {
+    /** Cold scales slowly. */
+    cold: 0.1,
+    /** Hot scales faster, so it carries the larger allowance. */
+    hot: 0.2,
+  },
+  /**
+   * The centreline bend radius a corner really needs, as a multiple of the bore.
+   *
+   * Every polyline in `SERVICE_RUNS` turns a square 90°, and a square 90° is a
+   * duct that does not exist: the fitting that actually makes that turn sweeps a
+   * radius, and it needs straight pipe on both sides of it to land on. The square
+   * corner is therefore a DRAWING CONVENTION, and this number is what the drawing
+   * is lying about — stated here so the lie is bounded and checkable rather than
+   * invisible.
+   *
+   * The check it licenses is not "draw an arc" but "is there room for one": both
+   * legs meeting at a corner must be at least this long, or the real fitting does
+   * not fit and the route has to change. Ducts are the binding case, which is why
+   * they carry the larger multiple — a 160 mm duct turning a corner needs a good
+   * deal more than a 20 mm pipe with a push-fit elbow on it.
+   */
+  minBendRadius: {
+    /** A rigid duct elbow, centreline radius one diameter. */
+    duct: 1,
+    /** A bent or elbowed pipe; small bores turn tightly. */
+    pipe: 1.5,
+  },
+  /** Minimum air between a data run and a power run laid parallel to it, in metres. */
+  dataToPowerSeparation: 0.2,
+  /** Minimum air between a gas run and an electrical run, in metres. */
+  gasToPowerSeparation: 0.05,
+  /** Minimum air between a water run and an electrical run, in metres. */
+  waterToPowerSeparation: 0.05,
+  /** A run stands this clear of the wall face it is fixed to, in metres. */
+  wallStandoff: 0.02,
+  /** The boxing over a run clears it by this much on each side, in metres. */
+  coverClearance: 0.02,
+  /** The thickness of the boxing itself, in metres. */
+  coverThickness: 0.015,
+  /**
+   * Spare capacity declared rather than implied.
+   *
+   * The owner asked for an installation built for extension — smart-home kit
+   * later, extra outlets later — and "there is room in the conduit" is not a
+   * fact unless something states it. Every conduit is sized for this fraction
+   * of its cross-section to be free after the declared circuits are in it, so
+   * pulling one more cable is a later addition and not a re-route.
+   */
+  spareCapacityFraction: 0.4,
+} as const);
+
+/**
+ * A point on a run, in metres: `[x, z, y]`.
+ *
+ * Three dimensions rather than two, because a run's HEIGHT is not decoration
+ * here — it is the difference between a drain that empties and one that stands,
+ * between a duct a person walks under and one they trip on, and between a data
+ * cable clear of a power cable and one laid against it. A riser is simply two
+ * points with the same `x` and `z` and a different `y`, so nothing needs a
+ * separate vocabulary for "vertical".
+ *
+ * `y` is measured from the finished floor of the storey the run belongs to, so
+ * a NEGATIVE `y` is inside the floor build-up — which is the 0.30 m between
+ * `HEIGHTS.wall` (2.70) and `HEIGHTS.floorToFloor` (3.00), the ceiling void of
+ * the storey below. That is where waste actually runs, and because every storey
+ * is identical (ADR-014) a run declared once is in the same place on all of them.
+ */
+export type PlanServicePoint = readonly [x: number, z: number, y: number];
+
+/** What a run belongs to inside its layer — what tells one pipe from another. */
+export type PlanServiceFamily =
+  | 'soil'
+  | 'waste'
+  | 'gully'
+  | 'vent'
+  | 'chamberVent'
+  | 'cold'
+  | 'hot'
+  | 'gas'
+  | 'power'
+  | 'lighting'
+  | 'data'
+  | 'cooling'
+  | 'heating';
+
+/**
+ * Where a run starts or stops.
+ *
+ * `cap` is the one that matters and the one that is easy to leave out: the
+ * building is 1…10 identical storeys, so a riser is automatically in the same
+ * place on every one of them — but the ENDS of the stack are not automatic.
+ * Floor 0 is undesigned and the roof is not modelled, so a riser that simply
+ * stopped would be a pipe ending in mid-air. It stops at a declared cap
+ * carrying the reason instead, exactly the way both half-flights at the ends of
+ * the stair stack are blocked but still drawn (owner, 2026-09-19).
+ */
+export type PlanServiceEnd =
+  | { readonly at: 'space'; readonly space: PlanRoomId }
+  | { readonly at: 'chamber'; readonly chamber: PlanServiceChamberId }
+  | {
+      readonly at: 'fitting';
+      readonly space: PlanRoomId;
+      readonly kind: PlanFixtureKind;
+    }
+  | { readonly at: 'cap'; readonly why: string };
+
+/** One declared run of one service, end to end. */
+export interface PlanServiceRun {
+  /** The checkbox it appears under. */
+  readonly layer: PlanServiceLayerKey;
+  /** What it carries; picks its bore out of `SERVICE_SPEC` and its hue. */
+  readonly family: PlanServiceFamily;
+  /** Where it comes from. */
+  readonly from: PlanServiceEnd;
+  /** Where it goes. */
+  readonly to: PlanServiceEnd;
+  /**
+   * The centreline, on the centimetre grid, from `from` to `to`.
+   *
+   * Written in the order the service flows, which is what makes a drain's fall
+   * checkable at all: `points[0]` is upstream and the last point is downstream.
+   */
+  readonly points: readonly PlanServicePoint[];
+  /** Why it goes this way, where the route is a choice rather than the only line. */
+  readonly why?: string;
+}
+
+/** A sealed compartment of the control center. */
+export interface PlanServiceChamber {
+  /** Stable identifier; a run terminates by naming it. */
+  readonly id: string;
+  /** As it is printed on the drawing. */
+  readonly name: string;
+  /** The room it stands in. */
+  readonly room: PlanRoomId;
+  /** Its footprint — the same rect as its `serviceChamber` fixture. */
+  readonly rect: PlanRectCoordinates;
+  /** How high the closed box stands, in metres above the finished floor. */
+  readonly top: number;
+  /** Which layers are allowed to terminate in it. This is the isolation rule. */
+  readonly holds: readonly PlanServiceLayerKey[];
+  /** Why it is this compartment and not the other. */
+  readonly why: string;
+}
+
+/**
+ * The two compartments of the control center.
+ *
+ * Brief §7.4 has carried this split as a deferral since plan v2, and the `open`
+ * note R08 used to carry said so. It is paid off here, and the reason it could
+ * no longer be deferred is that the owner put the CENTRAL WATER HEATER in this
+ * room: heater, gas, electricity and water in one 5.50 m² space is the full
+ * combination, and "serious separation" was the instruction.
+ *
+ * `holds` is the whole point of the register. A gas run ending in the electrical
+ * compartment is the single failure this part exists to prevent, and it is a
+ * check rather than a convention because a convention does not fail a build.
+ */
+export const SERVICE_CHAMBERS = deepFreeze([
+  {
+    id: 'wetGasChamber',
+    name: 'Wet and gas compartment',
+    room: 'controlCenter',
+    rect: [1.65, 2.3, 9.05, 9.65],
+    top: 2.2,
+    holds: ['drainage', 'water', 'gas', 'climate'],
+    why: 'The water heater, the gas cock and the cold and hot manifolds. Climate is here because the wall heaters run off the same heater the hot water does, so the heating circuits start where it does. It is the WEST chamber, and a burner in a sealed cupboard has to breathe — but it breathes EAST like everything else on this floor: its duct leaves through the 0.30 wall at x 3.80 and caps over the control-center balcony, because "everything starts from CC and out from CC balcony, except the drainage" (owner, 2026-09-20). That duct runs high, at y 2.50, and passes straight OVER this chamber and the electrical one, which is not the hazard two earlier routings treated it as: it is a closed duct, and what matters is where it discharges. Its mouth is 0.20 north of the electrical duct\'s and 0.15 above it. What `holds` guarantees is the thing that does matter — no gas run TERMINATES next door.',
+  },
+  {
+    id: 'electricalChamber',
+    name: 'Electrical compartment',
+    room: 'controlCenter',
+    rect: [2.4, 3.05, 9.05, 9.65],
+    top: 2.2,
+    holds: ['electricity', 'lowVoltage'],
+    why: 'The consumer unit, the meters and the low-voltage patch. It is the EAST chamber and it breathes EAST, into the control-center balcony — the same balcony the wet-and-gas duct caps over, because everything leaves this floor that way (owner, 2026-09-20). The gas duct passes above this box on its way there, and that is not a hazard: it is sealed, and what separates the two is their MOUTHS — this one discharges at z 9.35, y 2.35, the gas one 0.20 north and 0.15 higher. Low voltage shares this box rather than getting a third, because the thing it must be kept away from is a cable run laid beside it for metres, not a patch panel in the same cupboard.',
+  },
+] as const satisfies readonly PlanServiceChamber[]);
+
+/** A chamber, by id. */
+export type PlanServiceChamberId = (typeof SERVICE_CHAMBERS)[number]['id'];
+
+/**
+ * Drainage.
+ *
+ * Three stacks, not one, and that is the design decision worth stating: the wet
+ * rooms of this floor fall into three groups that are metres apart, and one
+ * stack would mean a branch crawling the length of the building losing height
+ * the whole way. Each stack stands in a VOID — `voidWest` or `voidEast`, the
+ * side-B strip `plan.ts` already says carries the risers — never in a room's
+ * clear floor and never in `balconySlabB`, which is the one floored part of that
+ * row and is walked on.
+ *
+ * Every branch here is a real fitting's real outlet, at the fitting's real
+ * position, falling the whole way (owner: "build everything like reality, even
+ * the bathroom-out"). They run at NEGATIVE y — inside the floor build-up, which
+ * is where waste actually runs — and because the storeys are identical, a branch
+ * declared once is under every floor of the stack.
+ */
+const DRAINAGE_RUNS = [
+  /* ── the three stacks ── */
+  {
+    layer: 'drainage',
+    family: 'soil',
+    from: {
+      at: 'cap',
+      why: 'Floor 0 is undesigned, so the stack stops at the bottom of the lowest storey rather than ending in mid-air. Delete this cap when the ground floor exists and the drain has somewhere real to go.',
+    },
+    to: {
+      at: 'cap',
+      why: 'The roof is not modelled, so the stack stops above the top storey. Its vent terminates here; delete this cap when the roof plant exists.',
+    },
+    points: [
+      [11.2, 9.3, -0.28],
+      [11.2, 9.3, 2.72],
+    ],
+    why: 'West stack, in `voidWest`. Takes the guest suite and the kitchen. It stands in the open shaft, which is why a stack vent needs nothing extra here: the void IS open air.',
+  },
+  {
+    layer: 'drainage',
+    family: 'soil',
+    from: {
+      at: 'cap',
+      why: 'Floor 0 is undesigned; the stack stops at the bottom of the lowest storey.',
+    },
+    to: { at: 'cap', why: 'The roof is not modelled; the stack stops above the top storey.' },
+    points: [
+      [16.2, 9.3, -0.28],
+      [16.2, 9.3, 2.72],
+    ],
+    why: 'Laundry stack, in `voidEast`, directly behind the laundry — the room overlaps this void in x 15.35–17.55, so its waste drops where it is made instead of crawling 5.70 m east to the main stack.',
+  },
+  {
+    layer: 'drainage',
+    family: 'soil',
+    from: {
+      at: 'cap',
+      why: 'Floor 0 is undesigned; the stack stops at the bottom of the lowest storey.',
+    },
+    to: { at: 'cap', why: 'The roof is not modelled; the stack stops above the top storey.' },
+    points: [
+      [19.9, 9.3, -0.28],
+      [19.9, 9.3, 2.72],
+    ],
+    why: 'Main stack, in `voidEast`. Takes the whole main sanitair group — the only WC on the floor, its basin, the bath and the shower.',
+  },
+
+  /* ── main sanitair group → the main stack ── */
+  {
+    layer: 'drainage',
+    family: 'soil',
+    from: { at: 'fitting', space: 'mainSanitair', kind: 'wc' },
+    to: { at: 'space', space: 'voidEast' },
+    points: [
+      [19.2, 7.25, -0.05],
+      [19.2, 9.3, -0.08],
+      [19.9, 9.3, -0.09],
+    ],
+    why: 'The only WC on the floor (owner, Part 4). 110 mm from the back of the pan, falling 1:69 — steeper than the 1:80 a soil pipe needs, and deliberately not much steeper: too shallow and solids stand, too steep and the water outruns them, which is the failure nobody expects.',
+  },
+  {
+    layer: 'drainage',
+    family: 'waste',
+    from: { at: 'fitting', space: 'mainSanitair', kind: 'sink' },
+    to: { at: 'space', space: 'voidEast' },
+    points: [
+      [19.9, 6.45, -0.05],
+      [19.9, 9.3, -0.14],
+    ],
+  },
+  {
+    layer: 'drainage',
+    family: 'waste',
+    from: { at: 'fitting', space: 'mainBathCubicle', kind: 'bath' },
+    to: { at: 'space', space: 'voidEast' },
+    points: [
+      [19.25, 8.2, -0.06],
+      [19.25, 9.3, -0.09],
+      [19.9, 9.3, -0.11],
+    ],
+    why: 'From the east end of the bath, which is the end its outlet is at and the end nearest the stack.',
+  },
+  {
+    layer: 'drainage',
+    family: 'gully',
+    from: { at: 'fitting', space: 'mainShowerCubicle', kind: 'shower' },
+    to: { at: 'space', space: 'voidEast' },
+    points: [
+      [19.9, 8.15, -0.06],
+      [19.9, 9.3, -0.09],
+    ],
+    why: 'A gully, not a waste: 50 mm, because a shower tray takes a flood rather than a bowlful and a 40 mm trap backs up under one.',
+  },
+
+  /* ── laundry → the laundry stack ── */
+  {
+    layer: 'drainage',
+    family: 'waste',
+    from: { at: 'fitting', space: 'laundry', kind: 'washingMachine' },
+    to: { at: 'space', space: 'voidEast' },
+    points: [
+      [14.6, 6.45, -0.05],
+      [16.2, 6.45, -0.09],
+      [16.2, 9.3, -0.17],
+    ],
+    why: 'A washing machine discharges into a standpipe with its own trap, so this is a waste like any other and not a hose into a gully.',
+  },
+  {
+    layer: 'drainage',
+    family: 'waste',
+    from: { at: 'fitting', space: 'laundry', kind: 'sink' },
+    to: { at: 'space', space: 'voidEast' },
+    points: [
+      [15.25, 6.3, -0.05],
+      [16.2, 6.3, -0.08],
+      [16.2, 9.3, -0.16],
+    ],
+    why: "Brief §7.1's hand-wash sink — the fitting that makes the laundry a wet room, which nobody had written down until Part 4 derived it.",
+  },
+
+  /* ── guest suite and kitchen → the west stack ── */
+  {
+    layer: 'drainage',
+    family: 'waste',
+    from: { at: 'fitting', space: 'guestSanitair', kind: 'sink' },
+    to: { at: 'space', space: 'voidWest' },
+    points: [
+      [9.65, 7.7, -0.05],
+      [9.65, 9.3, -0.09],
+      [11.2, 9.3, -0.14],
+    ],
+    why: 'The corner basin in the east dead-end — the one that had to be rotated in Part 4 because it stood across its own shower door.',
+  },
+  {
+    layer: 'drainage',
+    family: 'waste',
+    from: { at: 'fitting', space: 'guestBathCubicle', kind: 'bath' },
+    to: { at: 'space', space: 'voidWest' },
+    points: [
+      [9.6, 8.3, -0.05],
+      [9.6, 9.3, -0.08],
+      [11.2, 9.3, -0.12],
+    ],
+  },
+  {
+    layer: 'drainage',
+    family: 'waste',
+    from: { at: 'fitting', space: 'kitchen', kind: 'sink' },
+    to: { at: 'space', space: 'voidWest' },
+    points: [
+      [10.35, 7.85, -0.05],
+      [10.35, 9.3, -0.09],
+      [11.2, 9.3, -0.12],
+    ],
+    why: 'The sink this part had to add — the kitchen had none.',
+  },
+] as const satisfies readonly PlanServiceRun[];
+
+/**
+ * The two chamber vents: one duct per sealed compartment, both out to the same
+ * balcony.
+ *
+ * A sealed cupboard with a burner in it has to breathe, and a sealed box of
+ * consumer unit and meters makes heat that has to go somewhere, so each chamber
+ * gets a 125 mm duct of its own (`SERVICE_SPEC.bore.chamberVent`). Both leave
+ * EAST through the 0.30 wall at x 3.80–4.10 and cap over `ccBalcony`, which is
+ * the owner's rule for this floor in his own words: **everything starts from CC
+ * and out from CC balcony, except the drainage** (2026-09-20).
+ *
+ * **A closed duct passing above a sealed box is not a hazard, and this model no
+ * longer argues that it is.** Two earlier routings of the wet-and-gas duct were
+ * built to keep it from ever crossing over the electrical compartment — first by
+ * sending it out of a different balcony, then by squeezing it south and low at
+ * z 9.68, y 1.90. Both were the wrong argument, and the second was not even
+ * buildable: at a 125 mm bore that centreline put the duct's solid through the
+ * electrical chamber's south face (z 9.65) AND out past the plot edge (z 9.70),
+ * and no z clears both. What decides whether a vent is safe is where it
+ * DISCHARGES, not what it flies over. So the gas duct now runs **north and
+ * high** — z 9.15, y 2.50 — straight over both chambers, and that is fine.
+ *
+ * What the routing does have to deliver is physical clearance, and it does:
+ *
+ * - **over the chambers.** The gas duct's underside is 2.4375 (y 2.50 less half
+ *   of 0.125) against chamber tops of 2.20: **0.2375 m of air**, and 0.2025 m
+ *   under its boxing, which adds `coverClearance` + `coverThickness` a side. It
+ *   is well over the balcony door head at 2.10 too, so it crosses that wall
+ *   above the doorway;
+ * - **at the mouths.** The two discharge at different points over the balcony —
+ *   gas at z 9.15, y 2.50, electrical at z 9.35, y 2.35 — **0.20 m apart in z
+ *   and 0.15 m in y**, so neither breathes into the other;
+ * - **off the lighting risers.** The electrical duct rises at x 2.65. It was at
+ *   2.72, which against the lighting risers at 2.78 left 0.06 m between
+ *   centrelines where the two bores alone need 0.0725 — they overlapped. At 2.65
+ *   there is 0.0575 m of air.
+ *
+ * The isolation rule is untouched, and it is about ENDS rather than paths:
+ * `SERVICE_CHAMBERS.holds` fails a run that TERMINATES in the wrong compartment,
+ * which is the question actually worth asking about a sealed duct. Both ends
+ * here are `cap` rather than `{ at: 'space', space: 'ccBalcony' }` on purpose: a
+ * vent TERMINATES in open air, and discharging over a balcony is not servicing
+ * it.
+ */
+const CHAMBER_VENT_RUNS = [
+  {
+    layer: 'gas',
+    family: 'chamberVent',
+    from: { at: 'chamber', chamber: 'wetGasChamber' },
+    to: {
+      at: 'cap',
+      why: "Discharges to open air over the control-center balcony. Everything leaves this floor through that balcony (owner, 2026-09-20); drainage is the only exception. Its mouth is at z 9.15 and y 2.50, 0.20 north of the electrical duct's and 0.15 above it, so the two do not breathe into each other. A vent terminates; it does not serve what it discharges into.",
+    },
+    points: [
+      [1.8, 9.35, 2.2],
+      [1.8, 9.15, 2.2],
+      [1.8, 9.15, 2.5],
+      [4.1, 9.15, 2.5],
+    ],
+    why: 'The wet-and-gas chamber breathes EAST, out over the control-center balcony like everything else on this floor (owner, 2026-09-20). It goes NORTH out of the chamber to z 9.15, UP to y 2.50, then east at that height, straight over both chambers — which is allowed, because this is a closed duct and what makes a vent safe is where it discharges, not what it passes above. Running high is what buys the clearance: the underside sits at 2.4375 against chamber tops of 2.20 and a door head of 2.10, where the two earlier routings tried to thread it past the electrical compartment and put its solid through a chamber face and over the plot edge.',
+  },
+  {
+    layer: 'electricity',
+    family: 'chamberVent',
+    from: { at: 'chamber', chamber: 'electricalChamber' },
+    to: {
+      at: 'cap',
+      why: "Discharges to open air over the control-center balcony, at z 9.35 and y 2.35 — 0.20 south of the gas duct's mouth and 0.15 below it, so neither breathes into the other. A vent terminates rather than serving what it discharges into.",
+    },
+    points: [
+      [2.65, 9.35, 2.2],
+      [2.65, 9.35, 2.35],
+      [4.1, 9.35, 2.35],
+    ],
+    why: 'The electrical chamber breathes EAST, out over the control-center balcony — the same way out the wet-and-gas duct takes, because everything leaves this floor through that balcony. What separates them is their MOUTHS, not their paths: this one discharges at z 9.35 and y 2.35, the gas one 0.20 north and 0.15 higher. It rises at x 2.65 and not the 2.72 first drawn, because 2.72 against the lighting risers at 2.78 left 0.06 between centrelines where the two bores alone need 0.0725 — they overlapped. It vents because a consumer unit and a meter stack in a sealed box make heat, not because anything in it burns.',
+  },
+] as const satisfies readonly PlanServiceRun[];
+
+/**
+ * Water, and with it the horizontal spine and the lanes it is divided into.
+ *
+ * The lane table below governs every run that uses the spine — water here, gas
+ * in {@link GAS_RUNS}, and the dry and climate runs further down — and it lives
+ * on the first array that uses it.
+ *
+ * Everything crosses the balcony — the owner's own description of this floor,
+ * and the side-B strip is where `plan.ts` already says the risers live. The
+ * spine runs west to east through `ccBalcony` → `voidWest` → `balconySlabB` →
+ * `voidEast`, out of the two control-center chambers.
+ *
+ * Three constraints decide the lanes, and none of them is aesthetic:
+ *
+ * 1. **Above the door head.** The control-center balcony door spans z 8.95–9.65
+ *    at x 3.80 with a head at `HEIGHTS.door` (2.10). Every lane is at y ≥ 2.20,
+ *    so the spine crosses that wall over the doorway rather than through it.
+ * 2. **Above a person.** `balconySlabB` is the one floored part of the side-B
+ *    row: it is walked on, it carries the barbecue and two doors open onto it.
+ *    The lowest lane at 2.20 m clears a 1.80 m person by 0.40 m, so a pipe
+ *    across it is a pipe overhead and not a trip hazard modelled as a feature.
+ * 3. **No water over the electrical chamber.** The electrical chamber occupies
+ *    z 9.05–9.65, so every water, gas and heating lane is pushed to z 8.95–9.00,
+ *    NORTH of it. "Above" is the dangerous case and it is invisible in a plan
+ *    view, which is exactly why it is a check and not a habit.
+ *
+ * Lanes, by (z, y): cold (8.95, 2.35) · hot (8.95, 2.20) · gas (9.00, 2.50) ·
+ * heating (9.00, 2.35) · data (9.35, 2.50) · cooling (9.45, 2.55) ·
+ * power (9.60, 2.35) · lighting (9.60, 2.20).
+ *
+ * ONE heating lane and not two. A real wall heater is on a flow and a return,
+ * and the model draws one pipe standing for the pair, so there is nothing to put
+ * in a second lane (`SERVICE_LAYERS.climate`). The chamber vents do not appear
+ * in this table at all: they are not spine runs. They leave the chambers north
+ * and high — the gas one at z 9.15, y 2.50, over the top of both boxes — rather
+ * than threading between these lanes ({@link CHAMBER_VENT_RUNS}).
+ *
+ * Data sits 0.29 m from power and 0.39 m from lighting — both over the 0.20 m
+ * `SERVICE_SPEC.dataToPowerSeparation`, which is the distance mains cable stops
+ * inducing noise into an unshielded pair laid beside it for metres.
+ */
+const WATER_RUNS = [
+  /* ── the two supply spines, out of the wet chamber ── */
+  {
+    layer: 'water',
+    family: 'cold',
+    from: { at: 'chamber', chamber: 'wetGasChamber' },
+    to: { at: 'space', space: 'voidEast' },
+    points: [
+      [1.98, 9.35, 1.2],
+      [1.98, 9.35, 2.35],
+      [1.98, 8.95, 2.35],
+      [19.95, 8.95, 2.35],
+    ],
+    why: 'Cold rises off the manifold inside the chamber, steps north to the z 8.95 lane so it never crosses the electrical chamber, and runs the length of the floor. Sized one `narrowingAllowance` over the flow it carries, because a pipe does not keep its bore — scale closes it from the inside.',
+  },
+  {
+    layer: 'water',
+    family: 'hot',
+    from: { at: 'chamber', chamber: 'wetGasChamber' },
+    to: { at: 'space', space: 'voidEast' },
+    points: [
+      [2.1, 9.35, 1.2],
+      [2.1, 9.35, 2.2],
+      [2.1, 8.95, 2.2],
+      [19.95, 8.95, 2.2],
+    ],
+    why: 'Hot leaves the same chamber because the heater is in it (owner, 2026-09-19). It carries the LARGER narrowing allowance of the two: hot is where the scale comes out of solution, so it is the pipe that closes up first.',
+  },
+
+  /* ── cold branches: every fitting that takes water, at the fitting ── */
+  {
+    layer: 'water',
+    family: 'cold',
+    from: { at: 'space', space: 'voidEast' },
+    to: { at: 'fitting', space: 'mainSanitair', kind: 'sink' },
+    points: [
+      [19.75, 8.95, 2.35],
+      [19.75, 6.5, 2.35],
+      [19.75, 6.5, 0.95],
+    ],
+  },
+  {
+    layer: 'water',
+    family: 'cold',
+    from: { at: 'space', space: 'voidEast' },
+    to: { at: 'fitting', space: 'mainSanitair', kind: 'wc' },
+    points: [
+      [19.2, 8.95, 2.35],
+      [19.2, 7.3, 2.35],
+      [19.2, 7.3, 0.75],
+    ],
+    why: 'Cold only. A cistern is filled with cold water and nothing else — the one fitting on this floor that gets one pipe rather than two.',
+  },
+  {
+    layer: 'water',
+    family: 'cold',
+    from: { at: 'space', space: 'voidEast' },
+    to: { at: 'fitting', space: 'mainBathCubicle', kind: 'bath' },
+    points: [
+      [19.25, 8.95, 2.35],
+      [19.25, 8.6, 2.35],
+      [19.25, 8.6, 0.7],
+    ],
+  },
+  {
+    layer: 'water',
+    family: 'cold',
+    from: { at: 'space', space: 'voidEast' },
+    to: { at: 'fitting', space: 'mainShowerCubicle', kind: 'shower' },
+    points: [
+      [19.9, 8.95, 2.35],
+      [19.9, 8.95, 2.45],
+      [19.9, 8.5, 2.45],
+      [19.9, 8.5, 1.3],
+    ],
+  },
+  {
+    layer: 'water',
+    family: 'cold',
+    from: { at: 'space', space: 'balconySlabB' },
+    to: { at: 'fitting', space: 'laundry', kind: 'sink' },
+    points: [
+      [15.25, 8.95, 2.35],
+      [15.25, 5.85, 2.35],
+      [15.25, 5.85, 0.95],
+    ],
+  },
+  {
+    layer: 'water',
+    family: 'cold',
+    from: { at: 'space', space: 'balconySlabB' },
+    to: { at: 'fitting', space: 'laundry', kind: 'washingMachine' },
+    points: [
+      [14.6, 8.95, 2.35],
+      [14.6, 5.85, 2.35],
+      [14.6, 5.85, 0.85],
+    ],
+    why: 'Cold only: a washing machine on this floor is cold fill, which is what every machine sold in the last twenty years is.',
+  },
+  {
+    layer: 'water',
+    family: 'cold',
+    from: { at: 'space', space: 'voidWest' },
+    to: { at: 'fitting', space: 'kitchen', kind: 'sink' },
+    points: [
+      [10.35, 8.95, 2.35],
+      [10.35, 7.85, 2.35],
+      [10.35, 7.85, 0.95],
+    ],
+  },
+  {
+    layer: 'water',
+    family: 'cold',
+    from: { at: 'space', space: 'voidWest' },
+    to: { at: 'fitting', space: 'guestSanitair', kind: 'sink' },
+    points: [
+      [9.65, 8.95, 2.35],
+      [9.65, 7.75, 2.35],
+      [9.65, 7.75, 0.95],
+    ],
+  },
+  {
+    layer: 'water',
+    family: 'cold',
+    from: { at: 'space', space: 'voidWest' },
+    to: { at: 'fitting', space: 'guestBathCubicle', kind: 'bath' },
+    points: [
+      [9.6, 8.95, 2.35],
+      [9.6, 8.6, 2.35],
+      [9.6, 8.6, 0.7],
+    ],
+  },
+
+  /* ── hot branches: the same fittings, minus the cistern and the machine ── */
+  {
+    layer: 'water',
+    family: 'hot',
+    from: { at: 'space', space: 'voidEast' },
+    to: { at: 'fitting', space: 'mainSanitair', kind: 'sink' },
+    points: [
+      [19.85, 8.95, 2.2],
+      [19.85, 8.95, 2.45],
+      [19.85, 6.5, 2.45],
+      [19.85, 6.5, 0.95],
+    ],
+  },
+  {
+    layer: 'water',
+    family: 'hot',
+    from: { at: 'space', space: 'voidEast' },
+    to: { at: 'fitting', space: 'mainBathCubicle', kind: 'bath' },
+    points: [
+      [19.15, 8.95, 2.2],
+      [19.15, 8.6, 2.2],
+      [19.15, 8.6, 0.7],
+    ],
+  },
+  {
+    layer: 'water',
+    family: 'hot',
+    from: { at: 'space', space: 'voidEast' },
+    to: { at: 'fitting', space: 'mainShowerCubicle', kind: 'shower' },
+    points: [
+      [19.8, 8.95, 2.2],
+      [19.8, 8.95, 2.45],
+      [19.8, 8.5, 2.45],
+      [19.8, 8.5, 1.3],
+    ],
+  },
+  {
+    layer: 'water',
+    family: 'hot',
+    from: { at: 'space', space: 'balconySlabB' },
+    to: { at: 'fitting', space: 'laundry', kind: 'sink' },
+    points: [
+      [15.15, 8.95, 2.2],
+      [15.15, 5.85, 2.2],
+      [15.15, 5.85, 0.95],
+    ],
+  },
+  {
+    layer: 'water',
+    family: 'hot',
+    from: { at: 'space', space: 'voidWest' },
+    to: { at: 'fitting', space: 'kitchen', kind: 'sink' },
+    points: [
+      [10.25, 8.95, 2.2],
+      [10.25, 7.85, 2.2],
+      [10.25, 7.85, 0.95],
+    ],
+  },
+  {
+    layer: 'water',
+    family: 'hot',
+    from: { at: 'space', space: 'voidWest' },
+    to: { at: 'fitting', space: 'guestSanitair', kind: 'sink' },
+    points: [
+      [9.55, 8.95, 2.2],
+      [9.55, 7.75, 2.2],
+      [9.55, 7.75, 0.95],
+    ],
+  },
+  {
+    layer: 'water',
+    family: 'hot',
+    from: { at: 'space', space: 'voidWest' },
+    to: { at: 'fitting', space: 'guestBathCubicle', kind: 'bath' },
+    points: [
+      [9.5, 8.95, 2.2],
+      [9.5, 8.6, 2.2],
+      [9.5, 8.6, 0.7],
+    ],
+  },
+] as const satisfies readonly PlanServiceRun[];
+
+/**
+ * The water heater's relief and condensate discharge.
+ *
+ * Found by the room panel's roll-call: the control center held a heater, gas,
+ * water, electricity and low voltage and had **no drainage at all**. A stored
+ * hot-water heater has a temperature-and-pressure relief that must be able to
+ * let go, and there is no stack within ten metres of this room.
+ *
+ * It discharges over balcony A, and that is the correct answer rather than a
+ * convenient one: a relief discharge is required to be VISIBLE, so that a heater
+ * quietly relieving itself is something somebody notices instead of something
+ * that drains away unseen.
+ */
+const HEATER_DRAIN_RUNS = [
+  {
+    layer: 'drainage',
+    family: 'waste',
+    from: { at: 'chamber', chamber: 'wetGasChamber' },
+    to: {
+      at: 'cap',
+      why: 'Discharges in open air over balcony A, where it can be seen. A relief that drains away unseen is a fault nobody finds.',
+    },
+    points: [
+      [1.75, 9.5, 0.35],
+      [1.3, 9.5, 0.32],
+    ],
+  },
+] as const satisfies readonly PlanServiceRun[];
+
+/**
+ * Gas: two destinations and no more.
+ *
+ * The heater, which is inside the wet chamber and therefore needs no run at all,
+ * and the kitchen cooker. That is the whole of it (owner, 2026-09-19) — which is
+ * also why the isolation rule matters so much for so little pipe: the danger is
+ * not the length of the run, it is which compartment it ends in.
+ *
+ * The wet-and-gas chamber's vent is `layer: 'gas'` too, but it is declared with
+ * the other vent in {@link CHAMBER_VENT_RUNS}: it carries nothing to anything,
+ * and the two ducts are only readable side by side.
+ */
+const GAS_RUNS = [
+  {
+    layer: 'gas',
+    family: 'gas',
+    from: { at: 'chamber', chamber: 'wetGasChamber' },
+    to: { at: 'fitting', space: 'kitchen', kind: 'cooker' },
+    points: [
+      [2.22, 9.35, 1.2],
+      [2.22, 9.35, 2.5],
+      [2.22, 9.0, 2.5],
+      [10.35, 9.0, 2.5],
+      [10.35, 8.3, 2.5],
+      [10.35, 8.3, 0.9],
+    ],
+    why: 'Out of the wet chamber on the highest lane of the spine, north of the electrical chamber the whole way, then down to the cooker. It ends at a fitting the owner can see, which is the point: a gas run that ended vaguely "in the kitchen" would pass every check and mean nothing.',
+  },
+] as const satisfies readonly PlanServiceRun[];
+
+/**
+ * The risers: how a service gets from one storey to the next.
+ *
+ * THE QUESTION THAT FOUND THIS: "imagine 2 floors — how to cross stairs and the pipes
+ * there". Drainage had stacks from the start, because a drain has to fall somewhere. Nothing
+ * else did: water, gas, electricity, low voltage and climate all began at a chamber and
+ * stopped at the ceiling, so on a two-storey building the upper floor's services came from
+ * nowhere at all. The floor was correct and the BUILDING was not, and no check could see it,
+ * because every storey is drawn from one baked geometry (ADR-014) and each copy was complete
+ * in itself.
+ *
+ * And the answer to the other half of the question is that a riser does NOT cross the stair.
+ * It stands inside its own chamber in the control center and goes straight up through it —
+ * which is what a chamber is for, and why everything starts from the CC. The stairwell
+ * carries the light and nothing else.
+ *
+ * Each one is capped at both ends of the stack, with the reason in the data, exactly as the
+ * drainage stacks are: floor 0 is undesigned and the roof is not modelled, so a riser that
+ * simply stopped would be a pipe ending in mid-air.
+ *
+ * Each stands at the x its own trunk already rises at, so the trunk tees off the riser
+ * rather than running beside it. They carry their family's bore; `SERVICE_SPEC.bore`'s
+ * `coldRiser` and `hotRiser` stay declared for the day a riser is sized apart from its
+ * branches, which is a real thing plumbers do and is not modelled here.
+ *
+ * COOLING HAS NO RISER, and that is a decision rather than an omission: its plant is an
+ * outdoor unit standing on the control-center balcony, so every storey has its own condenser
+ * on its own balcony and there is nothing to carry up.
+ */
+const RISER_RUNS = [
+  {
+    layer: 'water',
+    family: 'cold',
+    from: {
+      at: 'cap',
+      why: 'Floor 0 is undesigned; the riser stops at the bottom of the lowest storey rather than ending in mid-air.',
+    },
+    to: { at: 'cap', why: 'The roof is not modelled; the riser stops above the top storey.' },
+    points: [
+      [1.98, 9.35, -0.28],
+      [1.98, 9.35, 2.72],
+    ],
+  },
+  {
+    layer: 'water',
+    family: 'hot',
+    from: {
+      at: 'cap',
+      why: 'Floor 0 is undesigned; the riser stops at the bottom of the lowest storey.',
+    },
+    to: { at: 'cap', why: 'The roof is not modelled; the riser stops above the top storey.' },
+    points: [
+      [2.1, 9.35, -0.28],
+      [2.1, 9.35, 2.72],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'heating',
+    from: {
+      at: 'cap',
+      why: 'Floor 0 is undesigned; the riser stops at the bottom of the lowest storey.',
+    },
+    to: { at: 'cap', why: 'The roof is not modelled; the riser stops above the top storey.' },
+    points: [
+      [2.15, 9.35, -0.28],
+      [2.15, 9.35, 2.72],
+    ],
+  },
+  {
+    layer: 'gas',
+    family: 'gas',
+    from: {
+      at: 'cap',
+      why: 'Floor 0 is undesigned; the riser stops at the bottom of the lowest storey.',
+    },
+    to: { at: 'cap', why: 'The roof is not modelled; the riser stops above the top storey.' },
+    points: [
+      [2.22, 9.35, -0.28],
+      [2.22, 9.35, 2.72],
+    ],
+  },
+  {
+    layer: 'lowVoltage',
+    family: 'data',
+    from: {
+      at: 'cap',
+      why: 'Floor 0 is undesigned; the riser stops at the bottom of the lowest storey.',
+    },
+    to: { at: 'cap', why: 'The roof is not modelled; the riser stops above the top storey.' },
+    points: [
+      [2.52, 9.35, -0.28],
+      [2.52, 9.35, 2.72],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: {
+      at: 'cap',
+      why: 'Floor 0 is undesigned; the riser stops at the bottom of the lowest storey.',
+    },
+    to: { at: 'cap', why: 'The roof is not modelled; the riser stops above the top storey.' },
+    points: [
+      [2.78, 9.35, -0.28],
+      [2.78, 9.35, 2.72],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'power',
+    from: {
+      at: 'cap',
+      why: 'Floor 0 is undesigned; the riser stops at the bottom of the lowest storey.',
+    },
+    to: { at: 'cap', why: 'The roof is not modelled; the riser stops above the top storey.' },
+    points: [
+      [2.9, 9.35, -0.28],
+      [2.9, 9.35, 2.72],
+    ],
+  },
+] as const satisfies readonly PlanServiceRun[];
+
+/**
+ * Electricity, low voltage and climate.
+ *
+ * These reach ROOMS rather than individual accessories, and that is a chosen
+ * level of detail rather than a shortcut. The owner asked for an installation
+ * built for extension — "installation for extensibility and flexibility in
+ * future" — so what the model owes him is the capacity ARRIVING in every room,
+ * with `SERVICE_SPEC.spareCapacityFraction` of each conduit left free, not a
+ * cable drawn to a socket nobody has chosen yet. Where he named a specific
+ * thing, the run ends at that thing instead: every water and waste branch above
+ * stops at a real basin, bath, shower, cistern, machine or cooker.
+ *
+ * TWO distribution spines, not one. The side-B strip carries everything out of
+ * the control center, and a corridor spine picks it up through the kitchen and
+ * serves the four north rooms and the stair. That second spine is why a cable to
+ * the female kids' bedroom is five metres of corridor ceiling instead of twenty
+ * metres around the outside of the building.
+ *
+ * Electricity is two circuit families on one hue: 2.5 mm² for power and plugs,
+ * 1.5 mm² for lighting (owner). Low voltage is ethernet, reaching every room
+ * that is not a bath or shower cubicle so a mesh node or a router can be added
+ * anywhere — held clear of the power lanes the whole way by
+ * `SERVICE_SPEC.dataToPowerSeparation`. Climate is heating AND cooling: the wall
+ * heaters run off the same chamber the hot water does and reach every room, and
+ * the cooling reaches the guest room, the corridor, the bedrooms and the living
+ * room, and nowhere else (owner).
+ */
+const DRY_RUNS = [
+  /* power */
+  {
+    layer: 'electricity',
+    family: 'power',
+    from: { at: 'chamber', chamber: 'electricalChamber' },
+    to: { at: 'space', space: 'balconySlabB' },
+    points: [
+      [2.9, 9.35, 1.2],
+      [2.9, 9.35, 2.35],
+      [2.9, 9.6, 2.35],
+      [12.45, 9.6, 2.35],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'power',
+    from: { at: 'space', space: 'balconySlabB' },
+    to: { at: 'space', space: 'corridor' },
+    points: [
+      [12.45, 9.6, 2.35],
+      [12.45, 4.75, 2.35],
+      [12.45, 4.75, 2.5],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'power',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'corridor' },
+    points: [
+      [5.6, 4.75, 2.5],
+      [20.2, 4.75, 2.5],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'power',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'livingRoom' },
+    points: [
+      [11.24, 4.75, 2.5],
+      [11.24, 3.85, 2.5],
+      [11.24, 3.85, 0.3],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'power',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'bedroomMaleKids' },
+    points: [
+      [13.45, 4.75, 2.5],
+      [13.45, 3.85, 2.5],
+      [13.45, 3.85, 0.3],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'power',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'bedroomFemaleKids' },
+    points: [
+      [18.75, 4.75, 2.5],
+      [18.75, 3.85, 2.5],
+      [18.75, 3.85, 0.3],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'power',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'masterBedroom' },
+    points: [
+      [11.24, 4.75, 2.5],
+      [11.24, 3.85, 2.5],
+      [11.24, 0.75, 2.5],
+      [6.6, 0.75, 2.5],
+      [6.6, 0.75, 0.3],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'power',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'guestRoom' },
+    points: [
+      [5.85, 4.75, 2.5],
+      [5.85, 6.3, 2.5],
+      [5.85, 6.3, 0.3],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'power',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'kitchen' },
+    points: [
+      [10.25, 4.75, 2.5],
+      [10.25, 6.3, 2.5],
+      [10.25, 6.3, 0.3],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'power',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'laundry' },
+    points: [
+      [14.5, 4.75, 2.5],
+      [14.5, 5.8, 2.5],
+      [14.5, 5.8, 0.3],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'power',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'mainSanitair' },
+    points: [
+      [17.94, 4.75, 2.5],
+      [17.94, 5.8, 2.5],
+      [17.94, 5.8, 0.3],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'power',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'corridor' },
+    points: [
+      [13.45, 4.75, 2.5],
+      [13.45, 4, 2.5],
+      [13.45, 4, 0.3],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'power',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'mainBathCubicle' },
+    points: [
+      [17.94, 4.75, 2.5],
+      [17.94, 5.8, 2.5],
+      [18.97, 5.8, 2.5],
+      [18.97, 7.45, 2.5],
+      [18.97, 7.45, 0.3],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'power',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'mainShowerCubicle' },
+    points: [
+      [17.94, 4.75, 2.5],
+      [17.94, 5.8, 2.5],
+      [18.97, 5.8, 2.5],
+      [18.97, 7.45, 2.5],
+      [18.97, 7.7, 2.5],
+      [19.5, 7.7, 2.5],
+      [19.5, 7.7, 0.3],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'power',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'utilityRoom' },
+    points: [
+      [17.94, 4.75, 2.5],
+      [17.94, 5.8, 2.5],
+      [17.94, 6.05, 2.5],
+      [20.5, 6.05, 2.5],
+      [20.5, 6.05, 0.3],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'power',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'guestSanitair' },
+    points: [
+      [5.85, 4.75, 2.5],
+      [5.85, 6.3, 2.5],
+      [9.04, 6.3, 2.5],
+      [9.04, 7.2, 2.5],
+      [9.04, 7.2, 0.3],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'power',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'guestBathCubicle' },
+    points: [
+      [5.85, 4.75, 2.5],
+      [5.85, 6.3, 2.5],
+      [5.85, 8.1, 2.5],
+      [8.05, 8.1, 2.5],
+      [8.05, 8.1, 0.3],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'power',
+    from: { at: 'chamber', chamber: 'electricalChamber' },
+    to: { at: 'space', space: 'controlCenter' },
+    points: [
+      [2.9, 9.35, 1.2],
+      [2.9, 9.35, 0.3],
+    ],
+  },
+
+  /* lighting */
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: { at: 'chamber', chamber: 'electricalChamber' },
+    to: { at: 'space', space: 'balconySlabB' },
+    points: [
+      [2.78, 9.35, 1.2],
+      [2.78, 9.35, 2.2],
+      [2.78, 9.6, 2.2],
+      [12.6, 9.6, 2.2],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: { at: 'space', space: 'balconySlabB' },
+    to: { at: 'space', space: 'corridor' },
+    points: [
+      [12.6, 9.6, 2.2],
+      [12.6, 4.75, 2.2],
+      [12.6, 4.75, 2.6],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'corridor' },
+    points: [
+      [5.6, 4.75, 2.6],
+      [20.2, 4.75, 2.6],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'livingRoom' },
+    points: [
+      [11.38, 4.75, 2.6],
+      [11.38, 3.85, 2.6],
+      [11.38, 3.85, 2.65],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'bedroomMaleKids' },
+    points: [
+      [13.6, 4.75, 2.6],
+      [13.6, 3.85, 2.6],
+      [13.6, 3.85, 2.65],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'bedroomFemaleKids' },
+    points: [
+      [18.9, 4.75, 2.6],
+      [18.9, 3.85, 2.6],
+      [18.9, 3.85, 2.65],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'masterBedroom' },
+    points: [
+      [11.38, 4.75, 2.6],
+      [11.38, 3.85, 2.6],
+      [11.38, 0.9, 2.6],
+      [6.6, 0.9, 2.6],
+      [6.6, 0.9, 2.65],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'guestRoom' },
+    points: [
+      [6, 4.75, 2.6],
+      [6, 6.3, 2.6],
+      [6, 6.3, 2.65],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'kitchen' },
+    points: [
+      [10.4, 4.75, 2.6],
+      [10.4, 6.3, 2.6],
+      [10.4, 6.3, 2.65],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'laundry' },
+    points: [
+      [14.65, 4.75, 2.6],
+      [14.65, 5.8, 2.6],
+      [14.65, 5.8, 2.65],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'mainSanitair' },
+    points: [
+      [18.08, 4.75, 2.6],
+      [18.08, 5.8, 2.6],
+      [18.08, 5.8, 2.65],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'corridor' },
+    points: [
+      [13.6, 4.75, 2.6],
+      [13.6, 4, 2.6],
+      [13.6, 4, 2.65],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'stairs' },
+    points: [
+      [5.6, 4.75, 2.6],
+      [5.6, 4.4, 2.6],
+      [5.45, 4.4, 2.6],
+      [5.45, 4.4, 2.65],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'mainBathCubicle' },
+    points: [
+      [18.08, 4.75, 2.6],
+      [18.08, 5.8, 2.6],
+      [19.04, 5.8, 2.6],
+      [19.04, 7.45, 2.6],
+      [19.04, 7.45, 2.65],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'mainShowerCubicle' },
+    points: [
+      [18.08, 4.75, 2.6],
+      [18.08, 5.8, 2.6],
+      [19.04, 5.8, 2.6],
+      [19.04, 7.45, 2.6],
+      [19.04, 7.85, 2.6],
+      [19.5, 7.85, 2.6],
+      [19.5, 7.85, 2.65],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'utilityRoom' },
+    points: [
+      [18.08, 4.75, 2.6],
+      [18.08, 5.8, 2.6],
+      [18.08, 6.2, 2.6],
+      [20.5, 6.2, 2.6],
+      [20.5, 6.2, 2.65],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'guestSanitair' },
+    points: [
+      [6, 4.75, 2.6],
+      [6, 6.3, 2.6],
+      [9.18, 6.3, 2.6],
+      [9.18, 7.2, 2.6],
+      [9.18, 7.2, 2.65],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'guestBathCubicle' },
+    points: [
+      [6, 4.75, 2.6],
+      [6, 6.3, 2.6],
+      [6, 8.2, 2.6],
+      [8.05, 8.2, 2.6],
+      [8.05, 8.2, 2.65],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: { at: 'chamber', chamber: 'electricalChamber' },
+    to: { at: 'space', space: 'controlCenter' },
+    points: [
+      [2.78, 9.35, 1.2],
+      [2.78, 9.35, 2.65],
+    ],
+  },
+
+  /* data */
+  {
+    layer: 'lowVoltage',
+    family: 'data',
+    from: { at: 'chamber', chamber: 'electricalChamber' },
+    to: { at: 'space', space: 'balconySlabB' },
+    points: [
+      [2.52, 9.35, 1.2],
+      [2.52, 9.35, 2.5],
+      [13.9, 9.35, 2.5],
+    ],
+  },
+  {
+    layer: 'lowVoltage',
+    family: 'data',
+    from: { at: 'space', space: 'balconySlabB' },
+    to: { at: 'space', space: 'corridor' },
+    points: [
+      [13.9, 9.35, 2.5],
+      [13.9, 4.45, 2.5],
+      [13.9, 4.45, 2.25],
+    ],
+  },
+  {
+    layer: 'lowVoltage',
+    family: 'data',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'corridor' },
+    points: [
+      [5.6, 4.45, 2.25],
+      [20.2, 4.45, 2.25],
+    ],
+  },
+  {
+    layer: 'lowVoltage',
+    family: 'data',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'livingRoom' },
+    points: [
+      [11.61, 4.45, 2.25],
+      [11.61, 3.85, 2.25],
+      [11.61, 3.85, 0.3],
+    ],
+  },
+  {
+    layer: 'lowVoltage',
+    family: 'data',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'bedroomMaleKids' },
+    points: [
+      [13.85, 4.45, 2.25],
+      [13.85, 3.85, 2.25],
+      [13.85, 3.85, 0.3],
+    ],
+  },
+  {
+    layer: 'lowVoltage',
+    family: 'data',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'bedroomFemaleKids' },
+    points: [
+      [19.15, 4.45, 2.25],
+      [19.15, 3.85, 2.25],
+      [19.15, 3.85, 0.3],
+    ],
+  },
+  {
+    layer: 'lowVoltage',
+    family: 'data',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'masterBedroom' },
+    points: [
+      [11.61, 4.45, 2.25],
+      [11.61, 3.85, 2.25],
+      [11.61, 1.15, 2.25],
+      [6.6, 1.15, 2.25],
+      [6.6, 1.15, 0.3],
+    ],
+  },
+  {
+    layer: 'lowVoltage',
+    family: 'data',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'guestRoom' },
+    points: [
+      [6.25, 4.45, 2.25],
+      [6.25, 6.3, 2.25],
+      [6.25, 6.3, 0.3],
+    ],
+  },
+  {
+    layer: 'lowVoltage',
+    family: 'data',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'kitchen' },
+    points: [
+      [10.65, 4.45, 2.25],
+      [10.65, 6.3, 2.25],
+      [10.65, 6.3, 0.3],
+    ],
+  },
+  {
+    layer: 'lowVoltage',
+    family: 'data',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'laundry' },
+    points: [
+      [14.9, 4.45, 2.25],
+      [14.9, 5.8, 2.25],
+      [14.9, 5.8, 0.3],
+    ],
+  },
+  {
+    layer: 'lowVoltage',
+    family: 'data',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'mainSanitair' },
+    points: [
+      [18.31, 4.45, 2.25],
+      [18.31, 5.8, 2.25],
+      [18.31, 5.8, 0.3],
+    ],
+  },
+  {
+    layer: 'lowVoltage',
+    family: 'data',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'corridor' },
+    points: [
+      [13.85, 4.45, 2.25],
+      [13.85, 4, 2.25],
+      [13.85, 4, 0.3],
+    ],
+  },
+  {
+    layer: 'lowVoltage',
+    family: 'data',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'utilityRoom' },
+    points: [
+      [18.31, 4.45, 2.25],
+      [18.31, 5.8, 2.25],
+      [18.31, 6.45, 2.25],
+      [20.5, 6.45, 2.25],
+      [20.5, 6.45, 0.3],
+    ],
+  },
+  {
+    layer: 'lowVoltage',
+    family: 'data',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'guestSanitair' },
+    points: [
+      [6.25, 4.45, 2.25],
+      [6.25, 6.3, 2.25],
+      [9.41, 6.3, 2.25],
+      [9.41, 7.2, 2.25],
+      [9.41, 7.2, 0.3],
+    ],
+  },
+  {
+    layer: 'lowVoltage',
+    family: 'data',
+    from: { at: 'chamber', chamber: 'electricalChamber' },
+    to: { at: 'space', space: 'controlCenter' },
+    points: [
+      [2.52, 9.35, 1.2],
+      [2.52, 9.35, 0.3],
+    ],
+  },
+
+  /* cooling */
+  {
+    layer: 'climate',
+    family: 'cooling',
+    from: { at: 'space', space: 'ccBalcony' },
+    to: { at: 'space', space: 'balconySlabB' },
+    points: [
+      [4.3, 9.45, 0.9],
+      [4.3, 9.45, 2.55],
+      [13.75, 9.45, 2.55],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'cooling',
+    from: { at: 'space', space: 'balconySlabB' },
+    to: { at: 'space', space: 'corridor' },
+    points: [
+      [13.75, 9.45, 2.55],
+      [13.75, 5.1, 2.55],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'cooling',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'corridor' },
+    points: [
+      [5.6, 5.1, 2.55],
+      [20.2, 5.1, 2.55],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'cooling',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'livingRoom' },
+    points: [
+      [11.8, 5.1, 2.55],
+      [11.8, 3.85, 2.55],
+      [11.8, 3.85, 2.35],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'cooling',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'bedroomMaleKids' },
+    points: [
+      [14.05, 5.1, 2.55],
+      [14.05, 3.85, 2.55],
+      [14.05, 3.85, 2.35],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'cooling',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'bedroomFemaleKids' },
+    points: [
+      [19.35, 5.1, 2.55],
+      [19.35, 3.85, 2.55],
+      [19.35, 3.85, 2.35],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'cooling',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'masterBedroom' },
+    points: [
+      [11.8, 5.1, 2.55],
+      [11.8, 3.85, 2.55],
+      [11.8, 1.35, 2.55],
+      [6.6, 1.35, 2.55],
+      [6.6, 1.35, 2.35],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'cooling',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'guestRoom' },
+    points: [
+      [6.45, 5.1, 2.55],
+      [6.45, 6.3, 2.55],
+      [6.45, 6.3, 2.35],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'cooling',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'corridor' },
+    points: [
+      [14.05, 5.1, 2.55],
+      [14.05, 4, 2.55],
+      [14.05, 4, 2.35],
+    ],
+  },
+
+  /* heating */
+  {
+    layer: 'climate',
+    family: 'heating',
+    from: { at: 'chamber', chamber: 'wetGasChamber' },
+    to: { at: 'space', space: 'balconySlabB' },
+    points: [
+      [2.15, 9.35, 1.2],
+      [2.15, 9.35, 2.35],
+      [2.15, 9, 2.35],
+      [12.3, 9, 2.35],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'heating',
+    from: { at: 'space', space: 'balconySlabB' },
+    to: { at: 'space', space: 'corridor' },
+    points: [
+      [12.3, 9, 2.35],
+      [12.3, 5.3, 2.35],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'heating',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'corridor' },
+    points: [
+      [5.6, 5.3, 2.35],
+      [20.2, 5.3, 2.35],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'heating',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'livingRoom' },
+    points: [
+      [11.1, 5.3, 2.35],
+      [11.1, 3.85, 2.35],
+      [11.1, 3.85, 0.6],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'heating',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'bedroomMaleKids' },
+    points: [
+      [13.3, 5.3, 2.35],
+      [13.3, 3.85, 2.35],
+      [13.3, 3.85, 0.6],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'heating',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'bedroomFemaleKids' },
+    points: [
+      [18.6, 5.3, 2.35],
+      [18.6, 3.85, 2.35],
+      [18.6, 3.85, 0.6],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'heating',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'masterBedroom' },
+    points: [
+      [11.1, 5.3, 2.35],
+      [11.1, 3.85, 2.35],
+      [11.1, 0.6, 2.35],
+      [6.6, 0.6, 2.35],
+      [6.6, 0.6, 0.6],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'heating',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'guestRoom' },
+    points: [
+      [5.7, 5.3, 2.35],
+      [5.7, 6.3, 2.35],
+      [5.7, 6.3, 0.6],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'heating',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'kitchen' },
+    points: [
+      [10.1, 5.3, 2.35],
+      [10.1, 6.3, 2.35],
+      [10.1, 6.3, 0.6],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'heating',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'laundry' },
+    points: [
+      [14.35, 5.3, 2.35],
+      [14.35, 5.8, 2.35],
+      [14.35, 5.8, 0.6],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'heating',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'mainSanitair' },
+    points: [
+      [17.8, 5.3, 2.35],
+      [17.8, 5.8, 2.35],
+      [17.8, 5.8, 0.6],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'heating',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'corridor' },
+    points: [
+      [13.3, 5.3, 2.35],
+      [13.3, 4, 2.35],
+      [13.3, 4, 0.6],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'heating',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'mainBathCubicle' },
+    points: [
+      [17.8, 5.3, 2.35],
+      [17.8, 5.8, 2.35],
+      [18.9, 5.8, 2.35],
+      [18.9, 7.45, 2.35],
+      [18.9, 7.45, 0.6],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'heating',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'mainShowerCubicle' },
+    points: [
+      [17.8, 5.3, 2.35],
+      [17.8, 5.8, 2.35],
+      [18.9, 5.8, 2.35],
+      [18.9, 7.45, 2.35],
+      [18.9, 7.55, 2.35],
+      [19.5, 7.55, 2.35],
+      [19.5, 7.55, 0.6],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'heating',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'utilityRoom' },
+    points: [
+      [17.8, 5.3, 2.35],
+      [17.8, 5.8, 2.35],
+      [17.8, 5.9, 2.35],
+      [20.5, 5.9, 2.35],
+      [20.5, 5.9, 0.6],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'heating',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'guestSanitair' },
+    points: [
+      [5.7, 5.3, 2.35],
+      [5.7, 6.3, 2.35],
+      [8.9, 6.3, 2.35],
+      [8.9, 7.2, 2.35],
+      [8.9, 7.2, 0.6],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'heating',
+    from: { at: 'space', space: 'corridor' },
+    to: { at: 'space', space: 'guestBathCubicle' },
+    points: [
+      [5.7, 5.3, 2.35],
+      [5.7, 6.3, 2.35],
+      [5.7, 8, 2.35],
+      [8.05, 8, 2.35],
+      [8.05, 8, 0.6],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'heating',
+    from: { at: 'chamber', chamber: 'wetGasChamber' },
+    to: { at: 'space', space: 'controlCenter' },
+    points: [
+      [2.15, 9.35, 1.2],
+      [2.15, 9.35, 0.6],
+    ],
+  },
+] as const satisfies readonly PlanServiceRun[];
+
+/**
+ * Every declared run of every service, grouped by the array it came from.
+ *
+ * Composed from the arrays above rather than written as one list, because a list
+ * this long is only readable in the groups a plumber and an electrician actually
+ * think in.
+ *
+ * The order is the COMPOSITION order and deliberately not the layer order: the
+ * heater's relief is `drainage` and is spread after the water runs because that
+ * is where it is readable, and {@link CHAMBER_VENT_RUNS} puts one `gas` and one
+ * `electricity` run between the gas and the dry runs because the two ducts only
+ * make sense beside each other. Nothing may depend on this being layer order —
+ * a consumer that wants a layer filters on `run.layer`.
+ */
+export const SERVICE_RUNS = deepFreeze([
+  ...DRAINAGE_RUNS,
+  ...WATER_RUNS,
+  ...HEATER_DRAIN_RUNS,
+  ...GAS_RUNS,
+  ...CHAMBER_VENT_RUNS,
+  ...RISER_RUNS,
+  ...DRY_RUNS,
+] as const satisfies readonly PlanServiceRun[]);

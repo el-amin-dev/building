@@ -79,7 +79,8 @@ import {
 import type { PlanPoint, PlanRect } from './planGeometry.ts';
 import { PORT_SCHEDULE, getPortOpening } from './ports/index.ts';
 import type { Port } from './ports/index.ts';
-import { PARAPET_WALLS, WINDOWS } from './sourceOfTruth/plan.ts';
+import { getServiceRuns } from './services.ts';
+import { PARAPET_WALLS, SERVICE_RUNS, WINDOWS } from './sourceOfTruth/plan.ts';
 import { STAIRS_SPEC } from './stairs.ts';
 import { getWallFootprintArea, getWallPieces } from './walls.ts';
 import type { FloorWindow } from './windows.ts';
@@ -130,6 +131,19 @@ const SLAB_COUNT = 22;
 const RAILING_COUNT = 3;
 /** Step boxes of the half-turn stair: nine risers each side of this floor. */
 const STEP_COUNT = 18;
+/**
+ * Runs the floor threads: one built run per run the plan declares.
+ *
+ * DERIVED, not pinned, and it is the odd one out in this block on purpose. Every
+ * other count here is a literal because the thing it counts is COMPUTED — how
+ * many blocks 27 openings cut a wall into is a fact about `walls.ts` that a
+ * literal is the only honest guard for. A service run is not computed: it is
+ * declared, one entry at a time, and the only claim this file has any business
+ * making is that the composition hands every one of them on. Pinning the number
+ * here as well would just be `SERVICE_RUNS.length` written twice, and the second
+ * copy would go stale the first time a run is added to the plan.
+ */
+const SERVICE_RUN_COUNT = SERVICE_RUNS.length;
 /** Risers of one full storey, as the stair spec declares them. */
 const RISER_COUNT = STAIRS_SPEC.riserCount;
 /** Risers between this floor and a half-landing: half of them. */
@@ -483,6 +497,44 @@ describe('the composed floor', () => {
     expect(FLOOR.windows).toHaveLength(WINDOW_COUNT);
     expect(FLOOR.stairs.steps).toHaveLength(STEP_COUNT);
     expect(FLOOR.openings).toHaveLength(OPENING_COUNT);
+    expect(FLOOR.services).toHaveLength(SERVICE_RUN_COUNT);
+  });
+
+  it('composes the service runs rather than deriving any of them', () => {
+    // The composition invents no geometry, here as for the fixtures: it calls
+    // `getServiceRuns` and holds what comes back. Identity across the two calls
+    // would prove nothing (the module builds a fresh array each time), so this
+    // asserts the stronger thing — that the floor carries exactly the declared
+    // runs, in declaration order, with no run added, dropped or reshaped.
+    expect(FLOOR.services).toEqual(getServiceRuns());
+    expect(FLOOR.services.map((run) => run.matricule)).toEqual(
+      getServiceRuns().map((run) => run.matricule),
+    );
+    // ...and the floor really carries one built run per DECLARED run, which is
+    // what makes the length above a claim and not a tautology.
+    expect(SERVICE_RUN_COUNT).toBeGreaterThan(NONE);
+    expect(new Set(FLOOR.services.map((run) => run.matricule)).size).toBe(SERVICE_RUN_COUNT);
+  });
+
+  it('lets no injected height move a single service run', () => {
+    // Every level a run is at is declared point by point, measured from the
+    // finished floor of its own storey, so the runs are the one part of the
+    // floor that takes NEITHER the plan's heights nor an injected set. A run
+    // that moved with `heights.wall` would be a pipe that changed depth when
+    // the ceiling changed height.
+    const elsewhere = getBuiltFloor(FLOOR_PLAN, PORT_SCHEDULE, OTHER_HEIGHTS);
+
+    expect(elsewhere.services).toEqual(FLOOR.services);
+  });
+
+  it('gives every run boxes to be drawn as, so no layer is an empty checkbox', () => {
+    const legs = FLOOR.services.flatMap((run) => run.segments.map((segment) => segment.box));
+
+    expect(legs.length).toBeGreaterThan(FLOOR.services.length);
+    FLOOR.services.forEach((run) => {
+      expect(run.segments.length, run.matricule).toBeGreaterThan(NONE);
+      expect(run.bore, run.matricule).toBeGreaterThan(NONE);
+    });
   });
 
   it('takes every port and every window of the declared schedules', () => {
@@ -560,6 +612,13 @@ describe('the composed floor', () => {
     expect(Object.isFrozen(FLOOR.stairs)).toBe(true);
     expect(Object.isFrozen(FLOOR.stairs.steps)).toBe(true);
     expect(Object.isFrozen(FLOOR.tvPanel)).toBe(true);
+    expect(Object.isFrozen(FLOOR.services)).toBe(true);
+    FLOOR.services.forEach((run) => {
+      expect(Object.isFrozen(run), run.matricule).toBe(true);
+      expect(Object.isFrozen(run.segments), run.matricule).toBe(true);
+      expect(Object.isFrozen(run.cover), run.matricule).toBe(true);
+      expect(Object.isFrozen(run.caps), run.matricule).toBe(true);
+    });
     [...FLOOR.walls, ...FLOOR.slabs, ...FLOOR.openings, ...FLOOR.stairs.steps].forEach((box) => {
       expect(Object.isFrozen(box)).toBe(true);
       expect(Object.isFrozen(box.rect)).toBe(true);
