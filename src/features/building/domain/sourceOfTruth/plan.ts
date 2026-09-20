@@ -2231,10 +2231,10 @@ const CHAMBER_VENT_RUNS = [
       why: 'Discharges to open air over the control-center balcony. Everything leaves this floor through that balcony (owner, 2026-09-20); drainage is the only exception. It crosses ABOVE the balcony door head and runs at z 9.00, north of the electrical chamber, so it still never carries a gas atmosphere over the electrical compartment. A vent terminates; it does not serve what it discharges into.',
     },
     points: [
-      [1.98, 9.35, 2.2],
-      [1.98, 9.35, 2.35],
-      [1.98, 9.0, 2.35],
-      [4.1, 9.0, 2.35],
+      [1.8, 9.35, 2.2],
+      [1.8, 9.68, 2.2],
+      [1.8, 9.68, 1.9],
+      [4.1, 9.68, 1.9],
     ],
     why: 'The wet-and-gas chamber breathes WEST, into balcony A through the 0.30 wall. A sealed cupboard with a burner in it has to breathe, and venting it east would have carried a gas atmosphere over the electrical compartment — which is the one thing the split exists to prevent.',
   },
@@ -2626,6 +2626,7 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'masterBedroom' },
     points: [
+      [5.6, 4.75, 2.5],
       [2.05, 4.75, 2.5],
       [2.05, 3.7, 2.5],
       [2.05, 3.7, 0.3],
@@ -2848,6 +2849,7 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'masterBedroom' },
     points: [
+      [5.6, 4.75, 2.6],
       [2.2, 4.75, 2.6],
       [2.2, 3.7, 2.6],
       [2.2, 3.7, 2.65],
@@ -3069,6 +3071,7 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'masterBedroom' },
     points: [
+      [5.6, 4.45, 2.25],
       [2.45, 4.45, 2.25],
       [2.45, 3.7, 2.25],
       [2.45, 3.7, 0.3],
@@ -3184,8 +3187,8 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'ccBalcony' },
     to: { at: 'space', space: 'balconySlabB' },
     points: [
-      [4.2, 9.45, 0.9],
-      [4.2, 9.45, 2.55],
+      [4.3, 9.45, 0.9],
+      [4.3, 9.45, 2.55],
       [13.75, 9.45, 2.55],
     ],
   },
@@ -3248,6 +3251,7 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'masterBedroom' },
     points: [
+      [5.6, 5.1, 2.55],
       [2.65, 5.1, 2.55],
       [2.65, 3.7, 2.55],
       [2.65, 3.7, 2.35],
@@ -3348,6 +3352,7 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'masterBedroom' },
     points: [
+      [5.6, 5.3, 2.35],
       [1.9, 5.3, 2.35],
       [1.9, 3.7, 2.35],
       [1.9, 3.7, 0.6],

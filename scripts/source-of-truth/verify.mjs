@@ -3454,25 +3454,52 @@ check('22. A run may not stand in a door, an opening or a window');
   for (const opening of declaredOpenings) {
     const [first, second] = opening.between.map((id) => ROOMS.find((room) => room.id === id));
     if (!first || !second) continue;
-    let band = null;
-    for (const a of first.rects) {
-      for (const b of second.rects) {
-        if (opening.along === 'x') {
-          const lo = Math.min(a[3], b[3]);
-          const hi = Math.max(a[2], b[2]);
-          const shared = Math.min(a[1], b[1]) - Math.max(a[0], b[0]);
-          if (hi - lo >= -EPS && hi - lo < 0.62 && shared > 0) band = [lo, hi];
-        } else {
-          const lo = Math.min(a[1], b[1]);
-          const hi = Math.max(a[0], b[0]);
-          const shared = Math.min(a[3], b[3]) - Math.max(a[2], b[2]);
-          if (hi - lo >= -EPS && hi - lo < 0.62 && shared > 0) band = [lo, hi];
-        }
-      }
-    }
-    if (!band) continue;
     const from = opening.spanMin;
     const to = opening.spanMin + opening.width;
+
+    /**
+     * TAKE THE PAIR THAT ACTUALLY BRACKETS THE OPENING, not the last one that matches.
+     *
+     * Two rooms with two rectangles each give up to four candidate wall bands, and the
+     * corridor–kitchen door has two: the real doorway at z 5.50–5.80, and a stretch of wall
+     * at z 6.00–6.30 that only exists for x 10.00–11.90 and does not contain the door at
+     * all. Keeping whichever came last tested a rectangle floating inside the kitchen and
+     * left the doorway itself unguarded — a socket dropped dead centre of it passed both
+     * this check and check 21.
+     *
+     * So the shared stretch has to contain the opening's own span. If none does, or more
+     * than one does, that is not something to skip quietly: it means the rooms and the
+     * opening disagree, and the check says so instead of testing nothing.
+     */
+    /** @type {Array<readonly [number, number]>} */
+    const bands = [];
+    for (const a of first.rects) {
+      for (const b of second.rects) {
+        const acrossLo = opening.along === 'x' ? Math.min(a[3], b[3]) : Math.min(a[1], b[1]);
+        const acrossHi = opening.along === 'x' ? Math.max(a[2], b[2]) : Math.max(a[0], b[0]);
+        if (acrossHi - acrossLo < -EPS || acrossHi - acrossLo >= 0.62) continue;
+        const sharedLo = opening.along === 'x' ? Math.max(a[0], b[0]) : Math.max(a[2], b[2]);
+        const sharedHi = opening.along === 'x' ? Math.min(a[1], b[1]) : Math.min(a[3], b[3]);
+        if (sharedHi - sharedLo <= EPS) continue;
+        if (from < sharedLo - EPS || to > sharedHi + EPS) continue;
+        bands.push([acrossLo, acrossHi]);
+      }
+    }
+    const distinct = bands.filter(
+      (band, index) =>
+        bands.findIndex(
+          (other) => Math.abs(other[0] - band[0]) < EPS && Math.abs(other[1] - band[1]) < EPS,
+        ) === index,
+    );
+    if (distinct.length !== 1) {
+      fail(
+        `the ${opening.between.join(' ↔ ')} ${opening.kind} spanning ${m(from)}–${m(to)} ` +
+          `resolves to ${distinct.length} wall bands, not one — the rooms and the opening ` +
+          `disagree, so nothing here can be checked`,
+      );
+      continue;
+    }
+    const band = distinct[0];
     openings.push({
       rect:
         opening.along === 'x'
@@ -3526,6 +3553,132 @@ check('22. A run may not stand in a door, an opening or a window');
   }
 }
 
+/* ──────── 23. every run is connected to something ──────── */
+
+check('23. A run that starts in a space tees off another run, or is declared plant');
+{
+  /**
+   * FIVE RUNS ONCE BEGAN IN MID-AIR and nothing noticed. When the branches moved onto the
+   * corridor, the master bedroom's five services were placed at their clear stretch — x 1.90
+   * to 2.65 — while the corridor trunk they tap starts at x 5.60. Each branch floated three
+   * metres from the nearest pipe, over the stairwell, and every other check passed: the
+   * points are on the grid, inside the plot, clear of every opening, and overhead. The room
+   * panel said the master bedroom had power, and it had five stubs reaching nothing.
+   *
+   * A dead trunk is decoration; an unfed branch is a room drawn as served that is not. So the
+   * upstream end of a run has to LIE ON another run of the same family — not merely share a
+   * vertex with one, because a branch legitimately tees off the middle of a trunk.
+   *
+   * The one exception is plant, and it is named rather than guessed: the cooling condenser is
+   * an outdoor unit standing on the control-center balcony, so its trunk is the SOURCE of its
+   * family and tees off nothing. A run leaving a chamber is exempt for the same reason — the
+   * chamber is where its service comes from.
+   */
+  /** Families whose upstream end is plant rather than a tee, with why. */
+  const PLANT_SOURCES = new Map([
+    ['cooling', 'the condenser is an outdoor unit on the control-center balcony'],
+  ]);
+  /** How far off a centreline still counts as touching it, in metres. */
+  const TEE_TOLERANCE = 0.02;
+
+  /**
+   * @param {readonly number[]} point
+   * @param {readonly number[]} from
+   * @param {readonly number[]} to
+   * @returns {boolean}
+   */
+  const liesOn = (point, from, to) => {
+    for (let axis = 0; axis < 3; axis += 1) {
+      const low = Math.min(from[axis], to[axis]);
+      const high = Math.max(from[axis], to[axis]);
+      if (point[axis] < low - TEE_TOLERANCE || point[axis] > high + TEE_TOLERANCE) return false;
+      const flat = Math.abs(from[axis] - to[axis]) < EPS;
+      if (flat && Math.abs(point[axis] - from[axis]) > TEE_TOLERANCE) return false;
+    }
+    return true;
+  };
+
+  let floating = 0;
+  for (const [index, run] of SERVICE_RUNS.entries()) {
+    if (run.from.at !== 'space') continue;
+    if (PLANT_SOURCES.has(run.family)) continue;
+    const head = run.points[0];
+    const fed = SERVICE_RUNS.some((other) => {
+      if (other === run || other.family !== run.family) return false;
+      for (let leg = 1; leg < other.points.length; leg += 1) {
+        if (liesOn(head, other.points[leg - 1], other.points[leg])) return true;
+      }
+      return false;
+    });
+    if (fed) continue;
+    floating += 1;
+    fail(
+      `SERVICE_RUNS[${index}] ${run.layer}/${run.family} starts at ` +
+        `(${n(head[0])}, ${n(head[1])}, ${n(head[2])}) and no other ${run.family} run passes ` +
+        `through that point — it is connected to nothing. A branch tees off a trunk; only ` +
+        `plant starts on its own`,
+    );
+  }
+
+  if (floating === 0) {
+    const plant = [...PLANT_SOURCES].map(([family, why]) => `${family} (${why})`).join(', ');
+    line(`every run tees off another of its family, except the declared plant: ${plant}`);
+  }
+}
+
+/* ──────── 24. room for the fitting that turns the corner ──────── */
+
+check('24. Every corner has room for the bend that makes it');
+{
+  /**
+   * `SERVICE_SPEC.minBendRadius` has claimed since it was written that it licenses a check,
+   * and there was no check: it was run once by hand, the eight corners it found were fixed,
+   * and the check itself was never committed. A constant that documents an absent guard is
+   * worse than no constant, because the next reader believes the guard is there.
+   *
+   * Every polyline turns a square 90°, and a square 90° is a duct that does not exist: the
+   * fitting that makes the turn sweeps a radius and needs straight pipe on both sides to land
+   * on. So the question is not "draw an arc" but "is there room for one" — both legs meeting
+   * at a corner must be at least the radius long. Ducts bind hardest, which is why they carry
+   * the larger multiple; a 160 mm duct cannot turn through a 0.10 m jog, and seven of the
+   * original eight failures were exactly that.
+   */
+  /** Families built as duct rather than as pipe. */
+  const DUCTS = new Set(['cooling', 'chamberVent']);
+  let tight = 0;
+  let worstMargin = Infinity;
+
+  for (const [index, run] of SERVICE_RUNS.entries()) {
+    const bore = SERVICE_SPEC.bore[run.family];
+    const multiple = DUCTS.has(run.family)
+      ? SERVICE_SPEC.minBendRadius.duct
+      : SERVICE_SPEC.minBendRadius.pipe;
+    const needed = bore * multiple;
+    for (let corner = 1; corner < run.points.length - 1; corner += 1) {
+      const before = run.points[corner - 1];
+      const at = run.points[corner];
+      const after = run.points[corner + 1];
+      const legs = [before, after].map((other) =>
+        Math.hypot(other[0] - at[0], other[1] - at[1], other[2] - at[2]),
+      );
+      const shortest = Math.min(...legs);
+      if (shortest - needed < worstMargin) worstMargin = shortest - needed;
+      if (shortest >= needed - EPS) continue;
+      tight += 1;
+      fail(
+        `SERVICE_RUNS[${index}] ${run.layer}/${run.family} turns at ` +
+          `(${n(at[0])}, ${n(at[1])}, ${n(at[2])}) with only ${m(shortest)} of straight run, ` +
+          `and a ${Math.round(bore * 1000)} mm ${DUCTS.has(run.family) ? 'duct' : 'pipe'} ` +
+          `needs ${m(needed)} to land the fitting on`,
+      );
+    }
+  }
+
+  if (tight === 0) {
+    line(`every corner has room for its bend; the tightest has ${m(worstMargin)} to spare`);
+  }
+}
+
 if (notes.length) {
   console.log('\n── notes');
   for (const note of notes) console.log(`   ${note}`);
@@ -3534,7 +3687,7 @@ if (notes.length) {
 console.log('');
 if (failures.length === 0) {
   console.log(
-    `PASS — 22 checks, ${walls.length} walls, ${PORTS.length + WINDOWS.length} openings, ` +
+    `PASS — 24 checks, ${walls.length} walls, ${PORTS.length + WINDOWS.length} openings, ` +
       `${FIXTURES.length} fixtures, ${SERVICE_RUNS.length} service runs, everything closes.`,
   );
   process.exit(0);
