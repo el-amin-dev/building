@@ -8,6 +8,7 @@ import type { SpaceId } from '../domain/floorPlan/index.ts';
 import { makeFloorSpaceRef } from '../domain/floorSpace.ts';
 import { PORT_SCHEDULE } from '../domain/ports/index.ts';
 import { getRoomInfo, NO_DAYLIGHT_NOTE } from '../domain/roomInfo.ts';
+import { SERVICE_LAYERS } from '../domain/sourceOfTruth/plan.ts';
 import type { RoomInfo } from '../domain/roomInfo.ts';
 import { BUILT_FLOOR } from './floorInstance.ts';
 import { INTERIOR_REGION_ID } from './hudIds.ts';
@@ -49,10 +50,24 @@ const DOORS_TERM = 'Doors and openings';
 const WINDOWS_TERM = 'Windows';
 const FIXTURES_TERM = 'Fixtures';
 const OPEN_ITEMS_TERM = 'Open items';
+const SERVICES_TERM = 'Services';
 
 /** An empty list said in words. */
 const NO_WINDOWS = 'No windows';
 const NO_FIXTURES = 'Nothing stands in it';
+const NO_SERVICES = 'No service reaches it';
+
+/** A room with taps: its water line must name the fitting, not just the layer. */
+const TAPPED_ROOM: SpaceId = 'mainShowerCubicle';
+
+/**
+ * The one space of the floor no run terminates in, so the empty sentence is real.
+ *
+ * Both chamber vents used to be declared as ending INTO a balcony, which made this
+ * slab's whole service list read `Gas`. They cap now — a vent discharges into the open
+ * air, it does not serve it — and balcony A is the floor's only unserviced space.
+ */
+const UNSERVED_ROOM: SpaceId = 'balconyA';
 
 /** The Tailwind class carrying the 24 px target floor of WCAG 2.5.8. */
 const MIN_TARGET_CLASS = 'min-h-6';
@@ -489,6 +504,97 @@ describe('RoomInfoPanel', () => {
     expect(shown).not.toContain(NO_DAYLIGHT_NOTE);
     expect(shown).toEqual(info.openItems.filter((item) => item !== NO_DAYLIGHT_NOTE));
     expect(shown.length).toBeGreaterThan(0);
+  });
+
+  it("lists every service reaching the room, in the model's order and in its words", async () => {
+    const user = userEvent.setup();
+    enterInterior();
+    render(<RoomInfoPanel />);
+
+    await openByKeyboard(user);
+    const { services } = infoOf(KITCHEN);
+
+    // The kitchen is the room every layer but the low-voltage-free cubicles reaches:
+    // drainage, water, gas, electricity, low voltage and climate.
+    expect(services.length).toBeGreaterThan(0);
+    expect(linesOf(SERVICES_TERM)).toHaveLength(services.length);
+    linesOf(SERVICES_TERM).forEach((line, index) => {
+      expect(line).toContain(services[index]?.name);
+    });
+  });
+
+  it("never spells a layer itself: every line opens with the plan's own name", async () => {
+    const user = userEvent.setup();
+    enterInterior();
+    render(<RoomInfoPanel />);
+
+    await openByKeyboard(user);
+    const names = SERVICE_LAYERS.map((layer) => layer.name);
+
+    linesOf(SERVICES_TERM).forEach((line) => {
+      expect(names.some((name) => line.startsWith(name))).toBe(true);
+    });
+  });
+
+  it('separates a service that lands on a fitting from one that merely reaches the room', async () => {
+    const user = userEvent.setup();
+    standIn(TAPPED_ROOM);
+    enterInterior();
+    render(<RoomInfoPanel />);
+
+    await openByKeyboard(user, TAPPED_ROOM);
+    const { services } = infoOf(TAPPED_ROOM);
+    const lines = linesOf(SERVICES_TERM);
+    const water = services.find((service) => service.layer === 'water');
+    const power = services.find((service) => service.layer === 'electricity');
+
+    // "There is water in this room" and "this shower has a tap" are two statements, and
+    // the bare layer name is the first of them.
+    expect(water?.fittings).toEqual(['shower']);
+    expect(power?.fittings).toEqual([]);
+    expect(lines.some((line) => line.includes('shower'))).toBe(true);
+    expect(lines).toContain(power?.name);
+  });
+
+  it('tells the viewer standing on a balcony what reaches it', async () => {
+    const user = userEvent.setup();
+    standIn(BALCONY);
+    enterInterior();
+    render(<RoomInfoPanel />);
+
+    await openByKeyboard(user, BALCONY);
+    const { services } = infoOf(BALCONY);
+
+    // Climate alone, and every part of that is load-bearing: the outdoor cooling unit
+    // genuinely stands on this balcony, while the electrical chamber's vent — which used
+    // to put `Electricity` here — now terminates at a cap instead of in the space.
+    expect(services.map((service) => service.layer)).toEqual(['climate']);
+    expect(linesOf(SERVICES_TERM)).toEqual(services.map((service) => service.name));
+  });
+
+  it('says the empty list in words rather than an empty list, where nothing reaches', async () => {
+    const user = userEvent.setup();
+    standIn(UNSERVED_ROOM);
+    enterInterior();
+    render(<RoomInfoPanel />);
+
+    await openByKeyboard(user, UNSERVED_ROOM);
+
+    // "list, 0 items" reads as a bug to a screen-reader user, so there is no list at all.
+    expect(infoOf(UNSERVED_ROOM).services).toEqual([]);
+    expect(valueOf(SERVICES_TERM)).toHaveTextContent(NO_SERVICES);
+    expect(within(valueOf(SERVICES_TERM)).queryByRole('list')).toBeNull();
+  });
+
+  it('shows the services as a list and not as the empty sentence', async () => {
+    const user = userEvent.setup();
+    enterInterior();
+    render(<RoomInfoPanel />);
+
+    await openByKeyboard(user);
+
+    expect(within(valueOf(SERVICES_TERM)).getByRole('list')).toBeInTheDocument();
+    expect(valueOf(SERVICES_TERM)).not.toHaveTextContent(NO_SERVICES);
   });
 
   it('leaves the single status role of the HUD alone', async () => {

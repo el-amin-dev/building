@@ -31,6 +31,11 @@
  *
  * **Daylight is derived, never a list of room ids.** See {@link DaylightSource}.
  *
+ * **So are the services, and for the same reason.** A hand-kept list of which
+ * room has water in it is a second copy of the runs, right until the morning a
+ * branch moves and the list does not. {@link RoomInfo.services} is read off the
+ * declared ENDS of the runs themselves. See {@link RoomService}.
+ *
  * Pure: it reads a plan, a port schedule and a built floor, and mutates none of
  * them. Areas are in square metres and rects in metres, with the plan
  * conventions of `floorPlan/types.ts`.
@@ -45,8 +50,10 @@ import type { FloorSpaceRef } from './floorSpace.ts';
 import type { PlanRect } from './planGeometry.ts';
 import { getPortPartners, getPortsOf } from './ports/index.ts';
 import type { Port, PortKind } from './ports/index.ts';
-import { ROOMS } from './sourceOfTruth/plan.ts';
-import type { PlanRoom } from './sourceOfTruth/plan.ts';
+import { getServiceRuns, getServiceRunsReaching } from './services.ts';
+import type { BuiltServiceRun } from './services.ts';
+import { ROOMS, SERVICE_LAYERS } from './sourceOfTruth/plan.ts';
+import type { PlanFixtureKind, PlanRoom, PlanServiceLayerKey } from './sourceOfTruth/plan.ts';
 import { getWindowsOf } from './windows.ts';
 import type { FloorWindow } from './windows.ts';
 
@@ -139,6 +146,56 @@ export interface RoomDoor {
   readonly sliding: boolean;
 }
 
+/**
+ * One service that reaches a room, and what it lands on there.
+ *
+ * Derived from the declared runs every time — never a table of which room has
+ * water in it, which would be a second copy of `SERVICE_RUNS` and would be right
+ * only until a branch moved. It is the {@link DaylightSource} argument again, and
+ * the services are the sharper case of it: a run is a line somebody draws on a
+ * drawing, and a drawing is edited far more often than a room is.
+ *
+ * **Reaching is an END in the room, never a crossing.** `getServiceRunsReaching`
+ * asks the two declared ends and ignores the geometry, which is what this type
+ * depends on: the three stacks rise through `voidWest` and `voidEast`, the
+ * bath-cubicle branches cross their cubicle on the way to the sanitair, and a
+ * pipe passing overhead serves nothing it passes. A test that asked "does a run's
+ * box overlap this room?" would put drainage in half the floor, which is ADR-021's
+ * defect wearing a different hat.
+ *
+ * **{@link name} is the layer's own declared name, never a label written here.**
+ * `SERVICE_LAYERS` prints `Low voltage`, and the checkbox in the layer switcher
+ * prints `Low voltage`, so the panel prints `Low voltage`. A second spelling of
+ * the same layer is the `getSpaceLabel` rule of this module applied to a layer
+ * instead of a room. The entries are in `SERVICE_LAYERS` order for the same
+ * reason: that is the order the switcher lists them in, and a readout that sorts
+ * its own way makes the viewer re-find each one.
+ *
+ * **{@link fittings} is a list and not a boolean, and that is the one real choice
+ * here.** The brief's distinction is between "there is water in this room" and
+ * "this basin has a tap", and a `boolean atFitting` would record the distinction
+ * while throwing away the fact that makes it useful — WHICH fitting. The end
+ * already carries it (`{ at: 'fitting', space, kind }`), so reporting the kinds
+ * costs nothing and is not an invention: the kinds are the plan's own words, the
+ * same ones {@link RoomInfo.fixtures} prints. Empty therefore means exactly "the
+ * service reaches this room but stops at no named fitting in it" — a run declared
+ * into the space, or a chamber standing in it — which is true of the electricity
+ * and low-voltage outlets of every room and of every stack standing in a void.
+ * The kinds are deduplicated keeping first declaration order, because the hot and
+ * the cold branch of one basin are two runs and one basin.
+ */
+export interface RoomService {
+  /** The layer key, as the store, the palette and the checkbox all spell it. */
+  readonly layer: PlanServiceLayerKey;
+  /** The layer's declared display name, e.g. `Low voltage`; never re-spelt here. */
+  readonly name: string;
+  /**
+   * The fittings in this room a run of this layer actually terminates at, in
+   * declaration order and deduplicated; empty when it only reaches the room.
+   */
+  readonly fittings: readonly PlanFixtureKind[];
+}
+
 /** Everything the room info panel shows about one room of one storey. */
 export interface RoomInfo {
   /** The room this describes: the storey and the space. */
@@ -166,6 +223,11 @@ export interface RoomInfo {
   readonly fixtures: readonly BuiltFixture[];
   /** Where the room's daylight comes from, derived (see {@link DaylightSource}). */
   readonly daylight: DaylightSource;
+  /**
+   * Which services reach the room, in `SERVICE_LAYERS` order, derived from the
+   * declared runs (see {@link RoomService}).
+   */
+  readonly services: readonly RoomService[];
   /** What is still unsettled about the room, one sentence per entry. */
   readonly openItems: readonly string[];
 }
@@ -357,27 +419,86 @@ function getOpenItems(
 }
 
 /**
+ * Lists the fittings of one room that a run actually terminates at.
+ *
+ * Both ends are asked, because a run is written in the direction the service
+ * flows and a room may be either end of one: the kitchen sink is the `from` of
+ * its waste branch and the `to` of its cold branch.
+ *
+ * @param run - One built run.
+ * @param id - Identifier of the room being described.
+ * @returns The fitting kinds the run lands on in that room; empty when it ends
+ *   there without naming one, and empty when it does not end there at all.
+ */
+function getServedFittings(run: BuiltServiceRun, id: SpaceId): readonly PlanFixtureKind[] {
+  return [run.run.from, run.run.to].flatMap((end) =>
+    end.at === 'fitting' && end.space === id ? [end.kind] : [],
+  );
+}
+
+/**
+ * Derives which services reach one room, layer by layer.
+ *
+ * One entry per layer that has at least one run ending in the room, in
+ * `SERVICE_LAYERS` order; a layer nothing reaches is absent rather than present
+ * and empty, so the panel prints the services a room has and not a nine-row
+ * table of mostly noes.
+ *
+ * @param runs - The runs of the floor, as `getServiceRuns` built them.
+ * @param id - Identifier of the room.
+ * @returns A frozen array of frozen {@link RoomService}s, possibly empty.
+ * @throws RangeError when a run ends at a chamber the plan does not declare.
+ */
+function getRoomServices(runs: readonly BuiltServiceRun[], id: SpaceId): readonly RoomService[] {
+  const reaching = getServiceRunsReaching(runs, id);
+  return Object.freeze(
+    SERVICE_LAYERS.flatMap<RoomService>((layer) => {
+      const ofLayer = reaching.filter((run) => run.layer === layer.key);
+      if (ofLayer.length === 0) {
+        return [];
+      }
+      const fittings = ofLayer.flatMap((run) => getServedFittings(run, id));
+      return [
+        Object.freeze({
+          layer: layer.key,
+          name: layer.name,
+          fittings: Object.freeze([...new Set(fittings)]),
+        }),
+      ];
+    }),
+  );
+}
+
+/**
  * Gathers everything the room info panel shows about one room of one storey.
  *
  * Every field is taken from the module that owns it — the label and the area
  * from the plan queries, the ports from the port schedule, the windows and the
- * fixtures from the built floor — so the panel that draws this derives nothing
- * and cannot disagree with the floor it is drawn over.
+ * fixtures from the built floor, the services from the declared runs — so the
+ * panel that draws this derives nothing and cannot disagree with the floor it is
+ * drawn over.
  *
  * @param plan - The floor plan to read. Not mutated.
  * @param ports - The port schedule of that plan. Not mutated.
  * @param built - The built floor, for its windows and its fixtures. Not mutated.
  * @param ref - The room: which storey, and which space of the typical floor.
+ * @param runs - The built service runs of the floor; defaults to the declared
+ *   ones. A parameter rather than a member of `built`, because a run is not a
+ *   solid of the storey and `BuiltFloor` does not carry one; a default rather
+ *   than a required argument, so no existing caller has to hand the panel a
+ *   second model of the same floor. Not mutated.
  * @returns A frozen {@link RoomInfo} with frozen arrays.
- * @throws RangeError naming the id when the plan has no such space, or naming
- *   the floor when it is not an integer of at least `MIN_FLOOR_COUNT` — which
- *   rejects floor 0, a negative storey and 1.5 alike (`floorPlan/queries.ts`).
+ * @throws RangeError naming the id when the plan has no such space, naming the
+ *   floor when it is not an integer of at least `MIN_FLOOR_COUNT` — which
+ *   rejects floor 0, a negative storey and 1.5 alike (`floorPlan/queries.ts`) —
+ *   or naming a chamber a run ends at that the plan does not declare.
  */
 export function getRoomInfo(
   plan: FloorPlan,
   ports: readonly Port[],
   built: BuiltFloor,
   ref: FloorSpaceRef,
+  runs: readonly BuiltServiceRun[] = getServiceRuns(),
 ): RoomInfo {
   const space = getSpace(plan, ref.spaceId);
   const roomPorts = getPortsOf(ports, space.id);
@@ -394,6 +515,7 @@ export function getRoomInfo(
     windows: getWindowsOf(built.windows, space.id),
     fixtures: getFixturesOf(built.fixtures, space.id),
     daylight,
+    services: getRoomServices(runs, space.id),
     openItems: getOpenItems(space, roomPorts, daylight),
   });
 }

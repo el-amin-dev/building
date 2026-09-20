@@ -3,14 +3,17 @@ import { getBuiltFloor } from './builtFloor.ts';
 import type { BuiltFloor } from './builtFloor.ts';
 import { FLOOR_PLAN, SPACE_IDS, getSpace, getSpaceBounds } from './floorPlan/index.ts';
 import type { FloorPlan, SpaceId } from './floorPlan/index.ts';
+import { isServicedSpace } from './fixtures.ts';
 import { makeBox } from './planBox.ts';
 import { makeRect, rectArea } from './planGeometry.ts';
 import { PORT_SCHEDULE } from './ports/index.ts';
 import type { Port } from './ports/index.ts';
 import { NO_DAYLIGHT_NOTE, getRoomInfo } from './roomInfo.ts';
 import type { DaylightSource, RoomDoor } from './roomInfo.ts';
-import { PORTS, ROOMS } from './sourceOfTruth/plan.ts';
-import type { PlanRoom } from './sourceOfTruth/plan.ts';
+import { getServiceRuns } from './services.ts';
+import type { BuiltServiceRun } from './services.ts';
+import { PORTS, ROOMS, SERVICE_LAYERS } from './sourceOfTruth/plan.ts';
+import type { PlanFixtureKind, PlanRoom, PlanServiceLayerKey } from './sourceOfTruth/plan.ts';
 import type { FloorWindow } from './windows.ts';
 
 const PRECISION_DIGITS = 9;
@@ -196,13 +199,283 @@ const EXPECTED_SIZES: readonly ExpectedSize[] = [
 /** How many fixtures each room stands, as `getFixtures` builds them. */
 const EXPECTED_FIXTURE_COUNTS: readonly (readonly [SpaceId, number])[] = [
   ['masterBedroom', 5],
-  ['kitchen', 4],
+  // Five since the gas went in: the cooker is a fixture, and it is what `F1-GAS-S4`
+  // ends at, so the count moved with the plan rather than with this test.
+  ['kitchen', 5],
   ['laundry', 5],
   // One `tv` row names the corridor, and `getFixtures` never builds it:
   // `tvPanel.ts` owns the television and re-derives it from the wall face.
   ['corridor', 0],
   ['stairs', 0],
 ];
+
+/**
+ * One row of {@link SERVICE_ROLL_CALL}: a room, and the layers reaching it with
+ * the fittings each lands on.
+ */
+type ServiceRow = readonly [
+  SpaceId,
+  readonly (readonly [PlanServiceLayerKey, readonly PlanFixtureKind[]])[],
+];
+
+/**
+ * What every space of the floor is served by, read off the plan once and pinned.
+ *
+ * The whole floor rather than the four rooms the brief names, because this table
+ * is the cheapest place the model has to notice a run moving: a branch re-routed
+ * into another room shows up here as one changed row, and a layer quietly lost
+ * shows up as an empty one. The layer keys are keys and never names — the name is
+ * asserted to be `SERVICE_LAYERS`' own, which is the rule under test.
+ *
+ * Only the ENDS count. Several of these rows are crossed by runs they do not list
+ * (`does not serve a room a run merely crosses`), which is the point.
+ */
+const SERVICE_ROLL_CALL: readonly ServiceRow[] = [
+  // Nothing at all, and that is the plan being right rather than the derivation
+  // being empty: both chamber vents now terminate at a cap. A vent discharges
+  // into the open air, it does not SERVE what it discharges into.
+  ['balconyA', []],
+  [
+    'masterBedroom',
+    [
+      ['electricity', []],
+      ['lowVoltage', []],
+      ['climate', []],
+    ],
+  ],
+  [
+    'livingRoom',
+    [
+      ['electricity', []],
+      ['lowVoltage', []],
+      ['climate', []],
+    ],
+  ],
+  [
+    'bedroomMaleKids',
+    [
+      ['electricity', []],
+      ['lowVoltage', []],
+      ['climate', []],
+    ],
+  ],
+  [
+    'bedroomFemaleKids',
+    [
+      ['electricity', []],
+      ['lowVoltage', []],
+      ['climate', []],
+    ],
+  ],
+  [
+    'stairs',
+    [
+      ['electricity', []],
+      ['lowVoltage', []],
+      ['climate', []],
+    ],
+  ],
+  [
+    'corridor',
+    [
+      ['electricity', []],
+      ['lowVoltage', []],
+      ['climate', []],
+    ],
+  ],
+  [
+    'controlCenter',
+    [
+      // The heater's relief and condensate discharge, declared from the wet chamber.
+      ['drainage', []],
+      ['water', []],
+      ['gas', []],
+      ['electricity', []],
+      ['lowVoltage', []],
+      ['climate', []],
+    ],
+  ],
+  [
+    'guestRoom',
+    [
+      ['electricity', []],
+      ['lowVoltage', []],
+      ['climate', []],
+    ],
+  ],
+  [
+    'guestSanitair',
+    [
+      ['drainage', ['sink']],
+      ['water', ['sink']],
+      ['electricity', []],
+      ['lowVoltage', []],
+      ['climate', []],
+    ],
+  ],
+  [
+    'kitchen',
+    [
+      ['drainage', ['sink']],
+      ['water', ['sink']],
+      ['gas', ['cooker']],
+      ['electricity', []],
+      ['lowVoltage', []],
+      ['climate', []],
+    ],
+  ],
+  [
+    'laundry',
+    [
+      // Two fittings, and the two lists are in different orders on purpose: the
+      // drainage rows are declared washing machine first, the supply rows sink
+      // first. Declaration order, not an order invented here.
+      ['drainage', ['washingMachine', 'sink']],
+      ['water', ['sink', 'washingMachine']],
+      ['electricity', []],
+      ['lowVoltage', []],
+      ['climate', []],
+    ],
+  ],
+  [
+    'mainSanitair',
+    [
+      ['drainage', ['wc', 'sink']],
+      ['water', ['sink', 'wc']],
+      ['electricity', []],
+      ['lowVoltage', []],
+      ['climate', []],
+    ],
+  ],
+  [
+    'utilityRoom',
+    [
+      ['electricity', []],
+      ['lowVoltage', []],
+      ['climate', []],
+    ],
+  ],
+  [
+    'ccBalcony',
+    [
+      // Climate alone: the outdoor cooling unit genuinely stands here. The
+      // electrical chamber's vent used to be listed too and now caps instead.
+      ['climate', []],
+    ],
+  ],
+  [
+    'balconySlabB',
+    [
+      ['water', []],
+      ['electricity', []],
+      ['lowVoltage', []],
+      ['climate', []],
+    ],
+  ],
+  [
+    'voidWest',
+    [
+      ['drainage', []],
+      ['water', []],
+      ['electricity', []],
+      ['lowVoltage', []],
+      ['climate', []],
+    ],
+  ],
+  [
+    'voidEast',
+    [
+      ['drainage', []],
+      ['water', []],
+      ['electricity', []],
+      ['lowVoltage', []],
+      ['climate', []],
+    ],
+  ],
+  [
+    'guestBathCubicle',
+    [
+      ['drainage', ['bath']],
+      ['water', ['bath']],
+      ['electricity', []],
+      ['climate', []],
+    ],
+  ],
+  [
+    'mainBathCubicle',
+    [
+      ['drainage', ['bath']],
+      ['water', ['bath']],
+      ['electricity', []],
+      ['climate', []],
+    ],
+  ],
+  [
+    'mainShowerCubicle',
+    [
+      ['drainage', ['shower']],
+      ['water', ['shower']],
+      ['electricity', []],
+      ['climate', []],
+    ],
+  ],
+];
+
+/**
+ * Returns a service layer's declared display name.
+ *
+ * The test asks the plan for the name for the same reason the module does: a
+ * string written here would be a third spelling of `Low voltage`, and a test that
+ * hard-codes the label it is checking cannot catch the label changing.
+ *
+ * @param key - Key of the layer.
+ * @returns Its `name`, which must exist.
+ */
+function layerName(key: PlanServiceLayerKey): string {
+  const layer = SERVICE_LAYERS.find((candidate) => candidate.key === key);
+  if (layer === undefined) {
+    throw new Error(`the plan has no service layer "${key}"`);
+  }
+  return layer.name;
+}
+
+/**
+ * Returns the runs of one layer that physically cross a space without ending in it.
+ *
+ * Deliberately the geometric test the module refuses to use — footprint overlap,
+ * ignoring the ends — so that the crossing case can be shown to be REAL on this
+ * plan rather than asserted to be absent from it.
+ *
+ * @param runs - The built runs of the floor.
+ * @param layer - Which layer to look at.
+ * @param id - Identifier of the space.
+ * @returns The runs whose footprint overlaps the space but whose ends are elsewhere.
+ */
+function getCrossings(
+  runs: readonly BuiltServiceRun[],
+  layer: PlanServiceLayerKey,
+  id: SpaceId,
+): readonly BuiltServiceRun[] {
+  const rects = getSpace(FLOOR_PLAN, id).rects;
+  return runs.filter((run) => {
+    const ends = [run.run.from, run.run.to].flatMap((end) =>
+      end.at === 'space' || end.at === 'fitting' ? [end.space] : [],
+    );
+    return (
+      run.layer === layer &&
+      !ends.includes(id) &&
+      run.segments.some(({ box }) =>
+        rects.some(
+          (rect) =>
+            box.rect.minX < rect.maxX &&
+            box.rect.maxX > rect.minX &&
+            box.rect.minZ < rect.maxZ &&
+            box.rect.maxZ > rect.minZ,
+        ),
+      )
+    );
+  });
+}
 
 /** The ports of the main sanitair, in schedule order, measured by hand. */
 const MAIN_SANITAIR_DOORS: readonly RoomDoor[] = [
@@ -516,6 +789,164 @@ describe('getRoomInfo', () => {
     });
   });
 
+  describe('services', () => {
+    it.each(SERVICE_ROLL_CALL.map(([spaceId, expected]) => ({ spaceId, expected })))(
+      'serves $spaceId',
+      ({ spaceId, expected }) => {
+        const info = getRoomInfo(FLOOR_PLAN, PORT_SCHEDULE, BUILT, { floor: FLOOR, spaceId });
+
+        expect(
+          info.services.map((service) => [service.layer, service.name, service.fittings]),
+        ).toEqual(expected.map(([layer, fittings]) => [layer, layerName(layer), fittings]));
+      },
+    );
+
+    it('covers every space of the plan, so no room can be added without a row here', () => {
+      expect(SERVICE_ROLL_CALL.map(([spaceId]) => spaceId).toSorted()).toEqual(
+        [...SPACE_IDS].toSorted(),
+      );
+    });
+
+    it.each([...SPACE_IDS])('names %s its layers in SERVICE_LAYERS order', (spaceId) => {
+      const info = getRoomInfo(FLOOR_PLAN, PORT_SCHEDULE, BUILT, { floor: FLOOR, spaceId });
+      const order = info.services.map((service) =>
+        SERVICE_LAYERS.findIndex((layer) => layer.key === service.layer),
+      );
+
+      expect(order).toEqual(order.toSorted((first, second) => first - second));
+      expect(new Set(order).size).toBe(order.length);
+    });
+
+    it.each([...SPACE_IDS])("spells every layer of %s with the plan's own name", (spaceId) => {
+      const info = getRoomInfo(FLOOR_PLAN, PORT_SCHEDULE, BUILT, { floor: FLOOR, spaceId });
+
+      info.services.forEach((service) => {
+        expect(service.name).toBe(layerName(service.layer));
+      });
+    });
+
+    it('does not serve a room a run merely crosses', () => {
+      // The family bath is crossed by the low-voltage branch on its way to the
+      // main sanitair — asserted, not assumed, so that this test stops meaning
+      // something the day the branch is re-routed — and is not served by it.
+      const crossings = getCrossings(getServiceRuns(), 'lowVoltage', 'mainBathCubicle');
+      const info = getRoomInfo(FLOOR_PLAN, PORT_SCHEDULE, BUILT, {
+        floor: FLOOR,
+        spaceId: 'mainBathCubicle',
+      });
+
+      expect(crossings.length).toBeGreaterThan(0);
+      expect(info.services.map((service) => service.layer)).not.toContain('lowVoltage');
+    });
+
+    it('gives a crossed room nothing and the room the run ends in the service', () => {
+      const [crossing] = getCrossings(getServiceRuns(), 'lowVoltage', 'mainBathCubicle');
+      const only: readonly BuiltServiceRun[] = [crossing];
+      const crossed = getRoomInfo(
+        FLOOR_PLAN,
+        PORT_SCHEDULE,
+        BUILT,
+        { floor: FLOOR, spaceId: 'mainBathCubicle' },
+        only,
+      );
+      const served = getRoomInfo(
+        FLOOR_PLAN,
+        PORT_SCHEDULE,
+        BUILT,
+        { floor: FLOOR, spaceId: 'mainSanitair' },
+        only,
+      );
+
+      expect(crossed.services).toEqual([]);
+      expect(served.services).toEqual([
+        { layer: 'lowVoltage', name: layerName('lowVoltage'), fittings: [] },
+      ]);
+    });
+
+    it('leaves a space nothing terminates in with no services at all', () => {
+      // Balcony A, on the real plan. Both chamber vents that used to be declared
+      // INTO a balcony now cap instead, so this is the model's honest answer for a
+      // slab under the sky that nothing is plumbed to — and the empty list the
+      // panel has to put into words.
+      const info = getRoomInfo(FLOOR_PLAN, PORT_SCHEDULE, BUILT, {
+        floor: FLOOR,
+        spaceId: 'balconyA',
+      });
+
+      expect(info.services).toEqual([]);
+      expect(Object.isFrozen(info.services)).toBe(true);
+    });
+
+    it('says nothing at all when no run is declared', () => {
+      const info = getRoomInfo(
+        FLOOR_PLAN,
+        PORT_SCHEDULE,
+        BUILT,
+        { floor: FLOOR, spaceId: 'kitchen' },
+        [],
+      );
+
+      expect(info.services).toEqual([]);
+    });
+
+    it('distinguishes reaching a room from landing on a fitting in it', () => {
+      // The kitchen and the void below it are both on the same three runs. One of
+      // them has taps and a cooker; the other is a shaft the pipes fall down.
+      const kitchen = getRoomInfo(FLOOR_PLAN, PORT_SCHEDULE, BUILT, {
+        floor: FLOOR,
+        spaceId: 'kitchen',
+      });
+      const shaft = getRoomInfo(FLOOR_PLAN, PORT_SCHEDULE, BUILT, {
+        floor: FLOOR,
+        spaceId: 'voidWest',
+      });
+      const waterOf = (info: {
+        readonly services: readonly {
+          readonly layer: string;
+          readonly fittings: readonly PlanFixtureKind[];
+        }[];
+      }) => info.services.find((service) => service.layer === 'water')?.fittings;
+
+      expect(waterOf(kitchen)).toEqual(['sink']);
+      expect(waterOf(shaft)).toEqual([]);
+    });
+
+    it('deduplicates a fitting two runs of one layer both land on', () => {
+      // The main sanitair basin is the end of a cold branch and of a hot branch.
+      const info = getRoomInfo(FLOOR_PLAN, PORT_SCHEDULE, BUILT, {
+        floor: FLOOR,
+        spaceId: 'mainSanitair',
+      });
+      const runs = getServiceRuns().filter(
+        (run) =>
+          run.layer === 'water' &&
+          [run.run.from, run.run.to].some(
+            (end) => end.at === 'fitting' && end.space === 'mainSanitair' && end.kind === 'sink',
+          ),
+      );
+
+      expect(runs.length).toBeGreaterThan(1);
+      expect(info.services.find((service) => service.layer === 'water')?.fittings).toEqual([
+        'sink',
+        'wc',
+      ]);
+    });
+
+    it('leaves what STANDS in a room alone: a serviced bedroom is still not a wet room', () => {
+      // Rule the finishes depend on. The master bedroom is on electricity, low
+      // voltage and climate, and `isServicedSpace` must still say no — a pipe
+      // reaching a bedroom is not a reason to lay marble in it.
+      const info = getRoomInfo(FLOOR_PLAN, PORT_SCHEDULE, BUILT, {
+        floor: FLOOR,
+        spaceId: 'masterBedroom',
+      });
+
+      expect(info.services).not.toEqual([]);
+      expect(isServicedSpace(BUILT.fixtures, 'masterBedroom')).toBe(false);
+      expect(isServicedSpace(BUILT.fixtures, 'mainSanitair')).toBe(true);
+    });
+  });
+
   describe('immutability', () => {
     it.each([...SPACE_IDS])('freezes the readout of %s and its arrays', (spaceId) => {
       const info = getRoomInfo(FLOOR_PLAN, PORT_SCHEDULE, BUILT, { floor: FLOOR, spaceId });
@@ -526,9 +957,14 @@ describe('getRoomInfo', () => {
       expect(Object.isFrozen(info.doors)).toBe(true);
       expect(Object.isFrozen(info.windows)).toBe(true);
       expect(Object.isFrozen(info.fixtures)).toBe(true);
+      expect(Object.isFrozen(info.services)).toBe(true);
       expect(Object.isFrozen(info.openItems)).toBe(true);
       info.doors.forEach((door) => {
         expect(Object.isFrozen(door)).toBe(true);
+      });
+      info.services.forEach((service) => {
+        expect(Object.isFrozen(service)).toBe(true);
+        expect(Object.isFrozen(service.fittings)).toBe(true);
       });
     });
   });
