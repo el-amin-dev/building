@@ -1268,7 +1268,7 @@ function describeServiceWhy(run) {
  * SERVICES: every declared run of every service — what it carries, how wide it
  * is, where it starts and stops, how much pipe it is and how high it runs.
  *
- * This is the table the plan page leans on. 115 runs cannot all be named on a
+ * This is the table the plan page leans on. 116 runs cannot all be named on a
  * drawing 1350 px wide without burying the floor under them, so the plan names
  * the trunks and the risers and this register carries every one of them. The
  * matricule is the join between the two, and it is not composed here: it comes
