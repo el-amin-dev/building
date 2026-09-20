@@ -277,6 +277,24 @@ test.describe('build layer switcher', () => {
   });
 
   test('ticks and unticks every layer, and the trigger name tracks the count', async ({ page }) => {
+    /**
+     * EIGHTEEN FULL SCENE RE-RENDERS IN ONE TEST, and that is the point of it: nine layers
+     * ticked one at a time and nine unticked, with the floor redrawn and the count asserted
+     * between each, so a box wired to the wrong key is caught on the tick that crosses them.
+     *
+     * On a GPU that is free. On CI it is not: the runner has no GPU, three.js falls back to a
+     * software rasteriser, and the whole suite takes 16.6 min there against 9.2 min here. The
+     * default 30 s budget ran out on the SIXTH untick — five had already passed, so this is
+     * cumulative cost and not one slow operation (run 35501382954).
+     *
+     * Raised with the measurement rather than split in two, because two halves would each
+     * have to re-establish the same nine-layer state and would test less for more wall clock.
+     * `playwright.config.ts` says no timeout is raised to hide contention, and this is not
+     * that: it is a test budget sized for a machine with a GPU, which is exactly what CI
+     * caught on PR #12 and exactly what CI is for.
+     */
+    test.setTimeout(120_000);
+
     const pageErrors: Error[] = [];
     page.on('pageerror', (error) => pageErrors.push(error));
 
