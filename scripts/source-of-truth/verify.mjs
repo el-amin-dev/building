@@ -3162,13 +3162,24 @@ check('20. The programme: every space and every fitting actually reached');
     return out;
   };
   const cubicles = ['guestBathCubicle', 'mainBathCubicle', 'mainShowerCubicle'];
+  /**
+   * THE STAIRWELL TAKES LIGHTING AND NOTHING ELSE (owner, 2026-09-20).
+   *
+   * It is an escape route with a moving stair in it: a pipe there is a pipe somebody has to
+   * service standing on a flight, and a leak there runs down the one way out. So it is
+   * subtracted from every programme but the light, and the light is exactly why the
+   * exception exists — an unlit stair is more dangerous than any of this.
+   */
+  const STAIRWELL = 'stairs';
+  const walkedButTheStair = PROGRAMME_SPACES.filter((space) => space !== STAIRWELL);
+
   /** @type {{ family: PlanServiceFamily, column: string, want: string[], why: string }[]} */
   const programmes = [
     {
       family: 'power',
       column: 'power',
-      want: [...PROGRAMME_SPACES],
-      why: 'everywhere a person goes',
+      want: [...walkedButTheStair],
+      why: 'everywhere a person goes but the stairwell',
     },
     {
       family: 'lighting',
@@ -3179,14 +3190,14 @@ check('20. The programme: every space and every fitting actually reached');
     {
       family: 'data',
       column: 'data',
-      want: PROGRAMME_SPACES.filter((s) => !cubicles.includes(s)),
-      why: 'everywhere but the three bath and shower cubicles',
+      want: walkedButTheStair.filter((s) => !cubicles.includes(s)),
+      why: 'everywhere but the stairwell and the three bath and shower cubicles',
     },
     {
       family: 'heating',
       column: 'heat',
-      want: [...PROGRAMME_SPACES],
-      why: 'everywhere a person goes',
+      want: [...walkedButTheStair],
+      why: 'everywhere a person goes but the stairwell',
     },
     {
       family: 'cooling',
@@ -3598,25 +3609,43 @@ check('23. A run that starts in a space tees off another run, or is declared pla
     return true;
   };
 
+  /**
+   * CONNECTED ANYWHERE, NOT CONNECTED AT THE HEAD. The first draft of this check asked
+   * whether a run's FIRST point sits on another run, and that is the wrong question for a
+   * trunk: the corridor spine is fed by the link arriving in the middle of it, not at its
+   * west end. The draft passed only by accident, because a branch happened to start on that
+   * end, and went red the moment that branch was rerouted — against a spine that was
+   * perfectly well connected.
+   *
+   * So the question is whether the run touches its family at all: any of its points on
+   * another run of the same family, or any of theirs on one of its legs.
+   */
   let floating = 0;
   for (const [index, run] of SERVICE_RUNS.entries()) {
     if (run.from.at !== 'space') continue;
     if (PLANT_SOURCES.has(run.family)) continue;
-    const head = run.points[0];
-    const fed = SERVICE_RUNS.some((other) => {
+    const joined = SERVICE_RUNS.some((other) => {
       if (other === run || other.family !== run.family) return false;
-      for (let leg = 1; leg < other.points.length; leg += 1) {
-        if (liesOn(head, other.points[leg - 1], other.points[leg])) return true;
+      for (const point of run.points) {
+        for (let leg = 1; leg < other.points.length; leg += 1) {
+          if (liesOn(point, other.points[leg - 1], other.points[leg])) return true;
+        }
+      }
+      for (const point of other.points) {
+        for (let leg = 1; leg < run.points.length; leg += 1) {
+          if (liesOn(point, run.points[leg - 1], run.points[leg])) return true;
+        }
       }
       return false;
     });
-    if (fed) continue;
+    if (joined) continue;
     floating += 1;
+    const head = run.points[0];
     fail(
-      `SERVICE_RUNS[${index}] ${run.layer}/${run.family} starts at ` +
-        `(${n(head[0])}, ${n(head[1])}, ${n(head[2])}) and no other ${run.family} run passes ` +
-        `through that point — it is connected to nothing. A branch tees off a trunk; only ` +
-        `plant starts on its own`,
+      `SERVICE_RUNS[${index}] ${run.layer}/${run.family} from ` +
+        `(${n(head[0])}, ${n(head[1])}, ${n(head[2])}) touches no other ${run.family} run at ` +
+        `any point along it — it is connected to nothing. A branch tees off a trunk, and a ` +
+        `trunk is fed somewhere along its length; only plant stands on its own`,
     );
   }
 
@@ -3679,6 +3708,74 @@ check('24. Every corner has room for the bend that makes it');
   }
 }
 
+/* ──────── 25. the stairwell carries the light and nothing else ──────── */
+
+check('25. Nothing but lighting is in the stairwell');
+{
+  /**
+   * THE OWNER'S RULE: "this infrastructure never pass the stairs (except electricity
+   * light)". A stairwell is an escape route with a moving stair in it. A pipe there is a
+   * pipe somebody has to service standing on a flight, and a leak there runs down the one
+   * way out of the building. The light is the exception because an unlit stair is more
+   * dangerous than anything the rule is keeping out.
+   *
+   * It is stated about the INTERIOR, with a margin, and that margin is doing real work: the
+   * stairwell's east face at x 5.60 is a ZERO-THICKNESS join with the corridor (the
+   * demountable panel of `JOIN_OVERRIDES`), so the corridor spine's west end sits exactly on
+   * the line. Touching that edge is not being in the stairwell, and a check that said
+   * otherwise would fail on a spine that never enters it.
+   *
+   * Check 20 says the same thing from the other side — the stairwell is subtracted from
+   * every programme but the light — but that only governs where a run ENDS. This one
+   * governs where a run GOES, which is the half that matters for a room you pass through.
+   */
+  /** How far inside the face a run has to be before it counts as in the stairwell. */
+  const EDGE_SLACK = 0.02;
+  /** The one family the stairwell may carry. */
+  const ALLOWED = 'lighting';
+  /** Samples per leg. */
+  const SAMPLES = 40;
+
+  const stairwell = ROOMS.find((room) => room.id === 'stairs');
+  if (!stairwell) {
+    fail('no `stairs` space in ROOMS, so this check cannot run');
+  } else {
+    let trespass = 0;
+    for (const [index, run] of SERVICE_RUNS.entries()) {
+      if (run.family === ALLOWED) continue;
+      let reported = false;
+      for (let leg = 1; leg < run.points.length && !reported; leg += 1) {
+        const from = run.points[leg - 1];
+        const to = run.points[leg];
+        for (let step = 0; step <= SAMPLES; step += 1) {
+          const share = step / SAMPLES;
+          const x = from[0] + (to[0] - from[0]) * share;
+          const z = from[1] + (to[1] - from[1]) * share;
+          const inside = stairwell.rects.some(
+            (rect) =>
+              x > rect[0] + EDGE_SLACK &&
+              x < rect[1] - EDGE_SLACK &&
+              z > rect[2] + EDGE_SLACK &&
+              z < rect[3] - EDGE_SLACK,
+          );
+          if (!inside) continue;
+          trespass += 1;
+          reported = true;
+          fail(
+            `SERVICE_RUNS[${index}] ${run.layer}/${run.family} passes through the stairwell ` +
+              `at (${n(x)}, ${n(z)}). Only lighting may: a stair is an escape route with a ` +
+              `moving flight in it, and anything else there is serviced standing on the stair`,
+          );
+          break;
+        }
+      }
+    }
+    if (trespass === 0) {
+      line('the stairwell carries lighting and nothing else');
+    }
+  }
+}
+
 if (notes.length) {
   console.log('\n── notes');
   for (const note of notes) console.log(`   ${note}`);
@@ -3687,7 +3784,7 @@ if (notes.length) {
 console.log('');
 if (failures.length === 0) {
   console.log(
-    `PASS — 24 checks, ${walls.length} walls, ${PORTS.length + WINDOWS.length} openings, ` +
+    `PASS — 25 checks, ${walls.length} walls, ${PORTS.length + WINDOWS.length} openings, ` +
       `${FIXTURES.length} fixtures, ${SERVICE_RUNS.length} service runs, everything closes.`,
   );
   process.exit(0);

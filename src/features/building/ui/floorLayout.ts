@@ -268,8 +268,13 @@ export const BUCKET_RULES: Readonly<Record<FloorMaterialKey, BucketRule>> = Obje
   railing: { hiddenBy: ALWAYS_DRAWN, finish: false },
   // The flight is structure; its oak treads are the finish on it.
   stairs: { hiddenBy: ALWAYS_DRAWN, finish: true },
-  tvPanel: { hiddenBy: ALWAYS_DRAWN, finish: false },
   // ── The furniture ───────────────────────────────────────────────────────────────────
+  // The television is furniture (owner, 2026-09-20). It had been drawn always, with the
+  // building, because it is derived from `tvPanel.ts` rather than declared as a fixture like
+  // the sofa in front of it - and being derived somewhere else is a fact about this code,
+  // not about the thing. A television is something you carry in, so it goes when the
+  // furniture goes.
+  tvPanel: { hiddenBy: 'furniture', finish: false },
   sanitaryWare: { hiddenBy: 'furniture', finish: false },
   appliance: { hiddenBy: 'furniture', finish: false },
   joinery: { hiddenBy: 'furniture', finish: true },

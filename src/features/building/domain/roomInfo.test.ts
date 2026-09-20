@@ -268,12 +268,13 @@ const SERVICE_ROLL_CALL: readonly ServiceRow[] = [
     ],
   ],
   [
+    // The stairwell takes the LIGHT and nothing else (owner, 2026-09-20): it is an escape
+    // route with a moving stair in it, so a pipe there is a pipe somebody services standing
+    // on a flight, and a leak there runs down the one way out. The light is the exception
+    // because an unlit stair is more dangerous than any of that. Electricity is the only
+    // layer left, and it is here for the lighting circuit alone - there is no socket.
     'stairs',
-    [
-      ['electricity', []],
-      ['lowVoltage', []],
-      ['climate', []],
-    ],
+    [['electricity', []]],
   ],
   [
     'corridor',

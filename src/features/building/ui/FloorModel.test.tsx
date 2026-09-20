@@ -830,7 +830,12 @@ describe('FloorModel, the finish', () => {
     // The two fittings that are the building: the food-pass counter, whose going would open
     // a 0.30 m slot from the guest room into the kitchen, and the sealed control-center
     // chambers, whose going would leave the plant of the floor standing in open air.
+    // The television goes with the furniture (owner, 2026-09-20). It is derived from
+    // `tvPanel.ts` rather than declared as a fixture like the sofa in front of it, and it
+    // had been drawn always on the strength of that - but where a thing is derived is a
+    // fact about this code, not about whether somebody carried it in.
     expect(hiddenKeys()).toStrictEqual([
+      'tvPanel',
       'sanitaryWare',
       'appliance',
       'joinery',

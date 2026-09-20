@@ -2600,6 +2600,129 @@ const GAS_RUNS = [
 ] as const satisfies readonly PlanServiceRun[];
 
 /**
+ * The risers: how a service gets from one storey to the next.
+ *
+ * THE QUESTION THAT FOUND THIS: "imagine 2 floors — how to cross stairs and the pipes
+ * there". Drainage had stacks from the start, because a drain has to fall somewhere. Nothing
+ * else did: water, gas, electricity, low voltage and climate all began at a chamber and
+ * stopped at the ceiling, so on a two-storey building the upper floor's services came from
+ * nowhere at all. The floor was correct and the BUILDING was not, and no check could see it,
+ * because every storey is drawn from one baked geometry (ADR-014) and each copy was complete
+ * in itself.
+ *
+ * And the answer to the other half of the question is that a riser does NOT cross the stair.
+ * It stands inside its own chamber in the control center and goes straight up through it —
+ * which is what a chamber is for, and why everything starts from the CC. The stairwell
+ * carries the light and nothing else.
+ *
+ * Each one is capped at both ends of the stack, with the reason in the data, exactly as the
+ * drainage stacks are: floor 0 is undesigned and the roof is not modelled, so a riser that
+ * simply stopped would be a pipe ending in mid-air.
+ *
+ * Each stands at the x its own trunk already rises at, so the trunk tees off the riser
+ * rather than running beside it. They carry their family's bore; `SERVICE_SPEC.bore`'s
+ * `coldRiser` and `hotRiser` stay declared for the day a riser is sized apart from its
+ * branches, which is a real thing plumbers do and is not modelled here.
+ *
+ * COOLING HAS NO RISER, and that is a decision rather than an omission: its plant is an
+ * outdoor unit standing on the control-center balcony, so every storey has its own condenser
+ * on its own balcony and there is nothing to carry up.
+ */
+const RISER_RUNS = [
+  {
+    layer: 'water',
+    family: 'cold',
+    from: {
+      at: 'cap',
+      why: 'Floor 0 is undesigned; the riser stops at the bottom of the lowest storey rather than ending in mid-air.',
+    },
+    to: { at: 'cap', why: 'The roof is not modelled; the riser stops above the top storey.' },
+    points: [
+      [1.98, 9.35, -0.28],
+      [1.98, 9.35, 2.72],
+    ],
+  },
+  {
+    layer: 'water',
+    family: 'hot',
+    from: {
+      at: 'cap',
+      why: 'Floor 0 is undesigned; the riser stops at the bottom of the lowest storey.',
+    },
+    to: { at: 'cap', why: 'The roof is not modelled; the riser stops above the top storey.' },
+    points: [
+      [2.1, 9.35, -0.28],
+      [2.1, 9.35, 2.72],
+    ],
+  },
+  {
+    layer: 'climate',
+    family: 'heating',
+    from: {
+      at: 'cap',
+      why: 'Floor 0 is undesigned; the riser stops at the bottom of the lowest storey.',
+    },
+    to: { at: 'cap', why: 'The roof is not modelled; the riser stops above the top storey.' },
+    points: [
+      [2.15, 9.35, -0.28],
+      [2.15, 9.35, 2.72],
+    ],
+  },
+  {
+    layer: 'gas',
+    family: 'gas',
+    from: {
+      at: 'cap',
+      why: 'Floor 0 is undesigned; the riser stops at the bottom of the lowest storey.',
+    },
+    to: { at: 'cap', why: 'The roof is not modelled; the riser stops above the top storey.' },
+    points: [
+      [2.22, 9.35, -0.28],
+      [2.22, 9.35, 2.72],
+    ],
+  },
+  {
+    layer: 'lowVoltage',
+    family: 'data',
+    from: {
+      at: 'cap',
+      why: 'Floor 0 is undesigned; the riser stops at the bottom of the lowest storey.',
+    },
+    to: { at: 'cap', why: 'The roof is not modelled; the riser stops above the top storey.' },
+    points: [
+      [2.52, 9.35, -0.28],
+      [2.52, 9.35, 2.72],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'lighting',
+    from: {
+      at: 'cap',
+      why: 'Floor 0 is undesigned; the riser stops at the bottom of the lowest storey.',
+    },
+    to: { at: 'cap', why: 'The roof is not modelled; the riser stops above the top storey.' },
+    points: [
+      [2.78, 9.35, -0.28],
+      [2.78, 9.35, 2.72],
+    ],
+  },
+  {
+    layer: 'electricity',
+    family: 'power',
+    from: {
+      at: 'cap',
+      why: 'Floor 0 is undesigned; the riser stops at the bottom of the lowest storey.',
+    },
+    to: { at: 'cap', why: 'The roof is not modelled; the riser stops above the top storey.' },
+    points: [
+      [2.9, 9.35, -0.28],
+      [2.9, 9.35, 2.72],
+    ],
+  },
+] as const satisfies readonly PlanServiceRun[];
+
+/**
  * Electricity, low voltage and climate.
  *
  * These reach ROOMS rather than individual accessories, and that is a chosen
@@ -2700,10 +2823,11 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'masterBedroom' },
     points: [
-      [5.6, 4.75, 2.5],
-      [2.05, 4.75, 2.5],
-      [2.05, 3.7, 2.5],
-      [2.05, 3.7, 0.3],
+      [11.24, 4.75, 2.5],
+      [11.24, 3.85, 2.5],
+      [11.24, 0.75, 2.5],
+      [6.6, 0.75, 2.5],
+      [6.6, 0.75, 0.3],
     ],
   },
   {
@@ -2759,17 +2883,6 @@ const DRY_RUNS = [
       [13.45, 4.75, 2.5],
       [13.45, 4, 2.5],
       [13.45, 4, 0.3],
-    ],
-  },
-  {
-    layer: 'electricity',
-    family: 'power',
-    from: { at: 'space', space: 'corridor' },
-    to: { at: 'space', space: 'stairs' },
-    points: [
-      [5.6, 4.75, 2.5],
-      [5.6, 4.25, 2.5],
-      [5.6, 4.25, 0.3],
     ],
   },
   {
@@ -2923,10 +3036,11 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'masterBedroom' },
     points: [
-      [5.6, 4.75, 2.6],
-      [2.2, 4.75, 2.6],
-      [2.2, 3.7, 2.6],
-      [2.2, 3.7, 2.65],
+      [11.38, 4.75, 2.6],
+      [11.38, 3.85, 2.6],
+      [11.38, 0.9, 2.6],
+      [6.6, 0.9, 2.6],
+      [6.6, 0.9, 2.65],
     ],
   },
   {
@@ -2992,7 +3106,8 @@ const DRY_RUNS = [
     points: [
       [5.6, 4.75, 2.6],
       [5.6, 4.4, 2.6],
-      [5.6, 4.4, 2.65],
+      [5.45, 4.4, 2.6],
+      [5.45, 4.4, 2.65],
     ],
   },
   {
@@ -3145,10 +3260,11 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'masterBedroom' },
     points: [
-      [5.6, 4.45, 2.25],
-      [2.45, 4.45, 2.25],
-      [2.45, 3.7, 2.25],
-      [2.45, 3.7, 0.3],
+      [11.61, 4.45, 2.25],
+      [11.61, 3.85, 2.25],
+      [11.61, 1.15, 2.25],
+      [6.6, 1.15, 2.25],
+      [6.6, 1.15, 0.3],
     ],
   },
   {
@@ -3204,17 +3320,6 @@ const DRY_RUNS = [
       [13.85, 4.45, 2.25],
       [13.85, 4, 2.25],
       [13.85, 4, 0.3],
-    ],
-  },
-  {
-    layer: 'lowVoltage',
-    family: 'data',
-    from: { at: 'space', space: 'corridor' },
-    to: { at: 'space', space: 'stairs' },
-    points: [
-      [5.6, 4.45, 2.25],
-      [5.6, 4.65, 2.25],
-      [5.6, 4.65, 0.3],
     ],
   },
   {
@@ -3325,10 +3430,11 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'masterBedroom' },
     points: [
-      [5.6, 5.1, 2.55],
-      [2.65, 5.1, 2.55],
-      [2.65, 3.7, 2.55],
-      [2.65, 3.7, 2.35],
+      [11.8, 5.1, 2.55],
+      [11.8, 3.85, 2.55],
+      [11.8, 1.35, 2.55],
+      [6.6, 1.35, 2.55],
+      [6.6, 1.35, 2.35],
     ],
   },
   {
@@ -3426,10 +3532,11 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'corridor' },
     to: { at: 'space', space: 'masterBedroom' },
     points: [
-      [5.6, 5.3, 2.35],
-      [1.9, 5.3, 2.35],
-      [1.9, 3.7, 2.35],
-      [1.9, 3.7, 0.6],
+      [11.1, 5.3, 2.35],
+      [11.1, 3.85, 2.35],
+      [11.1, 0.6, 2.35],
+      [6.6, 0.6, 2.35],
+      [6.6, 0.6, 0.6],
     ],
   },
   {
@@ -3485,17 +3592,6 @@ const DRY_RUNS = [
       [13.3, 5.3, 2.35],
       [13.3, 4, 2.35],
       [13.3, 4, 0.6],
-    ],
-  },
-  {
-    layer: 'climate',
-    family: 'heating',
-    from: { at: 'space', space: 'corridor' },
-    to: { at: 'space', space: 'stairs' },
-    points: [
-      [5.6, 5.3, 2.35],
-      [5.6, 4.1, 2.35],
-      [5.6, 4.1, 0.6],
     ],
   },
   {
@@ -3597,5 +3693,6 @@ export const SERVICE_RUNS = deepFreeze([
   ...HEATER_DRAIN_RUNS,
   ...GAS_RUNS,
   ...CHAMBER_VENT_RUNS,
+  ...RISER_RUNS,
   ...DRY_RUNS,
 ] as const satisfies readonly PlanServiceRun[]);
