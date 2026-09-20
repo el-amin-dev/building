@@ -2558,12 +2558,12 @@ const DRY_RUNS = [
     layer: 'electricity',
     family: 'power',
     from: { at: 'chamber', chamber: 'electricalChamber' },
-    to: { at: 'space', space: 'voidEast' },
+    to: { at: 'space', space: 'balconySlabB' },
     points: [
       [2.9, 9.35, 1.2],
       [2.9, 9.35, 2.35],
       [2.9, 9.6, 2.35],
-      [20.3, 9.6, 2.35],
+      [12.45, 9.6, 2.35],
     ],
   },
   {
@@ -2780,12 +2780,12 @@ const DRY_RUNS = [
     layer: 'electricity',
     family: 'lighting',
     from: { at: 'chamber', chamber: 'electricalChamber' },
-    to: { at: 'space', space: 'voidEast' },
+    to: { at: 'space', space: 'balconySlabB' },
     points: [
       [2.78, 9.35, 1.2],
       [2.78, 9.35, 2.2],
       [2.78, 9.6, 2.2],
-      [20.3, 9.6, 2.2],
+      [12.6, 9.6, 2.2],
     ],
   },
   {
@@ -3002,11 +3002,11 @@ const DRY_RUNS = [
     layer: 'lowVoltage',
     family: 'data',
     from: { at: 'chamber', chamber: 'electricalChamber' },
-    to: { at: 'space', space: 'voidEast' },
+    to: { at: 'space', space: 'balconySlabB' },
     points: [
       [2.52, 9.35, 1.2],
       [2.52, 9.35, 2.5],
-      [20.3, 9.35, 2.5],
+      [14, 9.35, 2.5],
     ],
   },
   {
@@ -3182,11 +3182,11 @@ const DRY_RUNS = [
     layer: 'climate',
     family: 'cooling',
     from: { at: 'space', space: 'ccBalcony' },
-    to: { at: 'space', space: 'voidEast' },
+    to: { at: 'space', space: 'balconySlabB' },
     points: [
       [4.2, 9.45, 0.9],
       [4.2, 9.45, 2.55],
-      [20.3, 9.45, 2.55],
+      [13.75, 9.45, 2.55],
     ],
   },
   {
@@ -3281,12 +3281,12 @@ const DRY_RUNS = [
     layer: 'climate',
     family: 'heating',
     from: { at: 'chamber', chamber: 'wetGasChamber' },
-    to: { at: 'space', space: 'voidEast' },
+    to: { at: 'space', space: 'balconySlabB' },
     points: [
       [2.15, 9.35, 1.2],
       [2.15, 9.35, 2.35],
       [2.15, 9, 2.35],
-      [20.3, 9, 2.35],
+      [12.3, 9, 2.35],
     ],
   },
   {
