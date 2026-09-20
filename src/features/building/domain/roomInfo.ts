@@ -50,7 +50,7 @@ import type { FloorSpaceRef } from './floorSpace.ts';
 import type { PlanRect } from './planGeometry.ts';
 import { getPortPartners, getPortsOf } from './ports/index.ts';
 import type { Port, PortKind } from './ports/index.ts';
-import { getServiceRuns, getServiceRunsReaching } from './services.ts';
+import { getServiceRunsReaching } from './services.ts';
 import type { BuiltServiceRun } from './services.ts';
 import { ROOMS, SERVICE_LAYERS } from './sourceOfTruth/plan.ts';
 import type { PlanFixtureKind, PlanRoom, PlanServiceLayerKey } from './sourceOfTruth/plan.ts';
@@ -444,7 +444,7 @@ function getServedFittings(run: BuiltServiceRun, id: SpaceId): readonly PlanFixt
  * and empty, so the panel prints the services a room has and not a nine-row
  * table of mostly noes.
  *
- * @param runs - The runs of the floor, as `getServiceRuns` built them.
+ * @param runs - The runs of the floor, as `BuiltFloor.services` carries them.
  * @param id - Identifier of the room.
  * @returns A frozen array of frozen {@link RoomService}s, possibly empty.
  * @throws RangeError when a run ends at a chamber the plan does not declare.
@@ -473,20 +473,26 @@ function getRoomServices(runs: readonly BuiltServiceRun[], id: SpaceId): readonl
  * Gathers everything the room info panel shows about one room of one storey.
  *
  * Every field is taken from the module that owns it — the label and the area
- * from the plan queries, the ports from the port schedule, the windows and the
- * fixtures from the built floor, the services from the declared runs — so the
- * panel that draws this derives nothing and cannot disagree with the floor it is
- * drawn over.
+ * from the plan queries, the ports from the port schedule, and the windows, the
+ * fixtures and the service runs all from the SAME built floor — so the panel
+ * that draws this derives nothing and cannot disagree with the floor it is drawn
+ * over.
+ *
+ * One built floor and not two. `BuiltFloor.services` is the floor's own runs
+ * (`builtFloor.ts`), so reading them off `built` is what keeps this a readout of
+ * one floor: taking them from the globally declared runs instead would mean a
+ * `built` from another plan came back with its windows and somebody else's
+ * pipes.
  *
  * @param plan - The floor plan to read. Not mutated.
  * @param ports - The port schedule of that plan. Not mutated.
- * @param built - The built floor, for its windows and its fixtures. Not mutated.
+ * @param built - The built floor, for its windows, its fixtures and its service
+ *   runs. Not mutated.
  * @param ref - The room: which storey, and which space of the typical floor.
- * @param runs - The built service runs of the floor; defaults to the declared
- *   ones. A parameter rather than a member of `built`, because a run is not a
- *   solid of the storey and `BuiltFloor` does not carry one; a default rather
- *   than a required argument, so no existing caller has to hand the panel a
- *   second model of the same floor. Not mutated.
+ * @param runs - The service runs to read; defaults to `built.services`, which is
+ *   the floor's own. It stays a parameter only so a test can narrow the floor to
+ *   a single run and prove that crossing a room and ending in it are different
+ *   questions; a caller has no reason to pass it. Not mutated.
  * @returns A frozen {@link RoomInfo} with frozen arrays.
  * @throws RangeError naming the id when the plan has no such space, naming the
  *   floor when it is not an integer of at least `MIN_FLOOR_COUNT` — which
@@ -498,7 +504,7 @@ export function getRoomInfo(
   ports: readonly Port[],
   built: BuiltFloor,
   ref: FloorSpaceRef,
-  runs: readonly BuiltServiceRun[] = getServiceRuns(),
+  runs: readonly BuiltServiceRun[] = built.services,
 ): RoomInfo {
   const space = getSpace(plan, ref.spaceId);
   const roomPorts = getPortsOf(ports, space.id);

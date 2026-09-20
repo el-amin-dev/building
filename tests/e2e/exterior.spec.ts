@@ -27,37 +27,44 @@ const NAKED_SNAPSHOT = 'exterior-naked.png';
  * service off.
  *
  * It is deliberately **not** all nine boxes. Ticking a service layer is what makes that
- * service *visible*, so all nine on is this view with 116 runs drawn over it — measured, and
- * twice as far from the pre-layer frame as this combination is (45,942 differing pixels
- * against 23,914).
+ * service *visible*, so all nine on is this view with 116 runs drawn over it — twice as far
+ * from the pre-layer frame as this combination was when both were measured (45,942 differing
+ * pixels against 23,914, both figures taken before the fix below).
  *
- * ## What this baseline is NOT
+ * ## This frame is the fixed one, and that is the point of it
  *
- * **It is not the v1.0.0 floor, and this frame was supposed to be.** The claim the part was
- * written on is that these two boxes reproduce the floor as it was drawn before the layers
- * landed, pixel for pixel. Measured against the committed pre-layer baseline this one
+ * The claim the part was written on is that these two boxes reproduce the floor as it was
+ * drawn before the layers landed, pixel for pixel. **Reviewing this baseline as an image
+ * rather than regenerating it is what found that they did not**, and the defect it found was
+ * in `src/`, not in the baseline. Measured against the committed pre-layer baseline this one
  * replaces, on this machine, at 1280 × 720:
  *
- * - **23,914 pixels of 921,600 differ — 2.59 % of the frame — with a maximum channel delta
+ * - **23,914 pixels of 921,600 differed — 2.59 % of the frame — with a maximum channel delta
  *   of 144**, against the 200-pixel budget in `playwright.config.ts`;
- * - it is not a settling race: the same 23,914 comes back after 1 s, 5 s and 26 s;
- * - the difference is confined to the finish surfaces, and it is the **generated textures of
- *   ADR-020 — the oak grain, the carpet weave, the marble vein, the bouclé — not being drawn
- *   at all**. The geometry is in the right place and the colours are right; the grain is
- *   missing, so the wardrobes, the corridor floor and the bench render as flat blocks where
- *   v1.0.0 rendered them with a surface.
+ * - it was not a settling race: the same 23,914 came back after 1 s, 5 s and 26 s;
+ * - the difference was confined to the finish surfaces, and it was the **generated textures
+ *   of ADR-020 — the oak grain, the carpet weave, the marble vein, the bouclé — not being
+ *   drawn at all**. The geometry was in the right place and the colours were right; the grain
+ *   was missing, so the wardrobes, the corridor floor and the bench rendered as flat blocks
+ *   where v1.0.0 rendered them with a surface.
  *
- * And it is not the textures failing to exist. Add a storey and remove it again — which hands
- * the merged meshes a different `levels` array and rebuilds their materials — and the grain
- * appears: the frame goes from 23,914 differing pixels to **3,967 (0.43 %)**. The textures are
- * built and they are reachable; they are simply not applied to a material that first rendered
- * without one. `FloorModel.MaterialMesh` passes `map={plain ? undefined : FAMILY_TEXTURE[…]}`,
- * and the app now renders every bucket `plain` first, because naked walls is the new default.
+ * It was never the textures failing to exist. Adding a storey and removing it again — which
+ * hands the merged meshes a different `levels` array and rebuilds their materials — brought
+ * the grain back, and the frame from 23,914 differing pixels to **3,967 (0.43 %)**. So the
+ * textures were built and reachable and simply not applied to a material that had first
+ * rendered without one: whether a material has a `map` is a **shader define**, three.js
+ * compiles it in or out when the material is built, and React Three Fiber sets the prop
+ * without setting `needsUpdate`. It only began to matter in this part, because the app now
+ * opens on naked walls and every material therefore first compiles with no map.
  *
- * So what is pinned here is **the app as it actually draws today**, textures and all missing,
- * which is what a baseline is for. It is pinned under a name that does not claim otherwise, and
- * this docblock is the record, so that nobody reads "furnished" and assumes the invariant the
- * part set out to protect is being protected. It is not; the fix belongs in `src/`.
+ * **Fixed in `src/`:** `FloorModel.MaterialMesh` now keys the material on the map's
+ * PRESENCE, so a bucket that gains or loses a texture gets a new material and the right
+ * shader, and a bucket that never carries one is never rebuilt.
+ *
+ * What is committed here is the **post-fix** frame — **436 pixels** from the pre-layer image,
+ * down from 23,914 — so this baseline pins the floor with its grain drawn, and a regression
+ * back to flat blocks fails it. A regenerated baseline would have pinned the defect forever
+ * (ADR-019).
  */
 const FURNISHED_SNAPSHOT = 'exterior-furnished.png';
 

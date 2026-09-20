@@ -1284,10 +1284,14 @@ export const FIXTURES = deepFreeze([
   // The room now holds the CENTRAL WATER HEATER as well (owner, 2026-09-19), so
   // the full combination — heater, gas, electricity, water — stands in one
   // 5.50 m² room. The owner's instruction was "serious separation": each chamber
-  // is a CLOSED box, not a volume, and each breathes to a DIFFERENT outside face,
-  // so neither duct crosses the other compartment. The wet one vents west into
-  // balcony A through the 0.30 wall at x 1.60–1.30; the electrical one vents east
-  // into the control-center balcony through the 0.30 wall at x 3.80–4.10.
+  // is a CLOSED box, not a volume, and each breathes to outside on its own duct.
+  // BOTH leave EAST through the 0.30 wall at x 3.80–4.10 and cap over the
+  // control-center balcony — "everything starts from CC and out from CC balcony,
+  // except the drainage" (owner, 2026-09-20). The wet-and-gas duct runs OVER both
+  // boxes at y 2.50, clearing their 2.20 tops by 0.2375; the electrical one is at
+  // z 9.35, y 2.35. Crossing above a sealed box is not the hazard it was twice
+  // routed around: these are closed ducts, and what keeps them apart is where
+  // they DISCHARGE — 0.20 apart in z and 0.15 in y at the mouths.
   //
   // 0.10 m of air between them. They keep the 0.60 depth and the 1.40 combined
   // width of the cabinet they replace, so nothing that passed check 9 stops
@@ -1683,7 +1687,14 @@ export interface PlanServiceLayer {
  * This array is both the build order and the order the checkboxes appear in, and
  * that is deliberate: the list reads as a construction sequence from the bottom
  * up. Nothing ticked is NAKED WALLS — structure, slabs and ceiling, no service
- * and no finish. Everything ticked reproduces v1.0.0 pixel for pixel.
+ * and no finish. `furniture` + `finishing` ticked with EVERY SERVICE OFF is what
+ * reproduces the v1.0.0 floor pixel for pixel — NOT all nine, which was the
+ * original wording and is wrong on its face: ticking a service layer is
+ * precisely what makes that service visible, so the all-on view is v1.0.0 PLUS
+ * the 116 runs drawn over it. Measured in the browser on 2026-09-20. The two
+ * baselines pin the two ENDS of the switcher — nothing ticked, and the
+ * v1.0.0-equivalent — and all-on is a third view, not a restatement of the
+ * second.
  *
  * Additive, never exclusive (owner, 2026-09-19): layers are things you combine.
  * Water over naked walls, then water and gas together, then everything but the
@@ -1724,7 +1735,7 @@ export const SERVICE_LAYERS = deepFreeze([
     key: 'climate',
     name: 'Climate',
     service: true,
-    why: 'Heating and cooling. Cooling reaches the guest room, the corridor, the bedrooms and the living room and nowhere else (owner); heating is wall heaters on their own flow and return off the same heater the hot water comes from. A radiator is not a tap, which is why it is here and not in `water`.',
+    why: 'Heating and cooling. Cooling reaches the guest room, the corridor, the bedrooms and the living room and nowhere else (owner); heating is wall heaters run off the same heater the hot water comes from. A real heater sits on a flow and a return, and the MODEL DRAWS ONE PIPE FOR THE PAIR: a `heating` run here stands for the whole circuit to one heater, not for one of its two legs. A radiator is not a tap, which is why it is here and not in `water`.',
   },
   {
     key: 'covers',
@@ -1813,7 +1824,11 @@ export const SERVICE_SPEC = deepFreeze({
     data: 0.02,
     /** Cooling duct from the central unit. */
     cooling: 0.16,
-    /** Heating flow and return to a wall heater. */
+    /**
+     * The heating circuit to a wall heater. A real heater is on a flow and a
+     * return; the model draws ONE pipe standing for the pair, so this is the
+     * bore of one leg of it (`SERVICE_LAYERS.climate`).
+     */
     heating: 0.02,
   },
   /**
@@ -1999,7 +2014,7 @@ export const SERVICE_CHAMBERS = deepFreeze([
     rect: [1.65, 2.3, 9.05, 9.65],
     top: 2.2,
     holds: ['drainage', 'water', 'gas', 'climate'],
-    why: 'The water heater, the gas cock and the cold and hot manifolds. Climate is here because the wall heaters run off the same heater the hot water does, so their flow and return start where it does. It is the WEST chamber and it breathes WEST, into balcony A through the 0.30 wall — a burner in a sealed cupboard has to breathe, and venting it the other way would have carried a gas atmosphere over the electrical compartment.',
+    why: 'The water heater, the gas cock and the cold and hot manifolds. Climate is here because the wall heaters run off the same heater the hot water does, so the heating circuits start where it does. It is the WEST chamber, and a burner in a sealed cupboard has to breathe — but it breathes EAST like everything else on this floor: its duct leaves through the 0.30 wall at x 3.80 and caps over the control-center balcony, because "everything starts from CC and out from CC balcony, except the drainage" (owner, 2026-09-20). That duct runs high, at y 2.50, and passes straight OVER this chamber and the electrical one, which is not the hazard two earlier routings treated it as: it is a closed duct, and what matters is where it discharges. Its mouth is 0.20 north of the electrical duct\'s and 0.15 above it. What `holds` guarantees is the thing that does matter — no gas run TERMINATES next door.',
   },
   {
     id: 'electricalChamber',
@@ -2008,7 +2023,7 @@ export const SERVICE_CHAMBERS = deepFreeze([
     rect: [2.4, 3.05, 9.05, 9.65],
     top: 2.2,
     holds: ['electricity', 'lowVoltage'],
-    why: 'The consumer unit, the meters and the low-voltage patch. It is the EAST chamber and it breathes EAST, into the control-center balcony: two ducts to two different outside faces, so neither crosses the other compartment. Low voltage shares this box rather than getting a third, because the thing it must be kept away from is a cable run laid beside it for metres, not a patch panel in the same cupboard.',
+    why: 'The consumer unit, the meters and the low-voltage patch. It is the EAST chamber and it breathes EAST, into the control-center balcony — the same balcony the wet-and-gas duct caps over, because everything leaves this floor that way (owner, 2026-09-20). The gas duct passes above this box on its way there, and that is not a hazard: it is sealed, and what separates the two is their MOUTHS — this one discharges at z 9.35, y 2.35, the gas one 0.20 north and 0.15 higher. Low voltage shares this box rather than getting a third, because the thing it must be kept away from is a cable run laid beside it for metres, not a patch panel in the same cupboard.',
   },
 ] as const satisfies readonly PlanServiceChamber[]);
 
@@ -2192,7 +2207,89 @@ const DRAINAGE_RUNS = [
 ] as const satisfies readonly PlanServiceRun[];
 
 /**
- * The horizontal spine, and the lanes it is divided into.
+ * The two chamber vents: one duct per sealed compartment, both out to the same
+ * balcony.
+ *
+ * A sealed cupboard with a burner in it has to breathe, and a sealed box of
+ * consumer unit and meters makes heat that has to go somewhere, so each chamber
+ * gets a 125 mm duct of its own (`SERVICE_SPEC.bore.chamberVent`). Both leave
+ * EAST through the 0.30 wall at x 3.80–4.10 and cap over `ccBalcony`, which is
+ * the owner's rule for this floor in his own words: **everything starts from CC
+ * and out from CC balcony, except the drainage** (2026-09-20).
+ *
+ * **A closed duct passing above a sealed box is not a hazard, and this model no
+ * longer argues that it is.** Two earlier routings of the wet-and-gas duct were
+ * built to keep it from ever crossing over the electrical compartment — first by
+ * sending it out of a different balcony, then by squeezing it south and low at
+ * z 9.68, y 1.90. Both were the wrong argument, and the second was not even
+ * buildable: at a 125 mm bore that centreline put the duct's solid through the
+ * electrical chamber's south face (z 9.65) AND out past the plot edge (z 9.70),
+ * and no z clears both. What decides whether a vent is safe is where it
+ * DISCHARGES, not what it flies over. So the gas duct now runs **north and
+ * high** — z 9.15, y 2.50 — straight over both chambers, and that is fine.
+ *
+ * What the routing does have to deliver is physical clearance, and it does:
+ *
+ * - **over the chambers.** The gas duct's underside is 2.4375 (y 2.50 less half
+ *   of 0.125) against chamber tops of 2.20: **0.2375 m of air**, and 0.2025 m
+ *   under its boxing, which adds `coverClearance` + `coverThickness` a side. It
+ *   is well over the balcony door head at 2.10 too, so it crosses that wall
+ *   above the doorway;
+ * - **at the mouths.** The two discharge at different points over the balcony —
+ *   gas at z 9.15, y 2.50, electrical at z 9.35, y 2.35 — **0.20 m apart in z
+ *   and 0.15 m in y**, so neither breathes into the other;
+ * - **off the lighting risers.** The electrical duct rises at x 2.65. It was at
+ *   2.72, which against the lighting risers at 2.78 left 0.06 m between
+ *   centrelines where the two bores alone need 0.0725 — they overlapped. At 2.65
+ *   there is 0.0575 m of air.
+ *
+ * The isolation rule is untouched, and it is about ENDS rather than paths:
+ * `SERVICE_CHAMBERS.holds` fails a run that TERMINATES in the wrong compartment,
+ * which is the question actually worth asking about a sealed duct. Both ends
+ * here are `cap` rather than `{ at: 'space', space: 'ccBalcony' }` on purpose: a
+ * vent TERMINATES in open air, and discharging over a balcony is not servicing
+ * it.
+ */
+const CHAMBER_VENT_RUNS = [
+  {
+    layer: 'gas',
+    family: 'chamberVent',
+    from: { at: 'chamber', chamber: 'wetGasChamber' },
+    to: {
+      at: 'cap',
+      why: "Discharges to open air over the control-center balcony. Everything leaves this floor through that balcony (owner, 2026-09-20); drainage is the only exception. Its mouth is at z 9.15 and y 2.50, 0.20 north of the electrical duct's and 0.15 above it, so the two do not breathe into each other. A vent terminates; it does not serve what it discharges into.",
+    },
+    points: [
+      [1.8, 9.35, 2.2],
+      [1.8, 9.15, 2.2],
+      [1.8, 9.15, 2.5],
+      [4.1, 9.15, 2.5],
+    ],
+    why: 'The wet-and-gas chamber breathes EAST, out over the control-center balcony like everything else on this floor (owner, 2026-09-20). It goes NORTH out of the chamber to z 9.15, UP to y 2.50, then east at that height, straight over both chambers — which is allowed, because this is a closed duct and what makes a vent safe is where it discharges, not what it passes above. Running high is what buys the clearance: the underside sits at 2.4375 against chamber tops of 2.20 and a door head of 2.10, where the two earlier routings tried to thread it past the electrical compartment and put its solid through a chamber face and over the plot edge.',
+  },
+  {
+    layer: 'electricity',
+    family: 'chamberVent',
+    from: { at: 'chamber', chamber: 'electricalChamber' },
+    to: {
+      at: 'cap',
+      why: "Discharges to open air over the control-center balcony, at z 9.35 and y 2.35 — 0.20 south of the gas duct's mouth and 0.15 below it, so neither breathes into the other. A vent terminates rather than serving what it discharges into.",
+    },
+    points: [
+      [2.65, 9.35, 2.2],
+      [2.65, 9.35, 2.35],
+      [4.1, 9.35, 2.35],
+    ],
+    why: 'The electrical chamber breathes EAST, out over the control-center balcony — the same way out the wet-and-gas duct takes, because everything leaves this floor through that balcony. What separates them is their MOUTHS, not their paths: this one discharges at z 9.35 and y 2.35, the gas one 0.20 north and 0.15 higher. It rises at x 2.65 and not the 2.72 first drawn, because 2.72 against the lighting risers at 2.78 left 0.06 between centrelines where the two bores alone need 0.0725 — they overlapped. It vents because a consumer unit and a meter stack in a sealed box make heat, not because anything in it burns.',
+  },
+] as const satisfies readonly PlanServiceRun[];
+
+/**
+ * Water, and with it the horizontal spine and the lanes it is divided into.
+ *
+ * The lane table below governs every run that uses the spine — water here, gas
+ * in {@link GAS_RUNS}, and the dry and climate runs further down — and it lives
+ * on the first array that uses it.
  *
  * Everything crosses the balcony — the owner's own description of this floor,
  * and the side-B strip is where `plan.ts` already says the risers live. The
@@ -2214,47 +2311,20 @@ const DRAINAGE_RUNS = [
  *    view, which is exactly why it is a check and not a habit.
  *
  * Lanes, by (z, y): cold (8.95, 2.35) · hot (8.95, 2.20) · gas (9.00, 2.50) ·
- * heating flow (9.00, 2.35) · heating return (9.00, 2.20) · data (9.35, 2.50) ·
- * cooling (9.45, 2.55) · power (9.60, 2.35) · lighting (9.60, 2.20).
+ * heating (9.00, 2.35) · data (9.35, 2.50) · cooling (9.45, 2.55) ·
+ * power (9.60, 2.35) · lighting (9.60, 2.20).
+ *
+ * ONE heating lane and not two. A real wall heater is on a flow and a return,
+ * and the model draws one pipe standing for the pair, so there is nothing to put
+ * in a second lane (`SERVICE_LAYERS.climate`). The chamber vents do not appear
+ * in this table at all: they are not spine runs. They leave the chambers north
+ * and high — the gas one at z 9.15, y 2.50, over the top of both boxes — rather
+ * than threading between these lanes ({@link CHAMBER_VENT_RUNS}).
  *
  * Data sits 0.29 m from power and 0.39 m from lighting — both over the 0.20 m
  * `SERVICE_SPEC.dataToPowerSeparation`, which is the distance mains cable stops
  * inducing noise into an unshielded pair laid beside it for metres.
  */
-const CHAMBER_VENT_RUNS = [
-  {
-    layer: 'gas',
-    family: 'chamberVent',
-    from: { at: 'chamber', chamber: 'wetGasChamber' },
-    to: {
-      at: 'cap',
-      why: 'Discharges to open air over the control-center balcony. Everything leaves this floor through that balcony (owner, 2026-09-20); drainage is the only exception. It crosses ABOVE the balcony door head and runs at z 9.00, north of the electrical chamber, so it still never carries a gas atmosphere over the electrical compartment. A vent terminates; it does not serve what it discharges into.',
-    },
-    points: [
-      [1.8, 9.35, 2.2],
-      [1.8, 9.68, 2.2],
-      [1.8, 9.68, 1.9],
-      [4.1, 9.68, 1.9],
-    ],
-    why: 'The wet-and-gas chamber breathes WEST, into balcony A through the 0.30 wall. A sealed cupboard with a burner in it has to breathe, and venting it east would have carried a gas atmosphere over the electrical compartment — which is the one thing the split exists to prevent.',
-  },
-  {
-    layer: 'electricity',
-    family: 'chamberVent',
-    from: { at: 'chamber', chamber: 'electricalChamber' },
-    to: {
-      at: 'cap',
-      why: 'Discharges to open air over the control-center balcony. A vent terminates rather than serving what it discharges into.',
-    },
-    points: [
-      [2.72, 9.35, 2.2],
-      [2.72, 9.35, 2.35],
-      [4.1, 9.35, 2.35],
-    ],
-    why: 'The electrical chamber breathes EAST, into the control-center balcony. Two ducts to two different outside faces, so neither crosses the other compartment. It vents because a consumer unit and a meter stack in a sealed box make heat, not because anything in it burns.',
-  },
-] as const satisfies readonly PlanServiceRun[];
-
 const WATER_RUNS = [
   /* ── the two supply spines, out of the wet chamber ── */
   {
@@ -2471,14 +2541,6 @@ const WATER_RUNS = [
 ] as const satisfies readonly PlanServiceRun[];
 
 /**
- * Gas: two destinations and no more.
- *
- * The heater, which is inside the wet chamber and therefore needs no run at all,
- * and the kitchen cooker. That is the whole of it (owner, 2026-09-19) — which is
- * also why the isolation rule matters so much for so little pipe: the danger is
- * not the length of the run, it is which compartment it ends in.
- */
-/**
  * The water heater's relief and condensate discharge.
  *
  * Found by the room panel's roll-call: the control center held a heater, gas,
@@ -2507,6 +2569,18 @@ const HEATER_DRAIN_RUNS = [
   },
 ] as const satisfies readonly PlanServiceRun[];
 
+/**
+ * Gas: two destinations and no more.
+ *
+ * The heater, which is inside the wet chamber and therefore needs no run at all,
+ * and the kitchen cooker. That is the whole of it (owner, 2026-09-19) — which is
+ * also why the isolation rule matters so much for so little pipe: the danger is
+ * not the length of the run, it is which compartment it ends in.
+ *
+ * The wet-and-gas chamber's vent is `layer: 'gas'` too, but it is declared with
+ * the other vent in {@link CHAMBER_VENT_RUNS}: it carries nothing to anything,
+ * and the two ducts are only readable side by side.
+ */
 const GAS_RUNS = [
   {
     layer: 'gas',
@@ -3008,7 +3082,7 @@ const DRY_RUNS = [
     points: [
       [2.52, 9.35, 1.2],
       [2.52, 9.35, 2.5],
-      [14, 9.35, 2.5],
+      [13.9, 9.35, 2.5],
     ],
   },
   {
@@ -3017,9 +3091,9 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'balconySlabB' },
     to: { at: 'space', space: 'corridor' },
     points: [
-      [14, 9.35, 2.5],
-      [14, 4.45, 2.5],
-      [14, 4.45, 2.25],
+      [13.9, 9.35, 2.5],
+      [13.9, 4.45, 2.5],
+      [13.9, 4.45, 2.25],
     ],
   },
   {
@@ -3504,11 +3578,18 @@ const DRY_RUNS = [
 ] as const satisfies readonly PlanServiceRun[];
 
 /**
- * Every declared run of every service, in layer order.
+ * Every declared run of every service, grouped by the array it came from.
  *
- * Composed from the per-layer arrays above rather than written as one list,
- * because a list this long is only readable in the groups a plumber and an
- * electrician actually think in.
+ * Composed from the arrays above rather than written as one list, because a list
+ * this long is only readable in the groups a plumber and an electrician actually
+ * think in.
+ *
+ * The order is the COMPOSITION order and deliberately not the layer order: the
+ * heater's relief is `drainage` and is spread after the water runs because that
+ * is where it is readable, and {@link CHAMBER_VENT_RUNS} puts one `gas` and one
+ * `electricity` run between the gas and the dry runs because the two ducts only
+ * make sense beside each other. Nothing may depend on this being layer order —
+ * a consumer that wants a layer filters on `run.layer`.
  */
 export const SERVICE_RUNS = deepFreeze([
   ...DRAINAGE_RUNS,

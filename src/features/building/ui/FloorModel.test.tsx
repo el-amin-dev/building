@@ -438,8 +438,10 @@ describe('FloorModel', () => {
   });
 
   it('gives every mesh the palette material of its key', () => {
-    // Every checkbox ticked: that state is v1.0.0 pixel for pixel (`SERVICE_LAYERS`), which
-    // is the state in which a bucket wears its OWN finish. With `finishing` unticked the
+    // Every checkbox ticked, because that is the one state in which EVERY bucket is both
+    // drawn and wearing its OWN finish — which is what this test is about. (It is not the
+    // v1.0.0 view: that is `furniture` + `finishing` with every service off, and all-on is
+    // v1.0.0 plus the runs drawn over it — `SERVICE_LAYERS`.) With `finishing` unticked the
     // finish-bearing buckets deliberately wear another one, and that is a separate case.
     setEveryLayer(true);
 

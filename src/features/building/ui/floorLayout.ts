@@ -531,9 +531,9 @@ function bucketServiceRun(layout: MutableLayout, run: BuiltServiceRun): void {
  *   {@link FABRIC_SURFACE_MATERIAL} instead, so that hiding the furniture clears a room
  *   without opening a hole in the floor;
  * - and every service run into the bucket its family names, its boxing into `serviceCover`
- *   and its stop-ends in with its own legs ({@link bucketServiceRun}). Eight families share
- *   the eight run buckets, because a services view is read by hue and a hue per family
- *   would be thirteen colours nobody can hold in their head.
+ *   and its stop-ends in with its own legs ({@link bucketServiceRun}). Thirteen families
+ *   share the eight run buckets, because a services view is read by hue and a hue per
+ *   family would be thirteen colours nobody can hold in their head.
  *
  * The boxes of a bucket keep the order of the built floor, and every box that is already a
  * {@link PlanBox} is passed through by reference rather than copied. The `ceiling` and
