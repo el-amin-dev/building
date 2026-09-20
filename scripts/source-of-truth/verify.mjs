@@ -34,6 +34,10 @@ import {
   INSULATED_WALLS,
   PARAPET_WALLS,
   SIDES,
+  SERVICE_LAYERS,
+  SERVICE_SPEC,
+  SERVICE_CHAMBERS,
+  SERVICE_RUNS,
 } from '../../src/features/building/domain/sourceOfTruth/plan.ts';
 import {
   getClearanceRect,
@@ -44,7 +48,8 @@ import { deriveWalls, wallsByRoom } from './walls.mjs';
 /** @import { Axis, DerivedOpening, MutableSpan, PlanSpec, Side, Span, Wall } from './walls.mjs' */
 /**
  * @import { InsulatedWall, ParapetWall, PlanFixture, PlanJoinOverride,
- *   PlanRectCoordinates, PlanRoom, PlanRoomId, PlanRoomKind }
+ *   PlanRectCoordinates, PlanRoom, PlanRoomId, PlanRoomKind,
+ *   PlanServiceEnd, PlanServiceFamily, PlanServicePoint, PlanServiceRun }
  *   from '../../src/features/building/domain/sourceOfTruth/plan.ts'
  */
 /** @import { PlanRect, RectSide } from '../../src/features/building/domain/planGeometry.ts' */
@@ -106,6 +111,10 @@ const SPEC = {
   INSULATED_WALLS,
   PARAPET_WALLS,
   SIDES,
+  SERVICE_LAYERS,
+  SERVICE_SPEC,
+  SERVICE_CHAMBERS,
+  SERVICE_RUNS,
 };
 
 const EPS = 1e-6;
@@ -424,6 +433,220 @@ const contactsOf = (wall) => {
   return out.sort((a, b) => a.span[0] - b.span[0]);
 };
 
+/* ──────────────────── the services, read as segments ──────────────────── */
+
+/**
+ * One straight piece of one declared run: two consecutive points of its
+ * centreline, and the single axis it moves along.
+ *
+ * WHY the segment and not the run is the unit every service check works in: a
+ * run is a polyline, and every physical question asked of one — does this piece
+ * fall, does this piece lie beside that cable, does this piece stand over the
+ * electrical box, does a person walk under this piece — is a question about ONE
+ * straight piece. Flattening once, here, is what stops checks 13 to 19 each
+ * re-deriving the same list slightly differently, which is the same defect the
+ * stair-piece list in {@link STAIR_PIECES} warns about.
+ *
+ * @typedef {object} ServiceSegment
+ * @property {PlanServiceRun} run The run this piece belongs to.
+ * @property {number} runIndex Its run's index in SERVICE_RUNS, so a failure can name it.
+ * @property {number} index Its own index along that run, 1 for `points[0]→points[1]`.
+ * @property {PlanServicePoint} a Upstream end — the service flows a → b.
+ * @property {PlanServicePoint} b Downstream end.
+ * @property {'x' | 'z' | 'y' | 'none'} axis The axis it moves along, `none` when it is
+ *   two copies of the same point. A piece that moves in both x and z reads `x` here
+ *   and is failed by check 13 as a plan diagonal, so nothing downstream ever sees one.
+ */
+
+/** Where each axis sits inside a `PlanServicePoint`, which is `[x, z, y]`. */
+const AXIS_INDEX = Object.freeze({ x: 0, z: 1, y: 2 });
+
+/**
+ * Outside diameters and minimum falls, by family, as maps rather than by
+ * indexing the spec: `SERVICE_SPEC.fall` is declared for the three drainage
+ * families only, so asking it about `power` has to be a question with an
+ * answer — `undefined` — instead of a type error at the one place the code
+ * legitimately wants to ask.
+ */
+const BORE = new Map(Object.entries(SERVICE_SPEC.bore));
+/** Minimum fall as a rise over a run, by drainage family; empty for anything else. */
+const FALL = new Map(Object.entries(SERVICE_SPEC.fall));
+
+/**
+ * Half the outside diameter of a run of this family — what it costs the space
+ * around its centreline. 0 for a family with no declared bore, which check 13
+ * fails separately rather than letting a missing size read as a zero-width pipe.
+ *
+ * @param {PlanServiceFamily} family What the run carries.
+ * @returns {number} Its outside radius, in metres.
+ */
+const radiusOf = (family) => (BORE.get(family) ?? 0) / 2;
+
+/**
+ * The one axis a piece of centreline moves along.
+ *
+ * @param {PlanServicePoint} a One end.
+ * @param {PlanServicePoint} b The other.
+ * @returns {'x' | 'z' | 'y' | 'none'} The axis, or `none` for a zero-length piece.
+ */
+const axisOfSegment = (a, b) =>
+  Math.abs(b[0] - a[0]) > EPS
+    ? 'x'
+    : Math.abs(b[1] - a[1]) > EPS
+      ? 'z'
+      : Math.abs(b[2] - a[2]) > EPS
+        ? 'y'
+        : 'none';
+
+/** Every declared run, cut into its straight pieces. @type {ServiceSegment[]} */
+const SERVICE_SEGMENTS = SERVICE_RUNS.flatMap((run, runIndex) =>
+  run.points.slice(1).map((b, i) => ({
+    run,
+    runIndex,
+    index: i + 1,
+    a: run.points[i],
+    b,
+    axis: axisOfSegment(run.points[i], b),
+  })),
+);
+
+/**
+ * Where a run end is, in the words the drawing uses.
+ *
+ * A cap's `why` is a paragraph — it has to be, because it is the reason a pipe
+ * is allowed to stop in mid-air — so it is cut to its opening clause here. The
+ * whole sentence belongs in the file beside the cap, not in every line of a
+ * report that mentions the run.
+ *
+ * @param {PlanServiceEnd} end One end of a run.
+ * @returns {string} It, named.
+ */
+const endLabel = (end) =>
+  end.at === 'space'
+    ? end.space
+    : end.at === 'chamber'
+      ? `chamber ${end.chamber}`
+      : end.at === 'fitting'
+        ? `${end.space} ${end.kind}`
+        : `cap (${end.why.length > 48 ? `${end.why.slice(0, 48).trimEnd()}…` : end.why})`;
+
+/**
+ * One run, named the way a failure has to name it: by the index that finds it in
+ * the file, and by what it is and where it goes.
+ *
+ * @param {PlanServiceRun} run The run.
+ * @param {number} runIndex Its index in SERVICE_RUNS.
+ * @returns {string} Its label.
+ */
+const runLabel = (run, runIndex) =>
+  `SERVICE_RUNS[${runIndex}] ${run.layer}/${run.family} ${endLabel(run.from)} → ${endLabel(run.to)}`;
+
+/**
+ * One piece of one run, named.
+ *
+ * @param {ServiceSegment} seg The piece.
+ * @returns {string} Its label.
+ */
+const segLabel = (seg) => `${runLabel(seg.run, seg.runIndex)} segment ${seg.index}`;
+
+/**
+ * Is this plan point inside that rect? An edge counts as inside: a riser stood
+ * exactly on a void's boundary is in the void, and a pipe grazing the electrical
+ * chamber's edge is over it.
+ *
+ * @param {number} x Plan x.
+ * @param {number} z Plan z.
+ * @param {PlanRectCoordinates} rect The rect.
+ * @returns {boolean} Whether the point is in it.
+ */
+const pointInRect = (x, z, [minX, maxX, minZ, maxZ]) =>
+  x >= minX - EPS && x <= maxX + EPS && z >= minZ - EPS && z <= maxZ + EPS;
+
+/**
+ * Does the PLAN projection of this piece touch that rect — at any height?
+ * Height is exactly what the question is not about where it is asked (check 16:
+ * water above an electrical box is still water above an electrical box).
+ *
+ * Every piece is axis-aligned in plan, check 13 having failed anything that is
+ * not, so its projection is a segment along one axis and the overlap is the
+ * ordinary interval test on both.
+ *
+ * @param {ServiceSegment} seg The piece.
+ * @param {PlanRectCoordinates} rect The rect.
+ * @returns {boolean} Whether the piece passes over it.
+ */
+const segmentOverRect = (seg, [minX, maxX, minZ, maxZ]) =>
+  Math.max(seg.a[0], seg.b[0]) >= minX - EPS &&
+  Math.min(seg.a[0], seg.b[0]) <= maxX + EPS &&
+  Math.max(seg.a[1], seg.b[1]) >= minZ - EPS &&
+  Math.min(seg.a[1], seg.b[1]) <= maxZ + EPS;
+
+/**
+ * The rects of one named space.
+ *
+ * @param {string} id The space's id.
+ * @returns {readonly PlanRectCoordinates[]} Its rects, empty when nothing is named that.
+ */
+const rectsOfSpace = (id) => ROOMS.find((r) => r.id === id)?.rects ?? [];
+
+/**
+ * Where a riser may stand: the two service voids, and the two chambers of the
+ * control center. Nowhere else on this floor is a hole through the slab.
+ *
+ * @type {{ where: string, rect: PlanRectCoordinates }[]}
+ */
+const RISER_FOOTPRINTS = [
+  ...['voidWest', 'voidEast'].flatMap((id) =>
+    rectsOfSpace(id).map((rect) => ({ where: id, rect })),
+  ),
+  ...SERVICE_CHAMBERS.map((chamber) => ({ where: chamber.id, rect: chamber.rect })),
+];
+
+/** The kinds of space the programme is delivered to: everything a person uses. */
+const PROGRAMME_KINDS = new Set(['room', 'circulation', 'stairwell']);
+/** Every space a service is expected to reach. @type {PlanRoomId[]} */
+const PROGRAMME_SPACES = ROOMS.filter((r) => PROGRAMME_KINDS.has(r.kind)).map((r) => r.id);
+
+/** The bottom of this storey's build-up: the 0.30 ceiling void of the storey below. */
+const STOREY_BOTTOM = cm(HEIGHTS.wall - HEIGHTS.floorToFloor);
+/** The finished floor of the storey above, where a riser leaves this one. */
+const STOREY_TOP = cm(HEIGHTS.floorToFloor);
+
+/**
+ * Every coordinate the services declare, labelled, so that check 1 grid-checks
+ * them with everything else.
+ *
+ * WHY this lives here and is appended to check 1 rather than being a grid test
+ * inside check 13: `stairValues` in check 1 carries the warning, and this is the
+ * third time it would have been earned — a plan array that is not appended to
+ * `gridValues` is SILENTLY ungridded. A service point nudged half a centimetre
+ * would be drawn, boxed and quantified without one line of output anywhere. So
+ * the services join the same list the rects, the stair pieces and the openings
+ * are on, and check 13 is left to ask the questions only a pipe raises.
+ *
+ * Only real plan geometry is on this list. `SERVICE_SPEC` is deliberately NOT:
+ * a 75 mm vent and a 1:80 fall are a bore and a gradient, not points on the
+ * plan, and putting them here would fail check 1 for being what they are.
+ *
+ * @type {[string, number][]}
+ */
+const SERVICE_COORDS = [
+  ...SERVICE_RUNS.flatMap((run, i) =>
+    run.points.flatMap((p, k) =>
+      ['x', 'z', 'y'].map(
+        (name, j) =>
+          /** @type {[string, number]} */ ([`SERVICE_RUNS[${i}].points[${k}].${name}`, p[j]]),
+      ),
+    ),
+  ),
+  ...SERVICE_CHAMBERS.flatMap((chamber) => [
+    ...chamber.rect.map(
+      (v, i) => /** @type {[string, number]} */ ([`${chamber.id}.rect[${i}]`, v]),
+    ),
+    /** @type {[string, number]} */ ([`${chamber.id}.top`, chamber.top]),
+  ]),
+];
+
 console.log(
   `floor plan v2 — self-check (floor ${FLOOR_NUMBER}, plot ${n(PLOT[1])} × ${n(PLOT[3])})`,
 );
@@ -533,6 +756,10 @@ check('1. Rectangles: no overlap, inside the interior, on the centimetre grid');
           : [/** @type {[string, number]} */ ([`${o.between.join('↔')}.${f}`, v])];
       }),
     ),
+    // The services, built above: every point of every run and both chamber
+    // footprints. See SERVICE_COORDS for why they are on THIS list and not
+    // grid-checked inside check 13 — the warning above is about exactly this.
+    ...SERVICE_COORDS,
   ];
   const offGrid = gridValues.filter(([, v]) => !onGrid(v));
   for (const [label, v] of offGrid) fail(`${label} = ${v} is not on the centimetre grid`);
@@ -2356,6 +2583,694 @@ check('12. Isolation is a width: nothing reads heavy while being built thin');
   );
 }
 
+/* ──────── 13. a service run is geometry, not a sketch of one ──────── */
+
+check('13. Service runs: real geometry, inside the plot, with ends that resolve');
+{
+  /**
+   * WHY a run gets a geometry check of its own, and why the diagonal rule reads
+   * the way it does.
+   *
+   * A run is drawn by hand from a route in the owner's head, the way the rects
+   * are. The failures are the same failures: a point half a centimetre off the
+   * grid, a point typed twice so a segment has no length, a route that cuts a
+   * corner. The last one is the one worth spelling out, because it is the only
+   * rule here that is not simply "be a number".
+   *
+   * A building service is installed along the building. A pipe runs along a
+   * wall, turns at a corner and runs along the next one; it does not cross a
+   * room corner to corner, because there is nothing there to fix it to and
+   * nothing to box it in. So a segment may change ONE horizontal axis. What it
+   * may also do at the same time is change y — that is a drain falling as it
+   * runs, or a duct climbing over a door head, and check 18 REQUIRES exactly
+   * that of every drainage segment. A rule that banned all three-dimensional
+   * movement would ban the falls this file also insists on.
+   *
+   * What cannot exist is a segment that changes x AND z: a plan diagonal, a pipe
+   * crossing open floor at 45°.
+   */
+  const layers = new Map(
+    SERVICE_LAYERS.map((l) => /** @type {[string, boolean]} */ ([l.key, l.service])),
+  );
+  for (const [i, run] of SERVICE_RUNS.entries()) {
+    if (!layers.has(run.layer)) fail(`${runLabel(run, i)} names no declared layer`);
+    else if (!layers.get(run.layer)) {
+      fail(`${runLabel(run, i)} is on '${run.layer}', which is not a service layer`);
+    }
+    if (!BORE.has(run.family))
+      fail(`${runLabel(run, i)} is a '${run.family}' with no declared bore`);
+    if (run.points.length < 2) fail(`${runLabel(run, i)} has ${run.points.length} point(s)`);
+    for (const [k, p] of run.points.entries()) {
+      if (
+        p[0] < PLOT[0] - EPS ||
+        p[0] > PLOT[1] + EPS ||
+        p[1] < PLOT[2] - EPS ||
+        p[1] > PLOT[3] + EPS
+      ) {
+        fail(
+          `${runLabel(run, i)} point ${k} (${m(p[0])}, ${m(p[1])}) is outside the plot ` +
+            `${n(PLOT[0])}–${n(PLOT[1])} × ${n(PLOT[2])}–${n(PLOT[3])}`,
+        );
+      }
+      if (p[2] < STOREY_BOTTOM - EPS || p[2] > STOREY_TOP + EPS) {
+        fail(
+          `${runLabel(run, i)} point ${k} is at y ${m(p[2])}, outside this storey's ` +
+            `${m(STOREY_BOTTOM)}–${m(STOREY_TOP)} — below the floor build-up or above the next finished floor`,
+        );
+      }
+    }
+    // Both ends have to name something that is actually in the plan, or the run
+    // is connected to a word. A fitting end is the strict one: the kind has to
+    // be a FIXTURES row OF THAT ROOM, so a tap declared to a sink in a room with
+    // no sink is caught rather than drawn to the middle of the floor.
+    for (const [which, end] of /** @type {[string, PlanServiceEnd][]} */ ([
+      ['from', run.from],
+      ['to', run.to],
+    ])) {
+      const its = `its '${which}' end`;
+      if (end.at === 'space' && !ROOMS.some((r) => r.id === end.space)) {
+        fail(`${runLabel(run, i)} — ${its} names no space '${end.space}'`);
+      } else if (end.at === 'chamber' && !SERVICE_CHAMBERS.some((c) => c.id === end.chamber)) {
+        fail(`${runLabel(run, i)} — ${its} names no chamber '${end.chamber}'`);
+      } else if (end.at === 'fitting') {
+        if (!ROOMS.some((r) => r.id === end.space)) {
+          fail(`${runLabel(run, i)} — ${its} names no space '${end.space}'`);
+        } else if (!FIXTURES.some((f) => f.room === end.space && f.kind === end.kind)) {
+          fail(
+            `${runLabel(run, i)} — ${its} asks for a ${end.kind} and ${end.space} has none in FIXTURES`,
+          );
+        }
+      } else if (end.at === 'cap' && end.why.trim() === '') {
+        fail(`${runLabel(run, i)} — ${its} is a cap with no reason: a pipe ending in mid-air`);
+      }
+    }
+  }
+  let planLength = 0;
+  for (const seg of SERVICE_SEGMENTS) {
+    if (seg.axis === 'none') {
+      fail(`${segLabel(seg)} is zero length: (${seg.a.map(n).join(', ')}) twice`);
+    }
+    if (Math.abs(seg.b[0] - seg.a[0]) > EPS && Math.abs(seg.b[1] - seg.a[1]) > EPS) {
+      fail(
+        `${segLabel(seg)} is a plan diagonal: (${m(seg.a[0])}, ${m(seg.a[1])}) → ` +
+          `(${m(seg.b[0])}, ${m(seg.b[1])}) moves ${m(Math.abs(seg.b[0] - seg.a[0]))} in x and ` +
+          `${m(Math.abs(seg.b[1] - seg.a[1]))} in z — a run turns at a corner, it does not cut one`,
+      );
+    }
+    planLength += Math.hypot(seg.b[0] - seg.a[0], seg.b[1] - seg.a[1]);
+  }
+  const ys = SERVICE_RUNS.flatMap((run) => run.points.map((p) => p[2]));
+  const byAxis = { x: 0, z: 0, y: 0, none: 0 };
+  for (const seg of SERVICE_SEGMENTS) byAxis[seg.axis] += 1;
+  line(
+    `${SERVICE_RUNS.length} runs, ${SERVICE_SEGMENTS.length} segments, ${m(planLength)} m of run on plan`,
+  );
+  line(`${byAxis.x} along x, ${byAxis.z} along z, ${byAxis.y} vertical`);
+  line(
+    `y from ${m(Math.min(...ys))} to ${m(Math.max(...ys))}, within this storey's ${m(STOREY_BOTTOM)}–${m(STOREY_TOP)}`,
+  );
+  line(
+    `${SERVICE_COORDS.length} service coordinates were grid-checked by check 1, with every other number in the plan`,
+  );
+}
+
+/* ──────── 14. a run ends in a chamber that is allowed to hold it ──────── */
+
+check('14. Chamber ends: a run terminates only in a compartment that holds its layer');
+{
+  /**
+   * WHAT THIS CHECK IS, AND WHAT IT DELIBERATELY IS NOT.
+   *
+   * It is: a run that ENDS AT A CHAMBER ends at one whose `holds` lists its
+   * layer. A GAS RUN ENDING IN THE ELECTRICAL COMPARTMENT IS THE SINGLE FAILURE
+   * THIS PART EXISTS TO PREVENT — the whole control-center split, two boxes and
+   * two ducts to two different outside faces, buys nothing if a gas line can be
+   * terminated next to the consumer unit. `holds` is the isolation rule written
+   * as data, and this is the line of code that makes it one.
+   *
+   * It is NOT "every layer traces back to a chamber". That rule is wrong here
+   * and would fail correct geometry:
+   *
+   * - Drainage reaches no chamber at all. It falls to three stacks that cap at
+   *   floor 0 and at the roof, because floor 0 is undesigned and the roof is not
+   *   modelled. A drain that ended in a cupboard would be the defect.
+   * - COOLING is the deliberate exception, and it is the one to leave alone. Its
+   *   trunk starts at `{ at: 'space', space: 'ccBalcony' }` because the
+   *   condenser is an OUTDOOR UNIT. A condenser rejects heat: it cannot sit in a
+   *   sealed box, which is what both compartments are. And the only box it could
+   *   otherwise go in is the wet-and-gas one, which would put a refrigeration
+   *   unit beside a burner. So cooling starting on a balcony is the correct
+   *   answer twice over. It is reported as a note below, not as a failure.
+   *
+   * The chamber END POINT is checked too: naming a chamber and then putting the
+   * last point of the run somewhere else is a run that terminates in a word.
+   */
+  /** @type {Map<string, string[]>} */
+  const terminating = new Map(SERVICE_CHAMBERS.map((c) => [c.id, []]));
+  for (const [i, run] of SERVICE_RUNS.entries()) {
+    for (const [end, point] of /** @type {[PlanServiceEnd, PlanServicePoint][]} */ ([
+      [run.from, run.points[0]],
+      [run.to, run.points[run.points.length - 1]],
+    ])) {
+      if (end.at !== 'chamber') continue;
+      const chamber = SERVICE_CHAMBERS.find((c) => c.id === end.chamber);
+      if (!chamber) continue; // check 13 already said so
+      terminating.get(chamber.id)?.push(run.layer);
+      // Widened on purpose: `holds` is a literal tuple, so asking it about a
+      // layer it does not list is a type error rather than the `false` this
+      // check exists to act on — the question has to be askable to be answered.
+      if (!(/** @type {readonly string[]} */ (chamber.holds).includes(run.layer))) {
+        fail(
+          `${runLabel(run, i)} terminates in the ${chamber.name}, which holds ` +
+            `${chamber.holds.join(', ')} — not ${run.layer}. That is the isolation rule, ` +
+            `and it is the rule the two-compartment control center exists for`,
+        );
+      }
+      if (!pointInRect(point[0], point[1], chamber.rect)) {
+        fail(
+          `${runLabel(run, i)} says it terminates in ${chamber.id} but its end point ` +
+            `(${m(point[0])}, ${m(point[1])}) is outside [${chamber.rect.map(n).join(', ')}]`,
+        );
+      }
+    }
+  }
+  for (const chamber of SERVICE_CHAMBERS) {
+    const held = terminating.get(chamber.id) ?? [];
+    const counts = [...new Set(held)].map((l) => `${l}×${held.filter((x) => x === l).length}`);
+    line(
+      `${chamber.name} [${chamber.rect.map(n).join(', ')}] holds ${chamber.holds.join(', ')}: ` +
+        `${held.length} run end(s) — ${counts.join(', ') || 'none'}`,
+    );
+  }
+  // Families that reach no chamber. Said out loud rather than failed: for the
+  // three drainage families and for cooling this is the design, and the note is
+  // there so that a family which QUIETLY stopped reaching its chamber one day is
+  // not indistinguishable from these four.
+  for (const family of [...new Set(SERVICE_RUNS.map((r) => r.family))]) {
+    const runs = SERVICE_RUNS.filter((r) => r.family === family);
+    // Both ends read as `PlanServiceEnd` rather than as the literal types the
+    // file happens to hold today: no run is currently declared TO a chamber, so
+    // the literal type of `to.at` cannot be `'chamber'` and the test would be
+    // a compile error that silently stops being a test the day one is.
+    /** @type {PlanServiceEnd[]} */
+    const ends = runs.flatMap((r) => [r.from, r.to]);
+    if (ends.some((e) => e.at === 'chamber')) continue;
+    const starts = [...new Set(runs.map((r) => r.from.at))];
+    const why =
+      family === 'cooling'
+        ? ' — deliberate: the condenser is an outdoor unit, and a refrigeration unit cannot share the burner box'
+        : runs.every((r) => r.layer === 'drainage')
+          ? ' — deliberate: a drain falls to a capped stack, it does not end in a cupboard'
+          : '';
+    notes.push(
+      `no ${family} run terminates in a chamber; the family starts at a ${starts.join(' or a ')} instead${why}`,
+    );
+  }
+}
+
+/* ──────── 15. separation, where two runs are parallel ──────── */
+
+check('15. Separation: data, gas and water clear of the electrical runs where they run PARALLEL');
+{
+  /**
+   * WHY "parallel" is the whole check, and the thing a reviewer gets wrong.
+   *
+   * The 0.20 m between a data cable and a power cable is about INDUCTION PICKED
+   * UP ALONG A SHARED LENGTH: mains cable induces noise into an unshielded
+   * twisted pair laid beside it for metres. A CROSSING AT RIGHT ANGLES IS NOT A
+   * PARALLEL RUN. Two runs that cross are beside each other for the width of one
+   * conduit and then gone, and no separation rule has ever been about that — the
+   * spec says so in `dataToPowerSeparation`'s own docstring.
+   *
+   * So a pair is measured only where BOTH pieces move along the SAME AXIS and
+   * their extents on that axis ACTUALLY OVERLAP. A piece running x against a
+   * piece running z is skipped ON PURPOSE. It is not an omission, and a future
+   * reader who "fixes" it will get a report full of failures that are not
+   * defects and will then loosen the distances to make them go away, which is
+   * how a real check becomes a decorative one.
+   *
+   * Distance is centre to centre in the plane perpendicular to the shared axis,
+   * MINUS BOTH OUTSIDE RADII — what matters is the air between the two pipes,
+   * not between two mathematical lines — and it is taken at its MINIMUM over the
+   * shared stretch, because a run that falls or climbs while its neighbour stays
+   * level is closest at one end and that end is the one that matters.
+   */
+  const electrical = new Set(['power', 'lighting']);
+  /**
+   * @type {{ name: string, need: number,
+   *   a: (f: PlanServiceFamily) => boolean, b: (f: PlanServiceFamily) => boolean }[]}
+   */
+  const rules = [
+    {
+      name: 'data ↔ power/lighting',
+      need: SERVICE_SPEC.dataToPowerSeparation,
+      a: (f) => f === 'data',
+      b: (f) => electrical.has(f),
+    },
+    {
+      name: 'gas ↔ power/lighting',
+      need: SERVICE_SPEC.gasToPowerSeparation,
+      a: (f) => f === 'gas',
+      b: (f) => electrical.has(f),
+    },
+    {
+      name: 'water ↔ power/lighting',
+      need: SERVICE_SPEC.waterToPowerSeparation,
+      a: (f) => f === 'cold' || f === 'hot',
+      b: (f) => electrical.has(f),
+    },
+  ];
+  /**
+   * Where one piece is on one axis, at a given station along the axis they share.
+   *
+   * @param {ServiceSegment} seg The piece.
+   * @param {number} along Index of the shared axis in `[x, z, y]`.
+   * @param {number} other Index of the axis being read off.
+   * @param {number} t The station on the shared axis.
+   * @returns {number} That coordinate of the centreline there.
+   */
+  const coordAt = (seg, along, other, t) => {
+    const d = seg.b[along] - seg.a[along];
+    return Math.abs(d) < EPS
+      ? seg.a[other]
+      : seg.a[other] + ((seg.b[other] - seg.a[other]) * (t - seg.a[along])) / d;
+  };
+  /**
+   * Closest the two centrelines come, over the stretch of the shared axis they
+   * both occupy — or `null` when they do not overlap on it, which is a crossing
+   * and not a parallel run.
+   *
+   * @param {ServiceSegment} p One piece.
+   * @param {ServiceSegment} q The other.
+   * @param {'x' | 'z' | 'y'} axis The axis they share.
+   * @returns {number | null} Centre-to-centre distance, in metres.
+   */
+  const closestApproach = (p, q, axis) => {
+    const along = AXIS_INDEX[axis];
+    const lo = Math.max(Math.min(p.a[along], p.b[along]), Math.min(q.a[along], q.b[along]));
+    const hi = Math.min(Math.max(p.a[along], p.b[along]), Math.max(q.a[along], q.b[along]));
+    if (hi - lo <= EPS) return null;
+    const others = [0, 1, 2].filter((j) => j !== along);
+    /**
+     * The two perpendicular offsets between the centrelines at one station.
+     *
+     * @param {number} t The station on the shared axis.
+     * @returns {number[]} The offsets, one per perpendicular axis.
+     */
+    const offsets = (t) => others.map((j) => coordAt(q, along, j, t) - coordAt(p, along, j, t));
+    // Each offset is linear in t, so the distance is convex: its minimum is at
+    // an end of the shared stretch, or where one offset passes through zero.
+    const stations = [lo, hi];
+    const atLo = offsets(lo);
+    const atHi = offsets(hi);
+    for (const k of [0, 1]) {
+      if (atLo[k] > 0 !== atHi[k] > 0) {
+        stations.push(
+          lo + ((hi - lo) * Math.abs(atLo[k])) / (Math.abs(atLo[k]) + Math.abs(atHi[k])),
+        );
+      }
+    }
+    return Math.min(...stations.map((t) => Math.hypot(...offsets(t))));
+  };
+  for (const rule of rules) {
+    let pairs = 0;
+    /** @type {{ clear: number, p: ServiceSegment, q: ServiceSegment } | null} */
+    let tightest = null;
+    for (const p of SERVICE_SEGMENTS) {
+      if (p.axis === 'none' || !rule.a(p.run.family)) continue;
+      for (const q of SERVICE_SEGMENTS) {
+        if (q.axis !== p.axis || !rule.b(q.run.family)) continue;
+        const distance = closestApproach(p, q, p.axis);
+        if (distance === null) continue;
+        pairs += 1;
+        const clear = distance - radiusOf(p.run.family) - radiusOf(q.run.family);
+        if (!tightest || clear < tightest.clear) tightest = { clear, p, q };
+        if (clear < rule.need - EPS) {
+          fail(
+            `${rule.name}: ${segLabel(p)} runs parallel to ${segLabel(q)} along ${p.axis} ` +
+              `with only ${m(clear)} of air between their outsides — ${m(rule.need)} is asked`,
+          );
+        }
+      }
+    }
+    line(
+      `${rule.name}: ${pairs} parallel overlapping pair(s), ${m(rule.need)} asked; ` +
+        (tightest
+          ? `tightest ${m(tightest.clear)} — ${segLabel(tightest.p)} vs ${segLabel(tightest.q)}`
+          : 'none run parallel at all'),
+    );
+  }
+}
+
+/* ──────── 16. no water over the electrical compartment ──────── */
+
+check('16. No water above the electrical chamber, at any height');
+{
+  /**
+   * The one rule that is about PLAN position and not about distance. A leak
+   * finds the floor, so a pipe two metres above the consumer unit is a pipe over
+   * the consumer unit; height is no defence and is not asked here. Drainage
+   * counts as water: a waste pipe carries more of it than a supply does, and
+   * carries it at atmospheric pressure through joints.
+   *
+   * Separate from check 15 because check 15 measures air between two runs, and
+   * no amount of air fixes being overhead.
+   */
+  const chamber = SERVICE_CHAMBERS.find((c) => c.id === 'electricalChamber');
+  if (!chamber) {
+    fail('there is no electricalChamber to keep water off');
+  } else {
+    let wet = 0;
+    for (const seg of SERVICE_SEGMENTS) {
+      const family = seg.run.family;
+      if (!(family === 'cold' || family === 'hot' || seg.run.layer === 'drainage')) continue;
+      wet += 1;
+      if (segmentOverRect(seg, chamber.rect)) {
+        fail(
+          `${segLabel(seg)} passes over the ${chamber.name} ` +
+            `[${chamber.rect.map(n).join(', ')}] at y ${m(seg.a[2])}–${m(seg.b[2])} — ` +
+            `a leak finds the floor, so height is not a defence`,
+        );
+      }
+    }
+    line(
+      `${wet} cold, hot and drainage segment(s) tested against ${chamber.name} ` +
+        `[${chamber.rect.map(n).join(', ')}], none overhead`,
+    );
+  }
+}
+
+/* ──────── 17. a riser stands where a riser may ──────── */
+
+check('17. Risers: a run leaving this storey does it through a void or a chamber');
+{
+  /**
+   * WHAT COUNTS AS A RISER, which is the whole difficulty of this check.
+   *
+   * Not every vertical segment. Most of them are a DROP: the last half-metre of
+   * a branch coming down a wall to a tap, a socket or a radiator, and it lives
+   * inside the room it serves because that is where the thing it feeds is. There
+   * are 90-odd of those and every one of them is correct.
+   *
+   * A RISER is a vertical segment that LEAVES THIS STOREY — one that goes below
+   * the finished floor into the build-up, or above the wall head into the
+   * ceiling. That is a hole through a slab, and a hole through a slab may only
+   * be where the plan put one: `voidWest`, `voidEast`, or a control-center
+   * chamber. Anywhere else it is a hole in a room's clear floor, and on
+   * `balconySlabB` it is a hole in a surface that is WALKED ON — which is why
+   * the balcony slab is not on the permitted list and must never be added to it.
+   *
+   * The permitted list is read off the plan (the two void spaces and the
+   * declared chambers) rather than written out, so a void that is renamed or
+   * removed cannot leave this check quietly permitting the old footprint.
+   */
+  const slabB = rectsOfSpace('balconySlabB');
+  if (RISER_FOOTPRINTS.length === 0) fail('no void or chamber footprint to stand a riser in');
+  if (slabB.length === 0) fail('balconySlabB is not in ROOMS, so nothing is protecting it');
+  let risers = 0;
+  let drops = 0;
+  for (const seg of SERVICE_SEGMENTS) {
+    if (seg.axis !== 'y') continue;
+    const leaves =
+      Math.min(seg.a[2], seg.b[2]) < -EPS || Math.max(seg.a[2], seg.b[2]) > HEIGHTS.wall + EPS;
+    if (!leaves) {
+      drops += 1;
+      continue;
+    }
+    risers += 1;
+    const home = RISER_FOOTPRINTS.find((f) => pointInRect(seg.a[0], seg.a[1], f.rect));
+    if (!home) {
+      const onSlab = slabB.some((rect) => pointInRect(seg.a[0], seg.a[1], rect));
+      fail(
+        `${segLabel(seg)} rises through the slab at (${m(seg.a[0])}, ${m(seg.a[1])}) ` +
+          `from y ${m(seg.a[2])} to ${m(seg.b[2])}, which is in no void and no chamber` +
+          (onSlab
+            ? ' — it is in balconySlabB, which is walked on'
+            : " — that is a hole in a room's clear floor"),
+      );
+    }
+  }
+  line(
+    `${risers} riser(s) leave this storey, ${drops} vertical drop(s) stay inside it ` +
+      `(a drop to a tap or a socket is not a riser and is not asked to stand in a void)`,
+  );
+  line(
+    `permitted footprints: ${RISER_FOOTPRINTS.map((f) => `${f.where} [${f.rect.map(n).join(', ')}]`).join('; ')}`,
+  );
+}
+
+/* ──────── 18. a drain falls ──────── */
+
+check('18. Drains fall: every drainage segment at or above its declared gradient');
+{
+  /**
+   * The one service that cannot be routed as a flat convenience line. Measured
+   * against the horizontal length, not the sloped length, because a gradient is
+   * a rise over a RUN — that is what 1:80 means and what a spirit level reads.
+   *
+   * `points[0]` is upstream by the declared contract of `PlanServiceRun.points`,
+   * so the drop is `a.y - b.y` and a negative one is a drain running uphill.
+   */
+  /** @type {{ margin: number, seg: ServiceSegment, drop: number, run: number, need: number } | null} */
+  let shallowest = null;
+  let falling = 0;
+  for (const seg of SERVICE_SEGMENTS) {
+    if (seg.run.layer !== 'drainage') continue;
+    const horizontal = Math.hypot(seg.b[0] - seg.a[0], seg.b[1] - seg.a[1]);
+    if (horizontal < EPS) continue;
+    const gradient = FALL.get(seg.run.family);
+    if (gradient === undefined) {
+      fail(
+        `${segLabel(seg)} runs ${m(horizontal)} horizontally and '${seg.run.family}' declares no fall`,
+      );
+      continue;
+    }
+    falling += 1;
+    const drop = seg.a[2] - seg.b[2];
+    const need = gradient * horizontal;
+    const margin = drop - need;
+    if (margin < -EPS) {
+      fail(
+        `${segLabel(seg)} runs ${m(horizontal)} and ${drop < 0 ? 'RISES' : 'drops'} ` +
+          `${Math.abs(drop).toFixed(4)} — ${seg.run.family} asks 1:${Math.round(1 / gradient)}, ` +
+          `so ${need.toFixed(4)} over that length`,
+      );
+    }
+    if (!shallowest || margin < shallowest.margin) {
+      shallowest = { margin, seg, drop, run: horizontal, need };
+    }
+  }
+  line(
+    `${falling} drainage segment(s) with horizontal length, each measured against its own gradient`,
+  );
+  // A margin inside EPS is a margin of zero: the shallowest drain on this floor
+  // is laid at EXACTLY its gradient, and printing that as -0.0000 would read as
+  // a failure the check did not make.
+  const margin = shallowest && Math.abs(shallowest.margin) < EPS ? 0 : (shallowest?.margin ?? 0);
+  line(
+    shallowest
+      ? `shallowest: ${segLabel(shallowest.seg)} — ${shallowest.drop.toFixed(4)} over ${m(shallowest.run)}, ` +
+          `needs ${shallowest.need.toFixed(4)} (1:${Math.round(1 / (FALL.get(shallowest.seg.run.family) ?? 1))}), ` +
+          `margin ${margin >= 0 ? '+' : ''}${margin.toFixed(4)} m${margin === 0 ? ' — laid at exactly its gradient' : ''}`
+      : 'no drainage segment runs horizontally at all',
+  );
+}
+
+/* ──────── 19. head clearance over the balcony ──────── */
+
+check('19. Head clearance: anything crossing balconySlabB is above door height');
+{
+  /**
+   * `balconySlabB` is walked on. A duct or a pipe crossing it is something a
+   * person passes under, so it is held at or above `HEIGHTS.door` — the height
+   * the whole floor already agrees a person passes through.
+   *
+   * The whole segment's lowest point is taken rather than only the part over the
+   * slab: a run that dips under door height a few centimetres past the balcony
+   * edge is still the thing someone walks into on their way in.
+   */
+  const slabB = rectsOfSpace('balconySlabB');
+  if (slabB.length === 0) fail('balconySlabB is not in ROOMS, so nothing is being checked');
+  /** @type {{ y: number, seg: ServiceSegment } | null} */
+  let lowest = null;
+  let crossings = 0;
+  for (const seg of SERVICE_SEGMENTS) {
+    if (!slabB.some((rect) => segmentOverRect(seg, rect))) continue;
+    crossings += 1;
+    const y = Math.min(seg.a[2], seg.b[2]);
+    if (!lowest || y < lowest.y) lowest = { y, seg };
+    if (y < HEIGHTS.door - EPS) {
+      fail(
+        `${segLabel(seg)} crosses balconySlabB at y ${m(y)}, under the ${m(HEIGHTS.door)} ` +
+          `a person passes through — the balcony is walked on`,
+      );
+    }
+  }
+  line(`${crossings} segment(s) cross balconySlabB; the bar is ${m(HEIGHTS.door)} (HEIGHTS.door)`);
+  line(
+    lowest
+      ? `lowest crossing: ${m(lowest.y)} — ${segLabel(lowest.seg)}`
+      : 'nothing crosses the balcony slab',
+  );
+}
+
+/* ──────── 20. the programme is delivered ──────── */
+
+check('20. The programme: every space and every fitting actually reached');
+{
+  /**
+   * WHY A SPACE COUNTS AS SERVED ONLY WHERE A RUN ENDS THERE.
+   *
+   * Every trunk on this floor passes through `voidWest`, `voidEast` or
+   * `balconySlabB` on its way somewhere else, and several cross rooms overhead.
+   * Counting a space because a pipe went over it would mark the whole floor
+   * served by everything and this check would pass forever without meaning
+   * anything. A service is delivered to a space when a run TERMINATES there —
+   * that is the socket, the lamp, the outlet, the radiator, the grille.
+   *
+   * The five programmes are the owner's, not a default:
+   * - power and lighting everywhere a person goes;
+   * - data everywhere EXCEPT the three bath and shower cubicles, where an
+   *   ethernet outlet is a thing to explain rather than a thing to use;
+   * - heating everywhere;
+   * - cooling in exactly six spaces, stated as an exact set in both directions,
+   *   so a seventh room quietly gaining a duct fails here;
+   * - gas at exactly one appliance: the kitchen cooker.
+   *
+   * Cold reaches every fitting that takes water. Hot reaches those minus the
+   * two that never want it: a WC cistern and a washing machine, which takes its
+   * own cold and heats it.
+   */
+  /**
+   * The spaces one family terminates in, restricted to the programme — a trunk
+   * ending in a void or on the balcony slab is not a delivery.
+   *
+   * @param {PlanServiceFamily} family The family to roll-call.
+   * @returns {Set<string>} The programme spaces it ends in.
+   */
+  const reached = (family) => {
+    /** @type {Set<string>} */
+    const out = new Set();
+    for (const run of SERVICE_RUNS) {
+      if (run.family !== family) continue;
+      for (const end of [run.from, run.to]) {
+        if ((end.at === 'space' || end.at === 'fitting') && PROGRAMME_SPACES.includes(end.space)) {
+          out.add(end.space);
+        }
+      }
+    }
+    return out;
+  };
+  const cubicles = ['guestBathCubicle', 'mainBathCubicle', 'mainShowerCubicle'];
+  /** @type {{ family: PlanServiceFamily, column: string, want: string[], why: string }[]} */
+  const programmes = [
+    {
+      family: 'power',
+      column: 'power',
+      want: [...PROGRAMME_SPACES],
+      why: 'everywhere a person goes',
+    },
+    {
+      family: 'lighting',
+      column: 'light',
+      want: [...PROGRAMME_SPACES],
+      why: 'everywhere a person goes',
+    },
+    {
+      family: 'data',
+      column: 'data',
+      want: PROGRAMME_SPACES.filter((s) => !cubicles.includes(s)),
+      why: 'everywhere but the three bath and shower cubicles',
+    },
+    {
+      family: 'heating',
+      column: 'heat',
+      want: [...PROGRAMME_SPACES],
+      why: 'everywhere a person goes',
+    },
+    {
+      family: 'cooling',
+      column: 'cool',
+      want: [
+        'guestRoom',
+        'corridor',
+        'masterBedroom',
+        'bedroomMaleKids',
+        'bedroomFemaleKids',
+        'livingRoom',
+      ],
+      why: "exactly six spaces, the owner's list",
+    },
+  ];
+  for (const { family, want, why } of programmes) {
+    const got = reached(family);
+    for (const space of want) {
+      if (!got.has(space)) fail(`${family} reaches no ${space} — the programme is ${why}`);
+    }
+    for (const space of got) {
+      if (!want.includes(space)) {
+        fail(`${family} terminates in ${space}, which is not on its programme (${why})`);
+      }
+    }
+  }
+  // The roll-call, as a table: one row per space a person uses, one column per
+  // service, so the owner reads the floor rather than five sentences about it.
+  line(`${'space'.padEnd(20)} ${programmes.map((p) => p.column.padStart(5)).join(' ')}`);
+  const reachedBy = new Map(
+    programmes.map((p) => /** @type {[string, Set<string>]} */ ([p.family, reached(p.family)])),
+  );
+  for (const space of PROGRAMME_SPACES) {
+    line(
+      `${space.padEnd(20)} ` +
+        programmes
+          .map((p) => (reachedBy.get(p.family)?.has(space) ? '✓' : '·').padStart(5))
+          .join(' '),
+    );
+  }
+  // Water and gas are delivered to FITTINGS, not to spaces: two taps in one room
+  // are two deliveries, and a room with a sink and no cold feed is not half
+  // served.
+  const takesWater = new Set(['sink', 'bath', 'shower', 'wc', 'washingMachine']);
+  const fittings = FIXTURES.filter((f) => takesWater.has(f.kind)).map((f) => `${f.room} ${f.kind}`);
+  /**
+   * The fittings one family terminates at.
+   *
+   * @param {PlanServiceFamily} family The family.
+   * @returns {Set<string>} The fittings it reaches.
+   */
+  const fittingsReached = (family) => {
+    /** @type {Set<string>} */
+    const out = new Set();
+    for (const run of SERVICE_RUNS) {
+      if (run.family !== family) continue;
+      for (const end of [run.from, run.to])
+        if (end.at === 'fitting') out.add(`${end.space} ${end.kind}`);
+    }
+    return out;
+  };
+  const noHot = fittings.filter((f) => f.endsWith(' wc') || f.endsWith(' washingMachine'));
+  /** @type {{ family: PlanServiceFamily, want: string[], why: string }[]} */
+  const supplies = [
+    { family: 'cold', want: fittings, why: 'every fitting that takes water' },
+    {
+      family: 'hot',
+      want: fittings.filter((f) => !noHot.includes(f)),
+      why: `every fitting that takes water except ${noHot.join(' and ')}`,
+    },
+    { family: 'gas', want: ['kitchen cooker'], why: 'the cooker, and nothing else' },
+  ];
+  for (const { family, want, why } of supplies) {
+    const got = fittingsReached(family);
+    for (const fitting of want)
+      if (!got.has(fitting)) fail(`${family} reaches no ${fitting} — ${why}`);
+    for (const fitting of got) {
+      if (!want.includes(fitting))
+        fail(`${family} is run to ${fitting}, which is not on its programme (${why})`);
+    }
+    line(`${family}: ${got.size}/${want.length} — ${why}`);
+  }
+}
+
 /* ───────────────────────────── report ───────────────────────────── */
 
 console.log('\n── walls per room');
@@ -2385,7 +3300,8 @@ if (notes.length) {
 console.log('');
 if (failures.length === 0) {
   console.log(
-    `PASS — 12 checks, ${walls.length} walls, ${PORTS.length + WINDOWS.length} openings, ${FIXTURES.length} fixtures, everything closes.`,
+    `PASS — 20 checks, ${walls.length} walls, ${PORTS.length + WINDOWS.length} openings, ` +
+      `${FIXTURES.length} fixtures, ${SERVICE_RUNS.length} service runs, everything closes.`,
   );
   process.exit(0);
 }
