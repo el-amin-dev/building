@@ -47,7 +47,7 @@ The whole project hangs on one rule: **the plan is the only copy of the geometry
    own words. Where it disagrees with the plan, the plan wins: it carries his later decisions.
 2. **`src/features/building/domain/sourceOfTruth/plan.ts`** — the building as data. Every
    rectangle on the floor lives here exactly once.
-3. `pnpm verify:plan` — twenty checks over that data before anything else runs: the centimetre
+3. `pnpm verify:plan` — twenty-one checks over that data before anything else runs: the centimetre
    grid, the areas closing on the plot, both dimension chains, the jambs, matricule uniqueness,
    reachability, what a door may open onto, the stair fit, wall thickness per contact, fixture
    clearance and door swings, the isolation register, and the walls built below storey height —

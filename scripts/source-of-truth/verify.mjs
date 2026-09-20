@@ -3292,6 +3292,108 @@ for (const [roomN, list] of byRoom) {
   }
 }
 
+/* ──────── 21. nothing at body height out in the open ──────── */
+
+check('21. A run crosses a walking way overhead, or comes down a wall — never through the middle');
+{
+  /**
+   * THE OWNER'S RULE, IN HIS OWN WORDS: "never pipes or something in middle of
+   * walking way -> always in walls or top."
+   *
+   * It is a rule about where a person's body is, so it is stated in those terms:
+   * below `HEIGHTS.door` a run is in the way, above it a person walks under.
+   * Between the floor and that head height, a run has to be hugging a face of
+   * the space it is in, or standing inside something solid.
+   *
+   * Three exemptions, each for a reason rather than for convenience:
+   *
+   * - **Above head height** is the whole point of the spine. It crosses
+   *   `balconySlabB` at 2.20 m and over the corridor at 2.35–2.60 m, which
+   *   check 19 already measures from the other side.
+   * - **Below the finished floor** is buried. Every drainage branch runs at a
+   *   negative `y`, inside the floor build-up, and nobody walks through a slab.
+   * - **Inside a solid** — a service chamber or a fitting — is not in the open.
+   *   A pipe standing in a sealed cupboard, or dropping down the back of a
+   *   basin, is exactly where a pipe belongs; the floor it would otherwise be
+   *   "crossing" is floor nobody can stand on.
+   *
+   * A CEILING FITTING IS NOT AN EXCEPTION, it simply never triggers this: a
+   * light at 2.65 m and a cooling diffuser at 2.35 m are both above head height,
+   * so the rule leaves them in the middle of the room where a room needs them.
+   * What it moves to the walls is what arrives low — sockets at 0.30 m, ethernet
+   * at 0.30 m, wall heaters at 0.60 m, taps at 0.95 m.
+   *
+   * It caught ten runs the day it was written, and every one of them was a route
+   * a person would have walked into: three crossing the control center at chest
+   * height, sockets and data dropping down the middle of the corridor and the
+   * stairwell, and a radiator feed standing 0.70 m out into the utility room.
+   */
+  const WALKED_KINDS = new Set(['room', 'circulation', 'stairwell', 'openAir']);
+  /** How close to a face still counts as "in the wall zone", in metres. */
+  const WALL_ZONE = 0.3;
+  /** Slack around a solid, so a drop behind a basin is not a hair outside it. */
+  const SOLID_MARGIN = 0.1;
+  /** Samples per segment; a drop is short, so this is plenty. */
+  const SAMPLES = 16;
+
+  const walked = ROOMS.filter((room) => WALKED_KINDS.has(room.kind));
+  const solids = [
+    ...SERVICE_CHAMBERS.map((chamber) => chamber.rect),
+    ...FIXTURES.map((fixture) => fixture.rect),
+  ];
+  const within = (x, z, rect, margin = 0) =>
+    x >= rect[0] - margin && x <= rect[1] + margin && z >= rect[2] - margin && z <= rect[3] + margin;
+  const toFace = (x, z, rect) => Math.min(x - rect[0], rect[1] - x, z - rect[2], rect[3] - z);
+
+  let worstClear = 0;
+  let offenders = 0;
+
+  for (const [index, run] of SERVICE_RUNS.entries()) {
+    for (let leg = 1; leg < run.points.length; leg += 1) {
+      const from = run.points[leg - 1];
+      const to = run.points[leg];
+      let reported = false;
+
+      for (let step = 0; step <= SAMPLES && !reported; step += 1) {
+        const share = step / SAMPLES;
+        const x = from[0] + (to[0] - from[0]) * share;
+        const z = from[1] + (to[1] - from[1]) * share;
+        const y = from[2] + (to[2] - from[2]) * share;
+
+        if (y >= HEIGHTS.door - EPS) continue; // overhead: a person walks under it
+        if (y <= EPS) continue; // buried in the floor build-up
+        if (solids.some((rect) => within(x, z, rect, SOLID_MARGIN))) continue; // inside a solid
+
+        for (const room of walked) {
+          for (const rect of room.rects) {
+            if (!within(x, z, rect)) continue;
+            const clear = toFace(x, z, rect);
+            if (clear <= WALL_ZONE + EPS) continue;
+            if (clear > worstClear) worstClear = clear;
+            offenders += 1;
+            reported = true;
+            fail(
+              `SERVICE_RUNS[${index}] ${run.layer}/${run.family} leg ${leg} stands ` +
+                `${m(clear)} clear of any wall of ${room.id} at (${n(x)}, ${n(z)}) and only ` +
+                `${m(y)} above the floor — that is the middle of a walking way. A run crosses ` +
+                `overhead, above ${m(HEIGHTS.door)}, or it comes down a wall`,
+            );
+            break;
+          }
+          if (reported) break;
+        }
+      }
+    }
+  }
+
+  if (offenders === 0) {
+    line(
+      `no run stands in open floor below ${m(HEIGHTS.door)} — every low outlet ` +
+        `comes down a wall, and everything crossing a room does it overhead`,
+    );
+  }
+}
+
 if (notes.length) {
   console.log('\n── notes');
   for (const note of notes) console.log(`   ${note}`);
@@ -3300,7 +3402,7 @@ if (notes.length) {
 console.log('');
 if (failures.length === 0) {
   console.log(
-    `PASS — 20 checks, ${walls.length} walls, ${PORTS.length + WINDOWS.length} openings, ` +
+    `PASS — 21 checks, ${walls.length} walls, ${PORTS.length + WINDOWS.length} openings, ` +
       `${FIXTURES.length} fixtures, ${SERVICE_RUNS.length} service runs, everything closes.`,
   );
   process.exit(0);

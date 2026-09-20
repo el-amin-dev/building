@@ -2588,8 +2588,8 @@ const DRY_RUNS = [
     to: { at: 'space', space: 'utilityRoom' },
     points: [
       [20.3, 9.6, 2.35],
-      [21.45, 9.6, 2.35],
-      [21.45, 9.6, 0.3],
+      [20.65, 9.6, 2.35],
+      [20.65, 9.6, 0.3],
     ],
   },
   {
@@ -2731,7 +2731,8 @@ const DRY_RUNS = [
     to: { at: 'space', space: 'corridor' },
     points: [
       [11.1, 4.75, 2.5],
-      [11.1, 4.75, 0.3],
+      [11.1, 4.15, 2.5],
+      [11.1, 4.15, 0.3],
     ],
   },
   {
@@ -2741,8 +2742,8 @@ const DRY_RUNS = [
     to: { at: 'space', space: 'stairs' },
     points: [
       [5.6, 4.75, 2.5],
-      [3.7, 4.75, 2.5],
-      [3.7, 4.75, 0.3],
+      [1.75, 4.75, 2.5],
+      [1.75, 4.75, 0.3],
     ],
   },
   {
@@ -2751,9 +2752,8 @@ const DRY_RUNS = [
     from: { at: 'chamber', chamber: 'electricalChamber' },
     to: { at: 'space', space: 'controlCenter' },
     points: [
-      [2.9, 9.05, 1.2],
-      [2.9, 8.2, 1.2],
-      [2.9, 8.2, 0.3],
+      [2.9, 9.35, 1.2],
+      [2.9, 9.35, 0.3],
     ],
   },
 
@@ -2961,9 +2961,8 @@ const DRY_RUNS = [
     from: { at: 'chamber', chamber: 'electricalChamber' },
     to: { at: 'space', space: 'controlCenter' },
     points: [
-      [2.78, 9.05, 1.2],
-      [2.78, 8.2, 1.2],
-      [2.78, 8.2, 2.65],
+      [2.78, 9.35, 1.2],
+      [2.78, 9.35, 2.65],
     ],
   },
 
@@ -3006,8 +3005,8 @@ const DRY_RUNS = [
     to: { at: 'space', space: 'utilityRoom' },
     points: [
       [20.3, 9.35, 2.5],
-      [22, 9.35, 2.5],
-      [22, 9.35, 0.3],
+      [20.65, 9.35, 2.5],
+      [20.65, 9.35, 0.3],
     ],
   },
   {
@@ -3116,7 +3115,8 @@ const DRY_RUNS = [
     to: { at: 'space', space: 'corridor' },
     points: [
       [11.65, 4.45, 2.5],
-      [11.65, 4.45, 0.3],
+      [11.65, 4.15, 2.5],
+      [11.65, 4.15, 0.3],
     ],
   },
   {
@@ -3126,8 +3126,8 @@ const DRY_RUNS = [
     to: { at: 'space', space: 'stairs' },
     points: [
       [5.6, 4.45, 2.5],
-      [4.25, 4.45, 2.5],
-      [4.25, 4.45, 0.3],
+      [1.75, 4.45, 2.5],
+      [1.75, 4.45, 0.3],
     ],
   },
   {
@@ -3136,9 +3136,8 @@ const DRY_RUNS = [
     from: { at: 'chamber', chamber: 'electricalChamber' },
     to: { at: 'space', space: 'controlCenter' },
     points: [
-      [2.52, 9.05, 1.2],
-      [2.52, 8.2, 1.2],
-      [2.52, 8.2, 0.3],
+      [2.52, 9.35, 1.2],
+      [2.52, 9.35, 0.3],
     ],
   },
 
@@ -3149,11 +3148,11 @@ const DRY_RUNS = [
     from: { at: 'space', space: 'ccBalcony' },
     to: { at: 'space', space: 'voidEast' },
     points: [
-      [4.5, 9.45, 0.9],
-      [4.5, 9.45, 2.55],
+      [4.2, 9.45, 0.9],
+      [4.2, 9.45, 2.55],
       [20.3, 9.45, 2.55],
     ],
-    why: 'The cooling plant is an OUTDOOR unit standing on the control-center balcony, not a compartment of the control center. A condenser rejects heat and needs open air, so it could not go in the sealed electrical box — and the wet-and-gas box would have stood a refrigeration unit beside a burner. It is the one service whose source is a place rather than a chamber.',
+    why: 'The cooling plant is an OUTDOOR unit standing on the control-center balcony, not a compartment of the control center. A condenser rejects heat and needs open air, so it could not go in the sealed electrical box — and the wet-and-gas box would have stood a refrigeration unit beside a burner. It is the one service whose source is a place rather than a chamber, and it stands hard against the west wall of that balcony, so its riser is not in the middle of a surface somebody walks along.',
   },
   {
     layer: 'climate',
@@ -3281,8 +3280,8 @@ const DRY_RUNS = [
     to: { at: 'space', space: 'utilityRoom' },
     points: [
       [20.3, 9, 2.35],
-      [21.25, 9, 2.35],
-      [21.25, 9, 0.6],
+      [20.65, 9, 2.35],
+      [20.65, 9, 0.6],
     ],
   },
   {
@@ -3424,7 +3423,8 @@ const DRY_RUNS = [
     to: { at: 'space', space: 'corridor' },
     points: [
       [10.9, 5.3, 2.35],
-      [10.9, 5.3, 0.6],
+      [10.9, 4.15, 2.35],
+      [10.9, 4.15, 0.6],
     ],
   },
   {
@@ -3434,8 +3434,8 @@ const DRY_RUNS = [
     to: { at: 'space', space: 'stairs' },
     points: [
       [5.6, 5.3, 2.35],
-      [3.5, 5.3, 2.35],
-      [3.5, 5.3, 0.6],
+      [1.75, 5.3, 2.35],
+      [1.75, 5.3, 0.6],
     ],
   },
   {
@@ -3444,9 +3444,8 @@ const DRY_RUNS = [
     from: { at: 'chamber', chamber: 'wetGasChamber' },
     to: { at: 'space', space: 'controlCenter' },
     points: [
-      [2.15, 9.05, 1.2],
-      [2.15, 8.2, 1.2],
-      [2.15, 8.2, 0.6],
+      [2.15, 9.35, 1.2],
+      [2.15, 9.35, 0.6],
     ],
   },
 ] as const satisfies readonly PlanServiceRun[];
