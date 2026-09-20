@@ -1,15 +1,23 @@
-import { render } from '@testing-library/react';
+import { act, render } from '@testing-library/react';
 import { isValidElement } from 'react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useLayerStore } from '../application/layerStore.ts';
 import { getBuiltFloor } from '../domain/builtFloor.ts';
 import type { PlanBox } from '../domain/planBox.ts';
+import { SERVICE_LAYERS } from '../domain/sourceOfTruth/plan.ts';
+import type { PlanServiceLayerKey } from '../domain/sourceOfTruth/plan.ts';
 import { MAX_FLOOR_COUNT, MIN_FLOOR_COUNT } from '../domain/storeys.ts';
 import { FloorModel } from './FloorModel.tsx';
-import { FLOOR_MATERIAL_KEYS, getCeilingLayout, getFloorLayout } from './floorLayout.ts';
+import {
+  BUCKET_RULES,
+  FLOOR_MATERIAL_KEYS,
+  getCeilingLayout,
+  getFloorLayout,
+} from './floorLayout.ts';
 import type { FloorLayout } from './floorLayout.ts';
 import { MATERIAL_PALETTE } from './floorMaterials.ts';
-import type { FloorMaterialKey } from './floorMaterials.ts';
+import type { FloorMaterialKey, FloorMaterialSpec } from './floorMaterials.ts';
 import { createMergedBoxGeometry } from './mergeBoxes.ts';
 import type { MergedBoxesMeshProps } from './MergedBoxesMesh.tsx';
 import { getStoreyLevelsFor, getTopStoreyLevelFor } from './storeyLevels.ts';
@@ -20,11 +28,32 @@ interface RecordedMesh {
   readonly boxes: readonly PlanBox[];
   /** The storey levels handed to it: one mesh is drawn at each. */
   readonly levels: readonly number[];
+  /**
+   * Whether the model asked for the bucket to be drawn.
+   *
+   * Recorded rather than read back off the DOM because it cannot be read back off the DOM:
+   * React drops a boolean prop on an unrecognised tag instead of stringifying it
+   * (`MergedBoxesMesh.test.tsx`). This is where the checkbox behaviour is decided, so this
+   * is where it is asserted.
+   */
+  readonly visible: boolean | undefined;
   /** The material element the model nested in the mesh. */
   readonly material: ReactNode;
 }
 
-const { meshes } = vi.hoisted(() => ({ meshes: [] as unknown[] }));
+const { meshes, textures } = vi.hoisted(() => ({
+  meshes: [] as unknown[],
+  // One stub per generator. Under jsdom the real ones return `undefined` for want of a
+  // canvas, which makes "does this bucket carry a grain" unanswerable — and that is exactly
+  // the question the `finishing` checkbox turns on. With a stub, a `map` prop is an object
+  // that can be identified, so stripping the finish becomes observable instead of vacuous.
+  textures: {
+    oak: { token: 'oak-grain' },
+    carpet: { token: 'carpet-weave' },
+    marble: { token: 'marble-vein' },
+    boucle: { token: 'boucle-loop' },
+  },
+}));
 
 // jsdom has no WebGL and the merge itself is covered by `mergeBoxes.test.ts`, so the baked
 // geometry is a stub. It is spied on rather than skipped because "a stepper press rebuilds no
@@ -41,15 +70,49 @@ vi.mock('./MergedBoxesMesh.tsx', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./MergedBoxesMesh.tsx')>();
   return {
     MergedBoxesMesh: (props: MergedBoxesMeshProps) => {
-      meshes.push({ boxes: props.boxes, levels: props.levels, material: props.children });
+      meshes.push({
+        boxes: props.boxes,
+        levels: props.levels,
+        visible: props.visible,
+        material: props.children,
+      });
       return <actual.MergedBoxesMesh {...props} />;
     },
   };
 });
 
+// The generated textures are covered by `textures.ts`'s own suite; here they are stubbed so
+// that the presence of a grain on a bucket is something an assertion can see.
+vi.mock('./textures.ts', () => ({
+  createOakTexture: () => textures.oak,
+  createCarpetTexture: () => textures.carpet,
+  createMarbleTexture: () => textures.marble,
+  createBoucleTexture: () => textures.boucle,
+}));
+
 const createGeometry = vi.mocked(createMergedBoxGeometry);
 
 const MATERIAL_ELEMENT = 'meshStandardMaterial';
+
+/**
+ * The grain each bucket is expected to carry, written out rather than imported.
+ *
+ * `FloorModel`'s own `FAMILY_TEXTURE` is module-private and is the thing under test, so this
+ * is the second opinion: a family that lost its texture, or gained one it should not have,
+ * has to be moved here too. `fabricJoinery` is on it deliberately — the pass counter is the
+ * same oak as the wardrobes and must keep the same grain; the split between them is about
+ * which checkbox owns the box, never about how it looks.
+ */
+const FAMILY_TEXTURE_TOKEN: Partial<Record<FloorMaterialKey, unknown>> = Object.freeze({
+  slabRoom: textures.carpet,
+  slabCirculation: textures.oak,
+  slabServiced: textures.marble,
+  stairs: textures.oak,
+  joinery: textures.oak,
+  fabricJoinery: textures.oak,
+  worktop: textures.marble,
+  softFurnishing: textures.boucle,
+});
 
 /**
  * Everything drawn in both views, bucketed the way `FloorModel` buckets it.
@@ -71,18 +134,22 @@ const CEILING_KEYS: readonly FloorMaterialKey[] = ['ceiling', 'lightPanel'];
 
 /**
  * Walls, parapets, four kinds of slab (room, circulation, open air and serviced), railings,
- * steps, the television panel and the sanitary ware — and since Part 4 the five families a
- * room's contents are drawn with: joinery, worktops, appliances, soft furnishings and the
- * hung canvas.
+ * steps, the television panel and the sanitary ware; the five families a room's contents are
+ * drawn with (joinery, worktops, appliances, soft furnishings and the hung canvas); and since
+ * Part 5 the millwork that is the building rather than its contents, plus the ten service
+ * buckets — eight run hues, the boxing, and the two sealed chambers.
  *
- * Fifteen meshes for a furnished and fully decorated floor, and it **went down** when the
- * scheme went whole-building (ADR-020): the four `paris*` families that painted one room are
- * gone, because a scheme every room takes is not an override and its boxes belong in the
- * families they always belonged to. A mesh is per **material** and not per object, so the
- * boxes of every wardrobe on the storey are one merged geometry (ADR-014) — which is why
- * decorating the plan's twenty-one spaces costs four meshes fewer than decorating one did.
+ * **This number does not move when a checkbox does**, and that is the whole point of Part 5.
+ * Twenty-six meshes per storey with every layer ticked, and twenty-six with none of them
+ * ticked: a hidden bucket is a mesh with `visible={false}`, never an absent one, because
+ * unmounting it would dispose the merged geometry and the next tick would re-merge and
+ * re-upload every box of it. A mesh is per **material** and not per object, so the boxes of
+ * every wardrobe on the storey are still one merged geometry (ADR-014).
  */
-const ALWAYS_DRAWN_COUNT = 15;
+const ALWAYS_DRAWN_COUNT = 26;
+
+/** Buckets the palette names that hold no box at all: the two ceiling ones and the finish. */
+const EMPTY_KEYS: readonly FloorMaterialKey[] = ['ceiling', 'lightPanel', 'plainSurface'];
 
 const ONCE = 1;
 const NONE = 0;
@@ -135,29 +202,87 @@ function materialPropsOf(mesh: RecordedMesh): Record<string, unknown> {
 }
 
 /**
- * Names the surface family a recorded mesh draws.
+ * Names the BUCKET a recorded mesh draws.
  *
- * Identified by colour, roughness and metalness together, not by colour alone. Since the
- * scheme went whole-building (ADR-020) two families share a hue on purpose — the millwork and
- * the stair treads are one oak — and a lookup by colour would hand back whichever of them
- * comes first in the palette, so every per-bucket assertion below would quietly check the
- * wrong mesh. The three together are unique across the palette, and `floorMaterials.test.ts`
- * is what keeps them so.
+ * Read off the material's `name`, which the model stamps with the bucket's own key. It used
+ * to be looked up by colour, roughness and metalness instead, and Part 5 killed that twice
+ * over: `fabricJoinery` is `joinery`'s oak down to the last setting, so the lookup would
+ * hand back whichever came first in the palette; and a bucket with the finish off wears the
+ * `plainSurface` spec, so every re-surfaced mesh would come back named `plainSurface` and
+ * every per-bucket assertion here would silently check the wrong thing. A bucket has to be
+ * identifiable independently of what it is currently painted with — that is the whole
+ * subject of `BUCKET_RULES`.
  *
  * @param mesh - The recorded mesh.
- * @returns The palette key whose settings the mesh's material carries.
- * @throws Error when no palette entry matches.
+ * @returns The palette key its material is named after.
+ * @throws Error when the material carries no name, or a name that is no palette key.
  */
 function materialKeyOf(mesh: RecordedMesh): FloorMaterialKey {
-  const { color, roughness, metalness } = materialPropsOf(mesh);
-  const key = FLOOR_MATERIAL_KEYS.find((candidate) => {
-    const spec = MATERIAL_PALETTE[candidate];
-    return spec.color === color && spec.roughness === roughness && spec.metalness === metalness;
-  });
+  const { name } = materialPropsOf(mesh);
+  const key = FLOOR_MATERIAL_KEYS.find((candidate) => candidate === name);
   if (key === undefined) {
-    throw new Error(`A mesh used the colour ${String(color)}, which is in no palette entry`);
+    throw new Error(`A mesh's material was named ${String(name)}, which is no palette key`);
   }
   return key;
+}
+
+/**
+ * Returns the grain a recorded mesh was handed, if any.
+ *
+ * @param mesh - The recorded mesh.
+ * @returns The stub its `map` carries, or `undefined` when it was given no texture.
+ */
+function textureOf(mesh: RecordedMesh): unknown {
+  return materialPropsOf(mesh).map;
+}
+
+/** The buckets drawn hidden, in render order: the ones a checkbox is currently suppressing. */
+function hiddenKeys(): readonly FloorMaterialKey[] {
+  return recorded()
+    .filter((mesh) => mesh.visible === false)
+    .map((mesh) => materialKeyOf(mesh));
+}
+
+/**
+ * The surface of a spec, as the one string that tells two finishes apart.
+ *
+ * @param spec - A palette spec, or the material props a mesh was handed.
+ * @returns Its colour, roughness and metalness, joined.
+ */
+function finishOf(spec: Record<string, unknown> | FloorMaterialSpec): string {
+  const { color, roughness, metalness } = spec as Record<string, unknown>;
+  return `${String(color)}/${String(roughness)}/${String(metalness)}`;
+}
+
+/** The buckets currently wearing the plain finish rather than their own. */
+function plainKeys(): readonly FloorMaterialKey[] {
+  const plain = finishOf(MATERIAL_PALETTE.plainSurface);
+  return recorded()
+    .filter((mesh) => finishOf(materialPropsOf(mesh)) === plain)
+    .map((mesh) => materialKeyOf(mesh));
+}
+
+/** Every layer key the plan declares, which is every checkbox the panel offers. */
+const LAYER_KEYS: readonly PlanServiceLayerKey[] = SERVICE_LAYERS.map((layer) => layer.key);
+
+/**
+ * The buckets a given checkbox owns, read off the exported table.
+ *
+ * @param layer - The checkbox asked about.
+ * @returns Every palette key whose `hiddenBy` is that layer, in palette order.
+ */
+function bucketsOwnedBy(layer: PlanServiceLayerKey): readonly FloorMaterialKey[] {
+  return FLOOR_MATERIAL_KEYS.filter((key) => BUCKET_RULES[key].hiddenBy === layer);
+}
+
+/** Sets every checkbox at once, the way the panel's show-all and hide-all do. */
+function setEveryLayer(shown: boolean): void {
+  const store = useLayerStore.getState();
+  if (shown) {
+    store.showAllLayers();
+  } else {
+    store.hideAllLayers();
+  }
 }
 
 /** The families drawn, in render order. */
@@ -197,6 +322,9 @@ describe('FloorModel', () => {
   beforeEach(() => {
     meshes.length = NONE;
     createGeometry.mockClear();
+    // The store is global and its default is the naked building, so every case starts from
+    // it and a case that ticks a box cannot leak into the next one.
+    setEveryLayer(false);
   });
 
   it('draws one mesh per non-empty bucket, in palette order', () => {
@@ -214,47 +342,58 @@ describe('FloorModel', () => {
     for (const mesh of recorded()) {
       expect(mesh.boxes.length, materialKeyOf(mesh)).toBeGreaterThan(NONE);
     }
-    // ...and the buckets left empty are exactly the two the exterior view drops, so a
-    // family that silently stopped producing solids cannot hide among them.
+    // ...and the buckets left empty are exactly the two the exterior view drops and the
+    // plain finish, which is a material rather than a group of solids and owns no box by
+    // design. A family that silently stopped producing solids cannot hide among them.
     const empty = FLOOR_MATERIAL_KEYS.filter((key) => ALWAYS_DRAWN_LAYOUT[key].length === NONE);
-    expect(empty).toStrictEqual([...CEILING_KEYS]);
-    for (const key of CEILING_KEYS) {
+    expect(empty).toStrictEqual([...EMPTY_KEYS]);
+    for (const key of EMPTY_KEYS) {
       expect(drawnKeys(), key).not.toContain(key);
     }
   });
 
   it('draws every solid of the families it is given', () => {
     /**
-     * The plumbed-in ware: three basins, two baths, one shower tray and the WC, which is
-     * two boxes because a pan and its cistern are not one shape. The laundry's hand-wash
-     * sink is in that count — brief §7.1 asks for it, and it is why the laundry is tiled.
+     * The plumbed-in ware: four sinks — the two sanitairs', the kitchen's and the
+     * laundry's — two baths, one shower tray and the WC, which is two boxes because a pan
+     * and its cistern are not one shape. The laundry's hand-wash sink is in that count:
+     * brief §7.1 asks for it, and it is why the laundry is tiled.
      *
      * One tray and no longer two: the guest shower is gone, which is what brief §7.3's own
      * table asked for all along — "Guest Sanitair | Sink (open) + Bath — NO shower" — so the
      * only tray left on the floor is the main suite's.
      */
-    const sanitaryWareCount = 8;
+    const sanitaryWareCount = 9;
     /**
      * The made-of-board family: bed bases and wardrobes, nightstands and storage units, the
      * desks' pedestals and the coffee tables' bases, the library's plinth and its shelving,
      * the kitchen's two counter carcasses, the services cabinet, and the plinth, door band
      * and masonry base the white goods are drawn standing on.
      *
-     * Four of those boxes are the guest room's pass counter — carcass, two cheeks and the
-     * lintel over the bore, the fifth being its ledge, which is a worktop (`fixtures.ts`).
-     * The sofas contribute none: a seat and a back are both upholstery.
+     * Five boxes LEFT this count in Part 5 and are now {@link fabricJoineryCount}: the
+     * guest room's pass counter — carcass, two cheeks, the lintel over the bore and its
+     * ledge — which is the building and not the room's contents, and must not go when the
+     * furniture does. The sofas contribute none: a seat and a back are both upholstery.
      */
-    const joineryCount = 32;
+    const joineryCount = 27;
     /** Mattresses, and the seat and the back of each of the four sofas. */
     const softFurnishingCount = 13;
     /**
-     * Counter and desk tops, the cooker's hob, the pass counter's ledge, and two coffee
-     * tables — the living room's, and the one the guest room gained when it became a
-     * sitting room.
+     * Counter and desk tops, the cooker's hob, and two coffee tables — the living room's,
+     * and the one the guest room gained when it became a sitting room. The pass counter's
+     * ledge is no longer here: it is a worktop by shape and the building by function, so
+     * it went to the fabric bucket with the rest of the counter.
      */
-    const worktopCount = 9;
+    const worktopCount = 8;
     /** The white goods: fridge, cooker body, washing machine, barbecue bed. */
     const applianceCount = 5;
+    /**
+     * The building's own millwork: the food-pass counter's carcass, its two cheeks, the
+     * lintel over the bore and the ledge. Five boxes that the `furniture` checkbox may not
+     * touch — hiding them would not clear a room, it would open a 0.30 m slot from the
+     * guest room into the kitchen (ADR-021).
+     */
+    const fabricJoineryCount = 5;
     /**
      * One ceiling box per clear rect of every roofed space, and the stairwell is not one:
      * the fifteen roofed spaces plus the stairwell are drawn as nineteen rects between
@@ -283,6 +422,7 @@ describe('FloorModel', () => {
     // is `joinery` and its sofas are `softFurnishing`, like every other room's, which is
     // exactly what taking the scheme whole-building means. The counts above absorbed them.
     expect(boxesOf(drawn, 'artwork')).toHaveLength(1);
+    expect(boxesOf(drawn, 'fabricJoinery')).toHaveLength(fabricJoineryCount);
     expect(boxesOf(drawn, 'ceiling')).toHaveLength(ceilingBoxCount);
     expect(boxesOf(drawn, 'lightPanel')).toHaveLength(lightPanelCount);
     expect(ceilings.lightPanel.length).toBeLessThan(ceilings.ceiling.length);
@@ -298,15 +438,23 @@ describe('FloorModel', () => {
   });
 
   it('gives every mesh the palette material of its key', () => {
+    // Every checkbox ticked: that state is v1.0.0 pixel for pixel (`SERVICE_LAYERS`), which
+    // is the state in which a bucket wears its OWN finish. With `finishing` unticked the
+    // finish-bearing buckets deliberately wear another one, and that is a separate case.
+    setEveryLayer(true);
+
     render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
 
     for (const mesh of recorded()) {
       const key = materialKeyOf(mesh);
-      // `map` is passed for every family and is the texture only where one exists — and
-      // under jsdom there is no canvas to draw on, so it is `undefined` throughout. What
-      // this test is for is that no colour or roughness is invented in the scene layer.
-      const { map, ...props } = materialPropsOf(mesh) as Record<string, unknown>;
-      expect(map, key).toBeUndefined();
+      // `map` is passed for every family and is the family's own grain only where one
+      // exists. What this test is for is that no colour or roughness is invented in the
+      // scene layer, and that every bucket the scheme reaches really is handed its texture.
+      const { map, name, ...props } = materialPropsOf(mesh);
+      expect(map, key).toBe(FAMILY_TEXTURE_TOKEN[key]);
+      // The material is named after its bucket, which is how a mesh is attributed to a
+      // checkbox both here and in a debugger.
+      expect(name, key).toBe(key);
       expect(props, key).toStrictEqual({ ...MATERIAL_PALETTE[key] });
     }
   });
@@ -378,6 +526,9 @@ describe('FloorModel, stacked', () => {
   beforeEach(() => {
     meshes.length = NONE;
     createGeometry.mockClear();
+    // The store is global and its default is the naked building, so every case starts from
+    // it and a case that ticks a box cannot leak into the next one.
+    setEveryLayer(false);
   });
 
   it('draws a one-storey building exactly as it was drawn before it could be stacked', () => {
@@ -460,5 +611,243 @@ describe('FloorModel, stacked', () => {
 
     expect(renderedMeshes(container)).toHaveLength(ALWAYS_DRAWN_COUNT * MAX_FLOOR_COUNT);
     expect(new Set(renderedLevels(container)).size).toBe(MAX_FLOOR_COUNT);
+  });
+});
+
+/**
+ * The checkboxes of Part 5, applied to the building.
+ *
+ * Every case here is about {@link BUCKET_RULES} being obeyed, not about what is in it: the
+ * table itself is the design decision and is read out of the module, so that a bucket moved
+ * from one checkbox to another shows up as a deliberate edit there rather than as a test
+ * quietly agreeing with whatever the code does. What is asserted is the three things the
+ * table exists to guarantee — that a checkbox hides exactly what it owns, that hiding
+ * NEVER changes which meshes exist, and that `finishing` re-surfaces rather than removes.
+ */
+describe('FloorModel, the build layers', () => {
+  beforeEach(() => {
+    meshes.length = NONE;
+    createGeometry.mockClear();
+    setEveryLayer(false);
+  });
+
+  it('draws the naked building, and only the building, with no checkbox ticked', () => {
+    render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
+
+    // Nothing ticked is NAKED WALLS: structure, slabs, ceilings, the stairs, the railings,
+    // the television panel — plus the millwork and the chambers that ARE the building, and
+    // no service, no furniture and no finish.
+    const building = [...ALWAYS_DRAWN_KEYS, ...CEILING_KEYS].filter(
+      (key) => BUCKET_RULES[key].hiddenBy === null,
+    );
+    const shownKeys = recorded()
+      .filter((mesh) => mesh.visible === true)
+      .map((mesh) => materialKeyOf(mesh));
+
+    expect(shownKeys).toStrictEqual(building);
+    expect(shownKeys).toContain('wall');
+    expect(shownKeys).toContain('fabricJoinery');
+    expect(shownKeys).toContain('serviceChamber');
+    expect(shownKeys).not.toContain('joinery');
+    expect(shownKeys).not.toContain('serviceDrainage');
+  });
+
+  it('hides nothing at all once every checkbox is ticked', () => {
+    setEveryLayer(true);
+
+    render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
+
+    // Everything ticked reproduces the finished, furnished, fully serviced floor.
+    expect(hiddenKeys()).toStrictEqual([]);
+    expect(plainKeys()).toStrictEqual([]);
+    expect(drawnKeys()).toStrictEqual([...ALWAYS_DRAWN_KEYS, ...CEILING_KEYS]);
+  });
+
+  it.each(LAYER_KEYS)('hides exactly the buckets the table gives to %s', (layer) => {
+    setEveryLayer(true);
+    act(() => {
+      useLayerStore.getState().setLayer(layer, false);
+    });
+
+    render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
+
+    // Every bucket that checkbox owns and has a box to draw, and not one bucket more: this
+    // is what lets a viewer name the checkbox responsible for a missing pixel.
+    const owned = bucketsOwnedBy(layer).filter(
+      (key) => ALWAYS_DRAWN_LAYOUT[key].length > NONE || CEILING_KEYS.includes(key),
+    );
+    expect(hiddenKeys()).toStrictEqual(owned);
+  });
+
+  it('gives every checkbox something to do', () => {
+    // Guards the table against a row nobody can see the effect of: a checkbox that hides
+    // nothing is a control that lies about what it does. `finishing` earns its place twice
+    // over — it hides the artwork AND re-surfaces the scheme — and is asserted below.
+    for (const layer of LAYER_KEYS) {
+      const owned = bucketsOwnedBy(layer).filter((key) => ALWAYS_DRAWN_LAYOUT[key].length > NONE);
+      const resurfaced = FLOOR_MATERIAL_KEYS.filter((key) => BUCKET_RULES[key].finish);
+      const effect = layer === 'finishing' ? [...owned, ...resurfaced] : owned;
+
+      expect(effect, layer).not.toHaveLength(NONE);
+    }
+  });
+
+  it('draws exactly the same meshes whether the layers are on or off', () => {
+    const { container, rerender } = render(
+      <FloorModel showCeilings={true} floorCount={THREE_STOREY_COUNT} />,
+    );
+    const naked = renderedMeshes(container).length;
+    const nakedLevels = renderedLevels(container);
+    const nakedBoxes = boxesByKey();
+
+    act(() => {
+      setEveryLayer(true);
+    });
+    rerender(<FloorModel showCeilings={true} floorCount={THREE_STOREY_COUNT} />);
+
+    // The claim of the whole part: a checkbox changes `visible`, never the tree. Same mesh
+    // count, same levels, and the very same box arrays — so the same baked geometry.
+    expect(renderedMeshes(container)).toHaveLength(naked);
+    expect(renderedLevels(container)).toStrictEqual(nakedLevels);
+    const lit = boxesByKey();
+    for (const key of [...ALWAYS_DRAWN_KEYS, ...CEILING_KEYS]) {
+      expect(boxesOf(lit, key), key).toBe(boxesOf(nakedBoxes, key));
+    }
+  });
+
+  it('bakes no geometry however often the checkboxes are flipped', () => {
+    const { rerender } = render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
+    const bakedOnMount = createGeometry.mock.calls.length;
+    expect(bakedOnMount).toBeGreaterThan(NONE);
+
+    for (const layer of LAYER_KEYS) {
+      act(() => {
+        useLayerStore.getState().toggleLayer(layer);
+      });
+      rerender(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
+      act(() => {
+        useLayerStore.getState().toggleLayer(layer);
+      });
+      rerender(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
+    }
+
+    // Eighteen flips over nine checkboxes and not one further merge. Had the buckets been
+    // mounted conditionally instead, each of those flips would have disposed and re-merged
+    // every box of the bucket — a rebuild of the floor per click.
+    expect(createGeometry).toHaveBeenCalledTimes(bakedOnMount);
+  });
+});
+
+describe('FloorModel, the finish', () => {
+  beforeEach(() => {
+    meshes.length = NONE;
+    createGeometry.mockClear();
+    setEveryLayer(true);
+  });
+
+  it('re-surfaces the finish-bearing buckets, and adds or removes no box', () => {
+    const { rerender } = render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
+    const finished = boxesByKey();
+    const finishedKeys = drawnKeys();
+
+    act(() => {
+      useLayerStore.getState().setLayer('finishing', false);
+    });
+    meshes.length = NONE;
+    rerender(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
+
+    // Same buckets, same boxes, one material swapped: `finishing` is the one checkbox that
+    // is not a set of solids at all.
+    expect(drawnKeys()).toStrictEqual(finishedKeys);
+    const plain = boxesByKey();
+    for (const key of finishedKeys) {
+      expect(boxesOf(plain, key), key).toBe(boxesOf(finished, key));
+    }
+    const expected = FLOOR_MATERIAL_KEYS.filter(
+      (key) => BUCKET_RULES[key].finish && ALWAYS_DRAWN_LAYOUT[key].length > NONE,
+    );
+    expect(plainKeys()).toStrictEqual(expected);
+    expect(expected).toContain('slabRoom');
+    expect(expected).toContain('joinery');
+    expect(expected).toContain('fabricJoinery');
+  });
+
+  it('never looks a texture up for a re-surfaced bucket', () => {
+    act(() => {
+      useLayerStore.getState().setLayer('finishing', false);
+    });
+
+    render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
+
+    // A screed has no grain, and lending it the oak's would be a finish by another name.
+    // Every one of these buckets HAS a texture to be handed, and none of them is handed it.
+    const stripped = recorded().filter((mesh) => BUCKET_RULES[materialKeyOf(mesh)].finish);
+
+    expect(stripped.length).toBeGreaterThan(NONE);
+    for (const mesh of stripped) {
+      const key = materialKeyOf(mesh);
+      expect(FAMILY_TEXTURE_TOKEN[key], key).toBeDefined();
+      expect(textureOf(mesh), key).toBeUndefined();
+    }
+  });
+
+  it('hides the artwork rather than re-surfacing it', () => {
+    act(() => {
+      useLayerStore.getState().setLayer('finishing', false);
+    });
+
+    render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
+
+    // A canvas hung on a wall has no unfinished state: plain screed over a painting is not
+    // what an unfinished flat looks like, an empty wall is.
+    expect(hiddenKeys()).toStrictEqual(['artwork']);
+    expect(plainKeys()).not.toContain('artwork');
+  });
+
+  it('leaves the walls and the ceilings alone, which are already plain', () => {
+    act(() => {
+      useLayerStore.getState().setLayer('finishing', false);
+    });
+
+    render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
+
+    // Matte white plaster is what the building is handed over as, so there is nothing for
+    // this checkbox to strip off it and re-surfacing it would be a change with no meaning.
+    for (const key of ['wall', 'parapet', 'ceiling'] as const) {
+      expect(plainKeys(), key).not.toContain(key);
+    }
+  });
+
+  it('keeps the building standing when the furniture goes', () => {
+    act(() => {
+      useLayerStore.getState().setLayer('furniture', false);
+    });
+
+    render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
+
+    // The two fittings that are the building: the food-pass counter, whose going would open
+    // a 0.30 m slot from the guest room into the kitchen, and the sealed control-center
+    // chambers, whose going would leave the plant of the floor standing in open air.
+    expect(hiddenKeys()).toStrictEqual([
+      'sanitaryWare',
+      'appliance',
+      'joinery',
+      'worktop',
+      'softFurnishing',
+    ]);
+    expect(hiddenKeys()).not.toContain('fabricJoinery');
+    expect(hiddenKeys()).not.toContain('serviceChamber');
+  });
+
+  it('gives the boxing its own checkbox, separate from what it boxes in', () => {
+    act(() => {
+      useLayerStore.getState().setLayer('covers', false);
+    });
+
+    render(<FloorModel showCeilings={true} floorCount={ONE_STOREY_COUNT} />);
+
+    // Covers on with the runs off is the finished room; both on is what is inside the
+    // boxing. Neither question is answerable if the boxing hides with the pipe.
+    expect(hiddenKeys()).toStrictEqual(['serviceCover']);
   });
 });

@@ -163,6 +163,23 @@ const SERVICE_COVER_LIGHT_GREY = '#cfd3d8';
 /** The two sealed control-center chambers and their vent ducts, a step down from the boxing. */
 const SERVICE_CHAMBER_GREY = '#8d9299';
 
+/*
+ * The building's plain finish, and the one key that is not a surface family at all.
+ *
+ * `finishing` is a checkbox, not a set of boxes: with it off the SAME geometry is drawn
+ * in the plain finish the building would be handed over in, and no box is added or
+ * removed (`SERVICE_LAYERS`, `finishing`). That is only true if the unfinished state is
+ * one material every finish-bearing family can be re-surfaced with, so there is exactly
+ * one of them rather than a second, unfinished palette.
+ *
+ * Raw sand-cement screed and bare plaster are the same thing to look at: a matte,
+ * slightly warm grey with nothing on it. Drawn with no `map` on purpose — a screed has
+ * no grain, and lending it the oak's would be a finish by another name.
+ */
+
+/** Bare screed and unpainted plaster: what the building looks like before it is finished. */
+const PLAIN_SCREED_GREY = '#bdb9b3';
+
 /** Fully diffuse finish: plaster and raw screed scatter all the light they receive. */
 const MATTE_ROUGHNESS = 0.9;
 /** Slightly sealed finish: a painted ceiling, a floor tile. */
@@ -208,6 +225,11 @@ export type FloorMaterialKey =
   | 'worktop'
   | 'softFurnishing'
   | 'artwork'
+  // The building's own fabric that happens to be built as a fitting (Part 5).
+  | 'fabricJoinery'
+  // The unfinished surface the `finishing` checkbox re-surfaces a finish-bearing family
+  // with. A material, not a group of solids: its bucket is always empty.
+  | 'plainSurface'
   // The service layers (Part 5). Read by hue, never by texture — see the constants above.
   | 'serviceDrainage'
   | 'serviceWaterCold'
@@ -279,6 +301,16 @@ function makeSpec(spec: FloorMaterialSpec): FloorMaterialSpec {
  *   family the domain names (`fixtures.ts`). Since ADR-020 three of them carry the scheme
  *   everywhere — oak, marble, bouclé — and the `paris*` keys that used to carry it for one
  *   room are gone, along with the per-space override that chose between them;
+ * - `fabricJoinery`: the parts of a fitting that are the BUILDING rather than its
+ *   contents — the food-pass counter, which is half a wall with a hole in it. Visually
+ *   identical to `joinery` and a separate bucket for exactly one reason: the `furniture`
+ *   checkbox hides the joinery to clear a room, and hiding the pass counter would not
+ *   clear a room, it would open a 0.30 m slot from the guest room into the kitchen
+ *   (`FABRIC_FIXTURE_KINDS`, `floorLayout.ts`);
+ * - `plainSurface`: not a family of solids but the state the `finishing` checkbox puts
+ *   the finish-bearing families INTO. Its bucket is always empty, and that is correct:
+ *   unticking `finishing` adds and removes no box, it only re-surfaces the ones already
+ *   drawn (`FloorModel.tsx`, `BUCKET_RULES`);
  * - `serviceDrainage` … `serviceChamber`: the ten service layers of Part 5 — the runs
  *   themselves, the boxing built over them and the sealed chambers. These are the one group
  *   the scheme does not reach: flat, separable hues with no texture, for the reason set out
@@ -394,6 +426,26 @@ export const MATERIAL_PALETTE: Readonly<Record<FloorMaterialKey, FloorMaterialSp
       roughness: MATTE_ROUGHNESS,
       metalness: NON_METAL,
       dithering: DITHER_SMALL_ELEMENT,
+    }),
+    fabricJoinery: makeSpec({
+      // The same oak as `joinery`, by construction rather than by a copied hex: it IS
+      // the same oak, and the two must never drift apart, because a viewer is meant to
+      // see one pass counter and not an oak carcass with a slightly different lid.
+      color: PARIS_OAK,
+      // Matte, like the millwork it is made of and unlike the treads that are walked on.
+      roughness: MATTE_ROUGHNESS,
+      metalness: NON_METAL,
+      // A hair off `joinery`'s dithering would be a difference nobody asked for, so the
+      // spec is the same one twice over; only the BUCKET differs, and that is the point.
+      dithering: DITHER_SMALL_ELEMENT,
+    }),
+    plainSurface: makeSpec({
+      color: PLAIN_SCREED_GREY,
+      roughness: MATTE_ROUGHNESS,
+      metalness: NON_METAL,
+      // Re-surfaces slabs as well as furniture, so it takes the large-surface dithering:
+      // a whole floor of flat grey is exactly the wide, shallow gradient that bands.
+      dithering: DITHER_LARGE_SURFACE,
     }),
     // The service layers. Flat colour throughout: no `map` is ever looked up for these keys,
     // because what a run IS has to be legible before what it is made of is.

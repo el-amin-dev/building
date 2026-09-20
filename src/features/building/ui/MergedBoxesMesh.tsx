@@ -20,6 +20,20 @@ export interface MergedBoxesMeshProps {
    * `storeyLevels.ts`, which hands out one shared array per count.
    */
   readonly levels: readonly number[];
+  /**
+   * Whether the meshes are drawn; defaults to `true`.
+   *
+   * **A hidden bucket is a hidden mesh and never an absent one.** Leaving the component
+   * out instead — `{shown && <MergedBoxesMesh …/>}` — unmounts it, which runs the cleanup
+   * below and DISPOSES the merged geometry, so re-ticking the same checkbox re-merges and
+   * re-uploads every box of the bucket. With nine layer checkboxes flipped over and over,
+   * that turns a toggle into a rebuild of the floor on every click. This flag is passed
+   * straight to `three`, where hiding a mesh costs nothing at all: the renderer skips it
+   * and its buffers stay on the GPU.
+   *
+   * It is deliberately NOT a memo dependency; see the note on the geometry below.
+   */
+  readonly visible?: boolean;
   /** The material element for the mesh, e.g. a `<meshStandardMaterial />`. */
   readonly children?: ReactNode;
 }
@@ -42,16 +56,19 @@ export interface MergedBoxesMeshProps {
  * adding `levels` to it would re-merge every wall, slab and step on each press of the
  * storey stepper, to rebuild a geometry that is identical every time.
  *
- * Nothing is rendered for an empty list (for example the ceilings while they are hidden in
- * the exterior view). The geometry is memoised on `boxes` and disposed when it is replaced
- * or when the mesh unmounts, so toggling a group on and off does not leak buffers. Under
+ * Nothing is rendered for an empty list — a bucket the floor has no box of, which is not
+ * the same thing as a bucket that is currently hidden: the first has no geometry to hold
+ * and the second holds one and does not draw it. The geometry is memoised on `boxes` and
+ * disposed when it is replaced or when the mesh unmounts, so a bucket that genuinely goes
+ * away does not leak buffers. Under
  * React's StrictMode the simulated remount runs that cleanup once on a geometry still in
  * use; only GPU buffers are freed there and three.js re-uploads them on the next frame.
  *
  * @param props - {@link MergedBoxesMeshProps}
- * @returns One mesh per level, or `null` when there is no box to draw.
+ * @returns One mesh per level — drawn or hidden by `visible` — or `null` when there is no
+ *   box to draw at all.
  */
-export function MergedBoxesMesh({ boxes, levels, children }: MergedBoxesMeshProps) {
+export function MergedBoxesMesh({ boxes, levels, visible = true, children }: MergedBoxesMeshProps) {
   const geometry = useMemo(
     () => (boxes.length === 0 ? null : createMergedBoxGeometry(boxes)),
     [boxes],
@@ -71,7 +88,7 @@ export function MergedBoxesMesh({ boxes, levels, children }: MergedBoxesMeshProp
   return (
     <>
       {levels.map((level) => (
-        <mesh key={level} geometry={geometry} position-y={level}>
+        <mesh key={level} geometry={geometry} position-y={level} visible={visible}>
           {children}
         </mesh>
       ))}

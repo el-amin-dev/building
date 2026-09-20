@@ -26,6 +26,11 @@ const EXPECTED_KEYS: readonly FloorMaterialKey[] = [
   'worktop',
   'softFurnishing',
   'artwork',
+  // Part 5 split the building's own fabric out of the furniture and gave the unfinished
+  // state a material of its own. `fabricJoinery` is `joinery`'s twin on purpose and
+  // `plainSurface` owns no box at all — see the two cases that pin exactly that.
+  'fabricJoinery',
+  'plainSurface',
   // Part 5 laid the services in. These ten are the palette's one group that is read by
   // hue rather than by texture, so they stay flat and stay listed here: adding an
   // eleventh service has to be as deliberate as adding a fifth furniture family was.
@@ -84,9 +89,35 @@ const MAX_UNIT = 1;
 /** An emissive surface must actually emit something. */
 const MIN_EMISSIVE_INTENSITY = 0;
 
+/**
+ * The one pair of keys allowed to carry the same finish, and why.
+ *
+ * `fabricJoinery` is the millwork that is the BUILDING rather than a room's contents — the
+ * food-pass counter, which is half a wall with a hole in it. It is the same oak as `joinery`
+ * on purpose; what differs is which checkbox hides it (`FloorModel.tsx`, `BUCKET_RULES`).
+ */
+const TWIN_KEYS: readonly [FloorMaterialKey, FloorMaterialKey] = ['joinery', 'fabricJoinery'];
+/** One of a twinned pair still contributes one distinct finish to the palette. */
+const ONE_SURVIVOR = 1;
+/** The material the `finishing` checkbox re-surfaces the finish-bearing buckets with. */
+const PLAIN_KEY: FloorMaterialKey = 'plainSurface';
+
 const ENTRIES: readonly (readonly [FloorMaterialKey, FloorMaterialSpec])[] = Object.entries(
   MATERIAL_PALETTE,
 ) as readonly (readonly [FloorMaterialKey, FloorMaterialSpec])[];
+
+/**
+ * The whole surface of a spec, as the one string two families may not both carry.
+ *
+ * Colour, roughness and metalness together: two surfaces of the same oak at the same
+ * roughness really are the same surface, whatever the second one is called.
+ *
+ * @param spec - The palette spec to read.
+ * @returns Its finish, as a comparable string.
+ */
+function finishOf(spec: FloorMaterialSpec): string {
+  return `${spec.color}/${String(spec.roughness)}/${String(spec.metalness)}`;
+}
 
 describe('MATERIAL_PALETTE', () => {
   it('defines exactly the expected keys', () => {
@@ -143,21 +174,43 @@ describe('MATERIAL_PALETTE', () => {
     expect(new Set(colors).size).toBe(SLAB_KEYS.length);
   });
 
-  it('gives every family a finish of its own', () => {
-    // Load-bearing elsewhere: `FloorModel.test.tsx` names the bucket a mesh draws by
-    // looking its material settings up in this palette. Two families with identical
-    // settings would make that lookup answer with whichever key comes first, and every
-    // per-bucket assertion over there would quietly check the wrong mesh.
+  it('gives every family a finish of its own, bar the one declared twin', () => {
+    // Colour alone is not enough and must not be asserted: a scheme means unrelated
+    // families share a hue on purpose. What is asserted is the whole finish — and it is
+    // unique across the palette with exactly ONE exception, listed above as
+    // {@link TWIN_KEYS}: `fabricJoinery` is `joinery`'s oak down to the last setting,
+    // because it IS the same oak and the split between them is about which checkbox owns
+    // the box, not about how it looks.
     //
-    // Colour alone is no longer enough and must not be asserted: a scheme means unrelated
-    // families share a hue on purpose. What has to stay unique is the whole finish, which
-    // is also the honest claim — two surfaces of the same oak at the same roughness really
-    // are the same surface, whatever we call the second one.
-    const finishes = ENTRIES.map(
-      ([, spec]) => `${spec.color}/${String(spec.roughness)}/${String(spec.metalness)}`,
-    );
+    // This used to be "every family, no exception", and it was load-bearing:
+    // `FloorModel.test.tsx` named the bucket a mesh drew by looking its settings up here.
+    // That lookup is gone — a mesh now carries its bucket's key as the material's `name` —
+    // precisely because a palette with a deliberate twin in it, and buckets that get
+    // re-surfaced with `plainSurface`, can no longer be read backwards from a colour.
+    const finishes = ENTRIES.map(([, spec]) => finishOf(spec));
 
-    expect(new Set(finishes).size).toBe(EXPECTED_KEYS.length);
+    expect(new Set(finishes).size).toBe(EXPECTED_KEYS.length - TWIN_KEYS.length + ONE_SURVIVOR);
+  });
+
+  it('keeps the fabric twin identical to the family it was split out of', () => {
+    // The point of the split is the bucket and nothing else: a viewer must see one pass
+    // counter, not an oak carcass with a slightly different lid. A drifted hex here would
+    // be the split leaking out of the layer table and into the surface.
+    const [first, second] = TWIN_KEYS;
+
+    expect(MATERIAL_PALETTE[first]).toStrictEqual(MATERIAL_PALETTE[second]);
+    expect(finishOf(MATERIAL_PALETTE[first])).toBe(finishOf(MATERIAL_PALETTE[second]));
+  });
+
+  it('gives the plain finish a surface of its own, unlike any family it re-surfaces', () => {
+    // `plainSurface` is a material, not a group of solids: it is what the `finishing`
+    // checkbox draws the finish-bearing buckets with. It therefore has to be TELLABLE from
+    // every finish it replaces, or unticking the box would change nothing on screen.
+    const plain = MATERIAL_PALETTE[PLAIN_KEY];
+    const others = ENTRIES.filter(([key]) => key !== PLAIN_KEY).map(([, spec]) => finishOf(spec));
+
+    expect(plain.color).toMatch(HEX_COLOR);
+    expect(others).not.toContain(finishOf(plain));
   });
 
   /**

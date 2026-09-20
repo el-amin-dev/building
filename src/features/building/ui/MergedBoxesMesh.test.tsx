@@ -173,6 +173,61 @@ describe('MergedBoxesMesh', () => {
     expect(geometryAt(0).dispose).toHaveBeenCalledTimes(NOT_CALLED);
   });
 
+  /**
+   * What a hidden bucket still is, and the one thing these cases do not read back.
+   *
+   * The flag itself is invisible from here: jsdom renders `<mesh>` as an unrecognised tag, so
+   * React writes its props as attributes — and it drops a BOOLEAN one on such a tag rather
+   * than stringifying it, which is why `position-y` can be read back above and `visible`
+   * cannot. What is observable is everything that matters: that hiding mounts the same meshes
+   * at the same levels over the same geometry, and that flipping the flag costs no merge and
+   * no disposal. That the value then reaches `MergedBoxesMesh` at all is asserted where it is
+   * decided, over the recorded props in `FloorModel.test.tsx`.
+   */
+  it('hides every mesh of the bucket, and only hides them', () => {
+    const { container } = render(
+      <MergedBoxesMesh boxes={WALL_BOXES} levels={THREE_STOREYS} visible={false} />,
+    );
+
+    // A hidden bucket is a hidden mesh and never an absent one: the meshes are still there,
+    // at their levels, holding the one geometry. Only `visible` changed.
+    expect(meshesIn(container)).toHaveLength(THREE_MESHES);
+    expect(levelsIn(container)).toStrictEqual(THREE_STOREYS.map((level) => String(level)));
+    expect(geometryOf(meshesIn(container)[0])).toBe(geometryAt(0));
+  });
+
+  /**
+   * The claim the whole `visible` prop exists to make, and the reason it is not a `&&`.
+   *
+   * Leaving the component out while a layer is off would unmount it, which disposes the
+   * merged geometry; the next tick of the same checkbox would then re-merge and re-upload
+   * every box of the bucket. With nine layer checkboxes over a floor of this many boxes,
+   * that turns a toggle into a rebuild of the building on every click. Three flips here, and
+   * neither the merge count nor the dispose count is allowed to move by one.
+   *
+   * The shape is the `levels` case above: the same props but for the one under test,
+   * re-rendered, with `createGeometry` and the stub's `dispose` as the whole assertion.
+   */
+  it('does not re-bake and does not dispose when only the visibility flips', () => {
+    const { container, rerender } = render(
+      <MergedBoxesMesh boxes={WALL_BOXES} levels={THREE_STOREYS} />,
+    );
+
+    rerender(<MergedBoxesMesh boxes={WALL_BOXES} levels={THREE_STOREYS} visible={false} />);
+    rerender(<MergedBoxesMesh boxes={WALL_BOXES} levels={THREE_STOREYS} visible={true} />);
+    rerender(<MergedBoxesMesh boxes={WALL_BOXES} levels={THREE_STOREYS} visible={false} />);
+
+    expect(createGeometry).toHaveBeenCalledTimes(ONE_CALL);
+    expect(built.geometries).toHaveLength(ONE_GEOMETRY);
+    expect(geometryAt(0).dispose).toHaveBeenCalledTimes(NOT_CALLED);
+    // ...and the meshes still hold that same geometry, so nothing was re-uploaded either.
+    const drawn = meshesIn(container).map((mesh) => geometryOf(mesh));
+    expect(drawn).toHaveLength(THREE_MESHES);
+    for (const geometry of drawn) {
+      expect(Object.is(geometry, geometryAt(0))).toBe(true);
+    }
+  });
+
   it('adds and removes meshes when the storey count changes, without re-baking', () => {
     const { container, rerender } = render(
       <MergedBoxesMesh boxes={WALL_BOXES} levels={ONE_STOREY} />,
