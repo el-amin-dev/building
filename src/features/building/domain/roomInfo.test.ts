@@ -375,21 +375,26 @@ const SERVICE_ROLL_CALL: readonly ServiceRow[] = [
   [
     'voidWest',
     [
+      // Drainage and water only, since the dry branches were re-routed to enter
+      // their rooms through clear wall rather than down the side-B strip. The
+      // gas, electricity, low-voltage and climate trunks still CROSS this shaft
+      // — see `does not serve a room a run merely crosses`, which pins exactly
+      // that — but nothing dry terminates in it any more. The stacks and the
+      // supply spine genuinely are here, so those two stay.
       ['drainage', []],
       ['water', []],
-      ['electricity', []],
-      ['lowVoltage', []],
-      ['climate', []],
     ],
   ],
   [
     'voidEast',
     [
+      // Drainage and water only, and now symmetric with `voidWest`. The dry
+      // trunks used to be declared as ending HERE, which was a leftover from
+      // before the branches moved onto the corridor: nothing tapped them east
+      // of the kitchen link, so they ran on to x 20.30 connected to nothing.
+      // Each stops at its own link now, so the shaft is crossed and not served.
       ['drainage', []],
       ['water', []],
-      ['electricity', []],
-      ['lowVoltage', []],
-      ['climate', []],
     ],
   ],
   [
@@ -476,6 +481,15 @@ function getCrossings(
     );
   });
 }
+
+/**
+ * Where the low-voltage trunk that crosses `voidWest` actually terminates.
+ *
+ * Named rather than inlined because two assertions depend on it being the SAME room,
+ * and because it has moved twice: it was `voidEast` until the dead trunk legs east of
+ * the kitchen link were cut, and the run now stops at its own link on the side-B slab.
+ */
+const SERVED_BY_CROSSING: SpaceId = 'balconySlabB';
 
 /** The ports of the main sanitair, in schedule order, measured by hand. */
 const MAIN_SANITAIR_DOORS: readonly RoomDoor[] = [
@@ -826,13 +840,20 @@ describe('getRoomInfo', () => {
     });
 
     it('does not serve a room a run merely crosses', () => {
-      // The family bath is crossed by the low-voltage branch on its way to the
-      // main sanitair — asserted, not assumed, so that this test stops meaning
-      // something the day the branch is re-routed — and is not served by it.
-      const crossings = getCrossings(getServiceRuns(), 'lowVoltage', 'mainBathCubicle');
+      // The west shaft, which is the sharpest case this plan has ever offered: the
+      // low-voltage trunk from the electrical chamber falls straight through it on
+      // its way to the east void, and `voidWest` is not on low voltage at all. It
+      // WAS listed as low voltage until the dry branches were re-routed, so this
+      // room is the one that proves crossing and serving are different questions
+      // rather than two names for the same answer.
+      //
+      // The overlap is asserted and not assumed — `getCrossings` does the geometric
+      // test the module refuses to do — so the day that trunk moves out of the
+      // shaft, this test fails loudly instead of passing vacuously.
+      const crossings = getCrossings(getServiceRuns(), 'lowVoltage', 'voidWest');
       const info = getRoomInfo(FLOOR_PLAN, PORT_SCHEDULE, BUILT, {
         floor: FLOOR,
-        spaceId: 'mainBathCubicle',
+        spaceId: 'voidWest',
       });
 
       expect(crossings.length).toBeGreaterThan(0);
@@ -840,23 +861,32 @@ describe('getRoomInfo', () => {
     });
 
     it('gives a crossed room nothing and the room the run ends in the service', () => {
-      const [crossing] = getCrossings(getServiceRuns(), 'lowVoltage', 'mainBathCubicle');
+      // One run, two rooms, opposite answers. The low-voltage trunk crosses the west
+      // shaft and ends on the side-B slab, so feeding the derivation nothing but this
+      // single run separates the two questions completely: any answer that came from
+      // geometry would have to give both rooms the same thing.
+      const [crossing] = getCrossings(getServiceRuns(), 'lowVoltage', 'voidWest');
       const only: readonly BuiltServiceRun[] = [crossing];
       const crossed = getRoomInfo(
         FLOOR_PLAN,
         PORT_SCHEDULE,
         BUILT,
-        { floor: FLOOR, spaceId: 'mainBathCubicle' },
+        { floor: FLOOR, spaceId: 'voidWest' },
         only,
       );
       const served = getRoomInfo(
         FLOOR_PLAN,
         PORT_SCHEDULE,
         BUILT,
-        { floor: FLOOR, spaceId: 'mainSanitair' },
+        { floor: FLOOR, spaceId: SERVED_BY_CROSSING },
         only,
       );
 
+      // The premise, asserted rather than assumed — the same discipline that keeps the
+      // `getCrossings` half of the guard above from going quietly green. If this trunk
+      // is re-terminated again, this line fails and names the new room, instead of the
+      // assertions below passing on a room the run no longer reaches.
+      expect(crossing.run.to).toEqual({ at: 'space', space: SERVED_BY_CROSSING });
       expect(crossed.services).toEqual([]);
       expect(served.services).toEqual([
         { layer: 'lowVoltage', name: layerName('lowVoltage'), fittings: [] },
