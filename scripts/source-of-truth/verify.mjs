@@ -3341,8 +3341,24 @@ check('21. A run crosses a walking way overhead, or comes down a wall — never 
     ...SERVICE_CHAMBERS.map((chamber) => chamber.rect),
     ...FIXTURES.map((fixture) => fixture.rect),
   ];
+  /**
+   * @param {number} x
+   * @param {number} z
+   * @param {readonly number[]} rect
+   * @param {number} [margin]
+   * @returns {boolean}
+   */
   const within = (x, z, rect, margin = 0) =>
-    x >= rect[0] - margin && x <= rect[1] + margin && z >= rect[2] - margin && z <= rect[3] + margin;
+    x >= rect[0] - margin &&
+    x <= rect[1] + margin &&
+    z >= rect[2] - margin &&
+    z <= rect[3] + margin;
+  /**
+   * @param {number} x
+   * @param {number} z
+   * @param {readonly number[]} rect
+   * @returns {number}
+   */
   const toFace = (x, z, rect) => Math.min(x - rect[0], rect[1] - x, z - rect[2], rect[3] - z);
 
   let worstClear = 0;
@@ -3394,6 +3410,122 @@ check('21. A run crosses a walking way overhead, or comes down a wall — never 
   }
 }
 
+/* ──────── 22. nothing standing in a doorway ──────── */
+
+check('22. A run may not stand in a door, an opening or a window');
+{
+  /**
+   * THE OWNER'S SECOND ROUTING RULE, found by looking at the living room: its
+   * 3.50 m opening to the corridor had FIVE service drops standing in it — two
+   * sockets, an ethernet outlet, a radiator feed and a cooling duct, all in the
+   * one gap people walk through. Twenty-four runs broke this across the floor.
+   *
+   * Check 9 already asks this of fixtures ("nothing may stand in a doorway",
+   * Part 4). It never asked it of runs, because there were none. This is the
+   * same question put to the other half of the model.
+   *
+   * WHAT COUNTS AS THE OPENING is the clear hole, not the wall around it: the
+   * declared span along the wall, the wall's own thickness across it, and — this
+   * is the part that matters — the height band between `sill` and `head`. A run
+   * passing OVER a door at 2.35 m is not in the doorway, which is exactly how
+   * the spine crosses the building. A run passing over one of the four void
+   * windows is only clear above **2.30 m**, not 2.10 m, and those four are why
+   * the shower cubicle's water had to be lifted and then stepped 0.10 m into the
+   * room: its whole side-B face is window, so there is no clear stretch to drop
+   * in at all.
+   *
+   * The openings are derived here from `PORTS` and `WINDOWS` against the room
+   * rectangles rather than read from a list, so a door that moves takes this
+   * check with it.
+   */
+  const SAMPLES = 20;
+  const BAND_SLACK = 0.02;
+
+  const openings = [];
+  /**
+   * Ports and windows asked the same question. A port has no `sill` or `head`,
+   * so the union of their literal types cannot be asked for one; widening here
+   * is what makes the question expressible, and the `??` below supplies a door's
+   * own head when the opening does not state one.
+   *
+   * @type {ReadonlyArray<{ kind: string, between: readonly string[], along: 'x' | 'z', spanMin: number, width: number, sill?: number, head?: number }>}
+   */
+  const declaredOpenings = [...PORTS, ...WINDOWS];
+  for (const opening of declaredOpenings) {
+    const [first, second] = opening.between.map((id) => ROOMS.find((room) => room.id === id));
+    if (!first || !second) continue;
+    let band = null;
+    for (const a of first.rects) {
+      for (const b of second.rects) {
+        if (opening.along === 'x') {
+          const lo = Math.min(a[3], b[3]);
+          const hi = Math.max(a[2], b[2]);
+          const shared = Math.min(a[1], b[1]) - Math.max(a[0], b[0]);
+          if (hi - lo >= -EPS && hi - lo < 0.62 && shared > 0) band = [lo, hi];
+        } else {
+          const lo = Math.min(a[1], b[1]);
+          const hi = Math.max(a[0], b[0]);
+          const shared = Math.min(a[3], b[3]) - Math.max(a[2], b[2]);
+          if (hi - lo >= -EPS && hi - lo < 0.62 && shared > 0) band = [lo, hi];
+        }
+      }
+    }
+    if (!band) continue;
+    const from = opening.spanMin;
+    const to = opening.spanMin + opening.width;
+    openings.push({
+      rect:
+        opening.along === 'x'
+          ? [from, to, band[0] - BAND_SLACK, band[1] + BAND_SLACK]
+          : [band[0] - BAND_SLACK, band[1] + BAND_SLACK, from, to],
+      sill: opening.sill ?? 0,
+      head: opening.head ?? HEIGHTS.door,
+      what: `${opening.between.join(' ↔ ')} ${opening.kind}`,
+    });
+  }
+
+  /**
+   * @param {number} x
+   * @param {number} z
+   * @param {readonly number[]} rect
+   * @returns {boolean}
+   */
+  const inside = (x, z, rect) =>
+    x >= rect[0] - EPS && x <= rect[1] + EPS && z >= rect[2] - EPS && z <= rect[3] + EPS;
+  let offenders = 0;
+
+  for (const [index, run] of SERVICE_RUNS.entries()) {
+    for (let leg = 1; leg < run.points.length; leg += 1) {
+      const from = run.points[leg - 1];
+      const to = run.points[leg];
+      let reported = false;
+      for (let step = 0; step <= SAMPLES && !reported; step += 1) {
+        const share = step / SAMPLES;
+        const x = from[0] + (to[0] - from[0]) * share;
+        const z = from[1] + (to[1] - from[1]) * share;
+        const y = from[2] + (to[2] - from[2]) * share;
+        for (const opening of openings) {
+          if (!inside(x, z, opening.rect)) continue;
+          if (y < opening.sill - EPS || y > opening.head + EPS) continue;
+          offenders += 1;
+          reported = true;
+          fail(
+            `SERVICE_RUNS[${index}] ${run.layer}/${run.family} leg ${leg} stands in the ` +
+              `${opening.what} at (${n(x)}, ${n(z)}), ${m(y)} up — inside a clear opening that ` +
+              `runs ${m(opening.sill)} to ${m(opening.head)}. A run crosses above the head or ` +
+              `goes round; it does not stand in the gap people walk through`,
+          );
+          break;
+        }
+      }
+    }
+  }
+
+  if (offenders === 0) {
+    line(`${openings.length} openings, and no run stands in any of them`);
+  }
+}
+
 if (notes.length) {
   console.log('\n── notes');
   for (const note of notes) console.log(`   ${note}`);
@@ -3402,7 +3534,7 @@ if (notes.length) {
 console.log('');
 if (failures.length === 0) {
   console.log(
-    `PASS — 21 checks, ${walls.length} walls, ${PORTS.length + WINDOWS.length} openings, ` +
+    `PASS — 22 checks, ${walls.length} walls, ${PORTS.length + WINDOWS.length} openings, ` +
       `${FIXTURES.length} fixtures, ${SERVICE_RUNS.length} service runs, everything closes.`,
   );
   process.exit(0);
