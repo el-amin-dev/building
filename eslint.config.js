@@ -38,7 +38,7 @@ export default defineConfig([
   },
   {
     // `scripts/` holds command-line tools whose product IS their stdout:
-    // `verify.mjs` prints the 12-check report a human reads and `build.mjs`
+    // `verify.mjs` prints the 20-check report a human reads and `build.mjs`
     // prints what it rewrote. `no-console` earns its keep by keeping stray
     // debug output out of the shipped browser bundle, and nothing under
     // `scripts/` is ever bundled — so it is off for these files only. Every

@@ -5,7 +5,7 @@
 > its entirety from a single file of numbers.
 
 The floor is 22.50 × 10.00 m on a 225.00 m² plot: 21 spaces, 92 walls, 19 doors and openings,
-8 windows and 42 fixtures. Nothing about it is modelled by hand. The walls, the slabs, the
+8 windows and 44 fixtures. Nothing about it is modelled by hand. The walls, the slabs, the
 stairs, the railings, the window and door openings and the furniture are all derived from the
 plan, and so is the architectural drawing that shows it — which is why the two cannot disagree.
 
@@ -37,7 +37,7 @@ The whole project hangs on one rule: **the plan is the only copy of the geometry
    own words. Where it disagrees with the plan, the plan wins: it carries his later decisions.
 2. **`src/features/building/domain/sourceOfTruth/plan.ts`** — the building as data. Every
    rectangle on the floor lives here exactly once.
-3. `pnpm verify:plan` — twelve checks over that data before anything else runs: the centimetre
+3. `pnpm verify:plan` — twenty checks over that data before anything else runs: the centimetre
    grid, the areas closing on the plot, both dimension chains, the jambs, matricule uniqueness,
    reachability, what a door may open onto, the stair fit, wall thickness per contact, fixture
    clearance and door swings, the isolation register, and the walls built below storey height.
