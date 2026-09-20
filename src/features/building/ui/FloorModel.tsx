@@ -158,6 +158,24 @@ interface MaterialMeshProps {
  * `plain` set it is the `plainSurface` spec instead, and {@link FAMILY_TEXTURE} is not
  * consulted at all: the grain is part of the finish, not of the geometry under it.
  *
+ * THE `key` ON THE MATERIAL IS LOAD-BEARING AND LOOKS REMOVABLE. Whether a material has a
+ * `map` is a SHADER DEFINE, not a uniform: three.js compiles `USE_MAP` in or out when the
+ * material is built, and assigning `material.map` afterwards changes nothing on screen
+ * unless `needsUpdate` is set. React Three Fiber sets the prop and does not set the flag.
+ *
+ * That never mattered before Part 5, because every textured bucket had its map at first
+ * compile. It matters now: the app opens on NAKED WALLS, so every material compiles with no
+ * map, and ticking `finishing` used to assign a texture that was never sampled — the oak
+ * grain, the carpet weave, the marble vein and the bouclé simply did not appear, while the
+ * geometry and the colours looked right. Changing the key when a map appears or disappears
+ * makes React build a new material, which compiles the right shader.
+ *
+ * The key is the map's PRESENCE, not `plain`, so a bucket that never carries a texture is
+ * never rebuilt. Found by measuring a screenshot against the pre-layer baseline: 23 914
+ * pixels differed, and adding a storey and removing it again — which rebuilds the materials
+ * — brought it down to 3 967. A regenerated baseline would have pinned the defect forever
+ * (ADR-019).
+ *
  * The material carries the bucket's key as its `name`, which is what a debugger — and the
  * test suite — reads to say which checkbox a given mesh answers to. It has to be the key and
  * not the settings, because two buckets may share a finish on purpose (`fabricJoinery` is the
@@ -170,12 +188,14 @@ function MaterialMesh({ materialKey, boxes, levels, visible, plain }: MaterialMe
   if (boxes.length === NO_BOXES) {
     return null;
   }
+  const texture = plain ? undefined : FAMILY_TEXTURE[materialKey];
   return (
     <MergedBoxesMesh boxes={boxes} levels={levels} visible={visible}>
       <meshStandardMaterial
+        key={texture === undefined ? 'flat' : 'mapped'}
         name={materialKey}
         {...MATERIAL_PALETTE[plain ? PLAIN_MATERIAL_KEY : materialKey]}
-        map={plain ? undefined : FAMILY_TEXTURE[materialKey]}
+        map={texture}
       />
     </MergedBoxesMesh>
   );

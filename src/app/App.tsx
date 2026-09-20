@@ -91,7 +91,10 @@ const DebugPanel = lazy(() =>
  * much facts of the exterior it is seen from as of the interior it is walked in. The switcher
  * joins the row the room menu and the room panel share, where the exterior leaves it the only
  * panel and the interior has the width for a third trigger a single word wide; its nine
- * checkboxes never enter that flow, because the panel they live in is `absolute` and `z-20`.
+ * checkboxes never enter that flow, because the panel they live in is `absolute` and
+ * `z-30` — z-30 and not the z-20 every other overlay uses, because the hold-to-act pads
+ * are z-20 and come later in the DOM, so at equal z they paint over it and its first
+ * checkbox cannot be clicked at all.
  *
  * On a narrow viewport the stack would eat the top half of the screen and leave the 3D view a
  * strip, which defeats the pad it hosts: the pad is the only way to move for someone without a
